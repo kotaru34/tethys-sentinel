@@ -15,3 +15,14 @@ func RequiresShellCategory(category string) bool {
 		return false
 	}
 }
+
+// SessionApprovalAllowed is deliberately false for unbounded execution classes.
+// Exact argv alone cannot make a session approval safe because argv may refer
+// to mutable scripts, containers, remote state, or other external data.
+func SessionApprovalAllowed(result Result) bool {
+	return SessionApprovalAllowedCategory(result.Category)
+}
+
+func SessionApprovalAllowedCategory(category string) bool {
+	return !RequiresShellCategory(category)
+}
