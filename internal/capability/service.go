@@ -8,21 +8,35 @@ import (
 	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
+	"github.com/kotaru34/tethys-sentinel/internal/emergency"
 	"github.com/kotaru34/tethys-sentinel/internal/store"
 )
 
 var (
-	ErrExpired = errors.New("capability expired")
-	ErrRevoked = errors.New("capability revoked")
+	ErrExpired       = errors.New("capability expired")
+	ErrRevoked       = errors.New("capability revoked")
+	ErrGlobalRevoked = errors.New("global AI access revoked")
 )
 
 type Service struct {
-	store store.GrantStore
+	store     store.GrantStore
+	emergency *emergency.Store
 }
 
 func NewService(s store.GrantStore) *Service { return &Service{store: s} }
 
+func NewServiceWithEmergency(s store.GrantStore, emergencyStore *emergency.Store) *Service {
+	return &Service{store: s, emergency: emergencyStore}
+}
+
 func (s *Service) Issue(ctx context.Context, grant domain.Grant) (domain.Grant, string, error) {
+	if s.emergency != nil {
+		state := s.emergency.Snapshot()
+		if state.Disabled {
+			return domain.Grant{}, "", ErrGlobalRevoked
+		}
+		grant.SecurityEpoch = state.Epoch
+	}
 	if grant.ID == "" {
 		id, err := randomID()
 		if err != nil {
@@ -60,7 +74,7 @@ func (s *Service) AuthenticateHash(ctx context.Context, hash [32]byte, now time.
 	if err != nil {
 		return domain.Grant{}, err
 	}
-	return authenticateGrant(grant, now)
+	return s.authenticateGrant(grant, now)
 }
 
 func (s *Service) AuthenticateID(ctx context.Context, id string, now time.Time) (domain.Grant, error) {
@@ -68,14 +82,19 @@ func (s *Service) AuthenticateID(ctx context.Context, id string, now time.Time) 
 	if err != nil {
 		return domain.Grant{}, err
 	}
-	return authenticateGrant(grant, now)
+	return s.authenticateGrant(grant, now)
 }
 
 func (s *Service) Revoke(ctx context.Context, id string, at time.Time) error {
 	return s.store.RevokeGrant(ctx, id, at)
 }
 
-func authenticateGrant(grant domain.Grant, now time.Time) (domain.Grant, error) {
+func (s *Service) authenticateGrant(grant domain.Grant, now time.Time) (domain.Grant, error) {
+	if s.emergency != nil {
+		if err := s.emergency.ValidateEpoch(grant.SecurityEpoch); err != nil {
+			return domain.Grant{}, ErrGlobalRevoked
+		}
+	}
 	if grant.RevokedAt != nil {
 		return domain.Grant{}, ErrRevoked
 	}
