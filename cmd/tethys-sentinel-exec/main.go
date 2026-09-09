@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/remotewrapper"
 )
@@ -35,6 +36,9 @@ func main() {
 	if err != nil {
 		fatal(127, err.Error())
 	}
+	if err := remotewrapper.ConsumeExecution("", *jobID, *binding, time.Now()); err != nil {
+		fatal(125, err.Error())
+	}
 
 	cmd := exec.Command(executable, argv[1:]...)
 	cmd.Stdin = os.Stdin
@@ -47,20 +51,15 @@ func main() {
 
 	signals := make(chan os.Signal, 4)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
 		for sig := range signals {
 			if cmd.Process != nil {
 				_ = cmd.Process.Signal(sig)
 			}
-		}
 	}()
 
 	err = cmd.Wait()
 	signal.Stop(signals)
-	close(signals)
-	<-done
 	if err == nil {
 		return
 	}
