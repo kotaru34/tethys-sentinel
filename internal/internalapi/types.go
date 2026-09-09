@@ -58,6 +58,18 @@ type StartExecutionJobResponse struct {
 	Job executionjob.Job `json:"job"`
 }
 
+type CheckExecutionAuthorityRequest struct {
+	WorkerID   string `json:"worker_id"`
+	ClaimToken string `json:"claim_token"`
+}
+
+type CheckExecutionAuthorityResponse struct {
+	Allowed   bool      `json:"allowed"`
+	Epoch     uint64    `json:"epoch"`
+	Reason    string    `json:"reason,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+}
+
 type CompleteExecutionJobRequest struct {
 	WorkerID   string              `json:"worker_id"`
 	ClaimToken string              `json:"claim_token"`
