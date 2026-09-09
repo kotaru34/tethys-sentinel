@@ -56,6 +56,7 @@ func main() {
 			if cmd.Process != nil {
 				_ = cmd.Process.Signal(sig)
 			}
+		}
 	}()
 
 	err = cmd.Wait()
