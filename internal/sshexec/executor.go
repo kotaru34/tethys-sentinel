@@ -57,14 +57,14 @@ func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential 
 	if limit <= 0 {
 		limit = defaultOutputLimit
 	}
-	stdout := newDigestWriter(limit)
-	stderr := newDigestWriter(limit)
+	overflow := newOutputLimiter()
+	stdout := newDigestWriterWithLimiter(limit, overflow)
+	stderr := newDigestWriterWithLimiter(limit, overflow)
 
 	config := &ssh.ClientConfig{
 		User:            target.User,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(credential.Signer)},
 		HostKeyCallback: ssh.FixedHostKey(pinnedKey),
-		Timeout:         dialTimeout,
 	}
 	dialer := net.Dialer{Timeout: dialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", target.Address)
@@ -72,14 +72,28 @@ func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential 
 		return resultWithOutput(false, -1, "ssh_dial_failed", stdout, stderr), fmt.Errorf("SSH dial: %w", err)
 	}
 	defer conn.Close()
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
 
+	handshakeDeadline := time.Now().Add(dialTimeout)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(handshakeDeadline) {
+		handshakeDeadline = deadline
+	}
+	if err := conn.SetDeadline(handshakeDeadline); err != nil {
+		return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), fmt.Errorf("set SSH handshake deadline: %w", err)
+	}
 	clientConn, chans, reqs, err := ssh.NewClientConn(conn, target.Address, config)
 	if err != nil {
 		return resultWithOutput(false, -1, "ssh_handshake_failed", stdout, stderr), fmt.Errorf("SSH handshake: %w", err)
 	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			_ = clientConn.Close()
+			return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), fmt.Errorf("set SSH execution deadline: %w", err)
+		}
+	} else if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = clientConn.Close()
+		return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), fmt.Errorf("clear SSH handshake deadline: %w", err)
+	}
+
 	client := ssh.NewClient(clientConn, chans, reqs)
 	defer client.Close()
 	session, err := client.NewSession()
@@ -102,23 +116,20 @@ func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential 
 			kind = "ssh_execution_timeout"
 		}
 		return resultWithOutput(false, -1, kind, stdout, stderr), ctx.Err()
+	case <-overflow.ch:
+		_ = client.Close()
+		<-errCh
+		return resultWithOutput(false, -1, "output_limit_exceeded", stdout, stderr), errors.New("SSH command output exceeded configured accounting limit")
 	case runErr := <-errCh:
+		if stdout.Truncated() || stderr.Truncated() {
+			return resultWithOutput(false, -1, "output_limit_exceeded", stdout, stderr), errors.New("SSH command output exceeded configured accounting limit")
+		}
 		if runErr == nil {
-			result := resultWithOutput(true, 0, "", stdout, stderr)
-			if stdout.Truncated() || stderr.Truncated() {
-				result.Success = false
-				result.ErrorKind = "output_limit_exceeded"
-				return result, errors.New("SSH command output exceeded configured accounting limit")
-			}
-			return result, nil
+			return resultWithOutput(true, 0, "", stdout, stderr), nil
 		}
 		var exitErr *ssh.ExitError
 		if errors.As(runErr, &exitErr) {
-			result := resultWithOutput(false, exitErr.ExitStatus(), "remote_exit_nonzero", stdout, stderr)
-			if stdout.Truncated() || stderr.Truncated() {
-				result.ErrorKind = "output_limit_exceeded"
-			}
-			return result, runErr
+			return resultWithOutput(false, exitErr.ExitStatus(), "remote_exit_nonzero", stdout, stderr), runErr
 		}
 		return resultWithOutput(false, -1, "ssh_session_error", stdout, stderr), runErr
 	}
@@ -138,6 +149,22 @@ func parsePinnedHostKey(value string) (ssh.PublicKey, error) {
 	return key, nil
 }
 
+type outputLimiter struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func newOutputLimiter() *outputLimiter {
+	return &outputLimiter{ch: make(chan struct{})}
+}
+
+func (l *outputLimiter) trigger() {
+	if l == nil {
+		return
+	}
+	l.once.Do(func() { close(l.ch) })
+}
+
 type digestWriter struct {
 	mu        sync.Mutex
 	h         hash.Hash
@@ -145,15 +172,19 @@ type digestWriter struct {
 	accounted int64
 	total     int64
 	truncated bool
+	overflow  *outputLimiter
 }
 
 func newDigestWriter(limit int64) *digestWriter {
-	return &digestWriter{h: sha256.New(), limit: limit}
+	return newDigestWriterWithLimiter(limit, nil)
+}
+
+func newDigestWriterWithLimiter(limit int64, overflow *outputLimiter) *digestWriter {
+	return &digestWriter{h: sha256.New(), limit: limit, overflow: overflow}
 }
 
 func (w *digestWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.total += int64(len(p))
 	remaining := w.limit - w.accounted
 	if remaining > 0 {
@@ -166,6 +197,11 @@ func (w *digestWriter) Write(p []byte) (int, error) {
 	}
 	if w.total > w.limit {
 		w.truncated = true
+	}
+	exceeded := w.truncated
+	w.mu.Unlock()
+	if exceeded {
+		w.overflow.trigger()
 	}
 	return len(p), nil
 }
