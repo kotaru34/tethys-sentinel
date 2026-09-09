@@ -28,7 +28,7 @@ Gateway compromise must not become grant issuance, target mutation, worker contr
 
 Gateway has no such APIs. It forwards capability hashes, not plaintext tokens, and Control Plane re-authenticates/re-enforces authoritative operations.
 
-`dev.7` adds an early Gateway `exec`/`shell` consistency filter, but the system does **not** trust it as the hard boundary; signing rechecks current policy and grant permissions independently.
+The early Gateway `exec`/`shell` consistency filter is not the hard boundary; signing rechecks current policy and grant permissions independently.
 
 ### Authorize/execute substitution (TOCTOU)
 
@@ -50,13 +50,7 @@ A crash after `allow_once` consumption but before publication must not lose auth
 
 ### Unsafe reusable approval
 
-A full argv hash does not make arbitrary code safe for session reuse. Identical:
-
-```text
-bash /tmp/task.sh
-```
-
-can execute different content after `/tmp/task.sh` changes. The same applies to container images, remote systems, configuration and other mutable inputs.
+A full argv hash does not make arbitrary code safe for session reuse. Identical `bash /tmp/task.sh` can execute different content after the script changes. The same applies to container images, remote systems, configuration and other mutable inputs.
 
 Therefore `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER` and `REMOTE_EXEC` support only `allow_once`. `allow_session` is rejected for those categories. Legacy persisted unsafe session approvals are ignored by matching after upgrade.
 
@@ -74,13 +68,13 @@ An accepted job must not freeze old classifier semantics indefinitely.
 
 Before signing, Control Plane reclassifies immutable `job.argv` using current code and requires current category + scope key to exactly equal job metadata. Denied or changed policy cancels/rejects the job before a credential is returned.
 
-This makes policy hardening apply to already queued/running jobs rather than grandfathering older decisions.
+This makes both powerful-command hardening and dev.8 operational semantic hardening apply to already queued/running jobs rather than grandfathering older decisions.
 
 ### Interpreter / arbitrary-code carrier bypass
 
-Shells, interpreters and command-carrier tools can encode behavior that top-level executable rules cannot prove safe. `dev.7` treats known carriers conservatively instead of parsing their languages.
+Shells, interpreters and command-carrier tools can encode behavior that top-level executable rules cannot prove safe. Sentinel treats known carriers conservatively instead of parsing their languages.
 
-Examples include shells, Python/Perl/Ruby/Node/etc., generic launchers (`env`, `xargs`, `timeout`, editors/debuggers and similar tools), container run/exec, `find -exec`, tar checkpoint exec and arbitrary non-system absolute binaries.
+Examples include shells, Python/Perl/Ruby/Node/etc., generic launchers, container execution/start/build, `find -exec`, executable tar/cpio modes, build/compiler/linker/VCS escape surfaces and arbitrary non-system absolute binaries.
 
 These become `ARBITRARY_CODE`, require `shell=true`, and require one-shot approval over complete argv scope.
 
@@ -94,17 +88,35 @@ They are classified `PRIVILEGE_LAUNCHER`, require `shell=true`, and are allow-on
 
 ### Remote execution / lateral pivot
 
-SSH-family tools, Ansible/Salt, netcat/socat-style pivots, Kubernetes exec/port-forward operations and remote `systemctl` transports can cross the intended logical target boundary.
+SSH-family tools, Ansible/Salt, netcat/socat-style pivots, Kubernetes exec/copy/port-forward, container remote contexts, namespace/jail exec, and VM monitor/guest paths can cross the intended logical target boundary.
 
 They are classified `REMOTE_EXEC`, require `shell=true`, and are allow-once only. Production worker/target network policy must still independently restrict possible egress.
 
+### High-impact administrator mutation left as DEFAULT
+
+A command can be dangerous without being an arbitrary-code carrier. Service state, routing/firewall policy, package state, storage topology, kernel controls, containers/orchestrators and hypervisors have large blast radius even when argv is structured.
+
+`dev.8` adds semantic operational classifiers for known mutation primitives across Linux/BSD/PVE administration. Known read-only inspection forms remain ordinary `exec`, while mutation forms require approval.
+
+Sensitive ambiguous forms fail conservatively. Firewall handling, for example, permits known inspection such as `nft list ruleset`, `iptables -nvL`, and `pfctl -vvsr`, while mixed/bundled mutation forms such as `iptables -LZ` and `pfctl -vnf ...` remain `NETWORK_CONTROL`.
+
+This reduces dangerous `DEFAULT` gaps but does not prove that all unclassified commands are harmless.
+
+### Overbroad operational approval
+
+A semantic category must not become blanket authority over every operation in that category.
+
+Stable service operations bind executable + action + concrete unit/resource. Broader administrator mutations generally bind exact full argv. Approval matching additionally includes grant, target and risk category.
+
+Powerful workload-start/exec paths are elevated into dev.7 powerful classes rather than receiving reusable operational approval.
+
 ### Classifier incompleteness
 
-The classifier is a risk-routing layer, not a complete proof system. Alternative binaries, complex options and yet-unknown shell escapes may exist.
+The classifier is a risk-routing layer, not a complete proof system. Alternative binaries, complex options, plugins and yet-unknown shell escapes may exist.
 
-Independent enforcement remains mandatory: capability target/permission scope, approval policy, immutable job binding, certificate constraints, exact target identity, remote Unix permissions, narrow sudo/doas rules and network isolation.
+Independent enforcement remains mandatory: capability target/permission scope, approval policy, immutable job binding, current-policy certificate gate, exact target identity, remote Unix permissions, narrow sudo/doas rules and network isolation.
 
-Additional semantic operational-risk coverage remains a subsequent milestone.
+Ordinary filesystem authority is deliberately not inferred from generic command names; actual write/root ability remains constrained by the target OS permission boundary.
 
 ### Revocation race
 
@@ -201,6 +213,8 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 - Human approval cannot create missing `exec` or `shell` capability.
 - `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, and `REMOTE_EXEC` require `shell=true` before signing.
 - Those powerful classes are allow-once only; unsafe legacy session approvals never match.
+- High-impact known administrator mutations require scoped approval; known inspection-only variants may remain ordinary `exec`.
+- Operational approval never overrides target Unix/sudo/doas authority.
 - Pre-certificate gate reclassifies immutable argv with current policy and rejects stale category/scope.
 - Context/history/notes are scoped against current grant; Trust-2 cannot become authority by content.
 - Agent never receives raw infrastructure SSH private keys.
