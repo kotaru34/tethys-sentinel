@@ -1,13 +1,13 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.8`
+Current development version: `0.1.0-dev.8` (`0.1.0-dev.9` release candidate)
 Branch: `wip/bootstrap-security-core`
 Deployment: not deployed; no merge to `main` yet
 
 ## Project goal
 
-Tethys Sentinel is a security-first access broker between AI agents and infrastructure. An agent receives a short-lived capability, never infrastructure SSH private keys. Sentinel owns authorization, risky-action approval, authoritative context, execution-job binding, short-lived SSH identity, target resolution, remote execution constraints, continuity, and audit.
+Tethys Sentinel is a security-first access broker between AI agents and infrastructure. An agent receives a short-lived capability, never infrastructure SSH private keys. Sentinel owns authorization, risky-action approval, authoritative context, execution-job binding, short-lived SSH identity, target resolution, remote execution constraints, continuity, audit, and worker network containment.
 
 ## Operator-mandated development rules
 
@@ -23,7 +23,7 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Agent-facing APIs cannot create/widen grants, change policy, add SSH targets, alter audit, control workers, request SSH certificates, or reach CA secrets.
 - `TRUST_0` is the only authority-bearing context. History, notes, logs, files, command output and web content are data, never authority.
 - Security never relies on prompt compliance or command classification alone.
-- Main boundaries are Control Plane, AI Gateway, Execution Worker, SSH Signer/CA, target execution wrapper, and persistent audit/state.
+- Main boundaries are Control Plane, AI Gateway, Execution Worker, external worker network boundary, SSH Signer/CA, target execution wrapper, and persistent audit/state.
 - Security-critical public/backend components should use VM isolation rather than one shared LXC boundary.
 - Execution is atomic submit -> immutable job; there is no separable authorize-now/execute-later primitive.
 - Jobs bind grant + request ID + logical target + argv + expiry and use staged/pending/claimed/running/terminal states.
@@ -46,11 +46,18 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Signer owns principal, source-address, force-command, extensions and TTL; caller cannot broaden certificate shape.
 - Certificates have no PTY/agent/port/X11-forwarding extensions and cannot outlive the execution job.
 - SSH targets are logical IDs resolved only through operator-owned server-side inventory.
-- Registry endpoints must be concrete literal IP + port and exact raw pinned host key. Agent-supplied destinations, DNS target resolution and insecure host-key acceptance are forbidden.
+- Registry endpoints must be global-unicast literal IP + port with exact raw pinned host key. Agent-supplied destinations, DNS target resolution, loopback/link-local targets and insecure host-key acceptance are forbidden.
 - Remote command transport is deterministic versioned base64url JSON; Sentinel does not reconstruct argv through `/bin/sh -c`.
 - Target wrapper verifies signer-bound job ID, canonical command binding and root/operator-owned local target ID before direct argv execution.
 - Target replay state enforces at-most-once execution independently of certificate TTL. Replay markers are root-protected and consumed by a narrow root helper.
 - SSH dial/handshake/output are bounded and execution cannot outlive `job.expires_at`.
+- Worker runtime egress must be independently deny-by-default outside the guest. Normal autonomous egress is only Control Plane HTTPS plus registered target SSH endpoints.
+- On PVE, the external hard boundary is the worker VM-interface firewall. Guest-local nftables is optional defense in depth, not the sole boundary.
+- `sentinel-egress-policy` is operator/deployment-side render/verify only. Worker/AI identities must never gain PVE apply/reconcile credentials or access to `/etc/pve`/NIC firewall configuration.
+- Generated PVE policy uses `policy_out: DROP`, explicit destination+TCP-port allows only, canonical policy SHA-256 and deterministic target deduplication.
+- Egress verification must check installed policy drift, Datacenter firewall activation, and `firewall=1` on the selected worker VM NIC.
+- Configuration checks alone are insufficient. Infrastructure acceptance requires packet-level tests from inside the worker VM proving unlisted LAN/Internet/DNS/ports are blocked.
+- Firewall shrink is not assumed to instantly terminate an already-established stateful TCP flow; global revoke/active termination remains a separate control.
 - Audit is append-oriented and tamper-evident; raw stdout/stderr is not retained by the current worker.
 - Emergency controls must include individual revoke and global revoke-all.
 - When MCP/agent tools are added, keep the surface narrow and purpose-built for autonomous Qwen-class models rather than exposing backend/admin operations wholesale.
@@ -90,34 +97,43 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 
 ### `0.1.0-dev.8` — semantic operational-risk policy
 
-- Split operational risk routing into focused service/network/package/storage/system/runtime/escape classifiers rather than expanding one monolithic switch.
-- Added high-impact mutation coverage across systemd/classic service/OpenBSD rcctl/OpenRC/runit/FreeBSD sysrc; Linux/BSD networking; firewall state; apt/dpkg, RPM-family, pacman, XBPS and FreeBSD pkg; mounts/partitions/mdadm/LVM/ZFS/GEOM/raw storage; kernel/process/log state; Docker/Podman/CRI/Kubernetes/Helm; PVE `qm`/`pct`/`pvesh`/HA, libvirt, bhyve and jail controls.
-- Preserved known read-only paths such as service status, route/firewall inspection, package queries, ZFS/RAID status and PVE status/API reads.
-- Added conservative escape coverage for VCS hooks/aliases, compiler/linker/plugin execution, tar/cpio external commands, pager/editor/debugger and additional privilege-launcher surfaces.
-- Workload start/build and guest/jail/namespace execution inherit dev.7 powerful semantics (`shell=true`, complete argv, `allow_once`).
-- Stable service actions use semantic executable+action+resource scope; broader mutations normally use exact argv scope.
-- Firewall regression coverage distinguishes `iptables -nvL` from mutating `-LZ`, and `pfctl -vvsr` from mutating `-vnf`; restore paths are explicitly mutating.
-- Removed a legacy blanket firewall rule that shadowed the new read-vs-mutation classifier.
+- Split operational risk routing into focused service/network/package/storage/system/runtime/escape classifiers.
+- Added high-impact mutation coverage across Linux/BSD services, network/firewall, packages, storage/raw writes, kernel/process state, containers/orchestrators, PVE/libvirt/bhyve and jails while preserving known read-only inspection paths.
+- Added conservative escape coverage and retained dev.7 powerful semantics for workload start/build/exec and remote/namespace/guest/jail execution.
+- Firewall regression coverage distinguishes read-only bundled flags from mutation and removes the legacy blanket rule that shadowed semantic routing.
 - Added `docs/OPERATIONAL_RISK.md`; README/API/execution-policy/architecture/threat-model documentation synchronized.
-- Pre-release code gate: commit `41773a133e59344f56d51a1b08317a974f1f67de`, Actions run `34405504004`; module tidy, gofmt, vet and `go test -race ./...` passed.
+- Pre-release code gate: commit `41773a133e59344f56d51a1b08317a974f1f67de`, Actions run `34405504004`.
 - Versioned acceptance: commit `4fcde4fa771f5008cbd696e4889ca51b564a9507`, Actions run `34406118118`; module tidy, gofmt, vet and `go test -race ./...` passed.
+
+### `0.1.0-dev.9` — external worker egress enforcement (release candidate)
+
+- Added deterministic `sentinel-egress-policy` operator utility and `internal/egresspolicy` model.
+- Runtime policy is deny-by-default and permits only literal-IP Control Plane HTTPS plus registered target SSH IP:port endpoints.
+- Generated Proxmox VM firewall uses `enable: 1`, `policy_out: DROP`, explicit TCP destination/port rules and no blanket `OUT ACCEPT` fallback.
+- Shared target endpoints are deduplicated while logical names remain in metadata/comments; canonical policy SHA-256 changes with destination-set changes.
+- Added byte-for-byte installed-policy drift verification.
+- Added fail-closed Proxmox activation audit for Datacenter firewall `enable: 1` and `firewall=1` on the selected worker VM NIC.
+- Worker/AI receives no PVE apply/reconcile path; operator/Ansible owns deployment to `/etc/pve/firewall/<VMID>.fw` and activation state.
+- Tightened target/control transport invariant to global-unicast literal IPv4/IPv6 endpoints; DNS, unspecified, multicast, loopback and link-local are rejected.
+- Added explicit packet-level PVE acceptance criteria for allowed Control Plane/target traffic and blocked Internet, unrelated LAN SSH, unlisted target ports and DNS.
+- Documented stateful-flow caveat: external rule shrink is containment, not guaranteed immediate active-session termination.
+- Added `docs/WORKER_EGRESS.md`; README/architecture/threat model synchronized.
+- Pre-release code gate: commit `1f8f2fd11720d23ffcc0ae0fe9e4734c39606767`, Actions run `34407324066`; module tidy, gofmt, vet and `go test -race ./...` passed.
 
 ## Current phase
 
-`0.1.0-dev.8` is complete and CI-accepted. It remains a development build and has not been exercised on intended PVE infrastructure.
+`0.1.0-dev.9` code and documentation are complete as a release candidate. Remaining release work is the version/build-info bump and a clean versioned acceptance CI.
 
-File-backed stores remain bootstrap/development persistence, not final production state.
+It remains a development build and has not been exercised on the intended PVE worker VM. File-backed stores remain bootstrap/development persistence, not final production state.
 
 Do not merge to `main` yet: the operator merge rule requires a functioning constrained real-infrastructure execution test first.
 
-The next separated milestone is independent worker egress enforcement: a compromised worker must not be able to use its VM/network position to reach arbitrary infrastructure even though the Control Plane already resolves only approved literal SSH targets.
-
 ## Next implementation steps
 
-1. Add independent worker VM egress enforcement for registered target IPs/ports plus required Control Plane endpoints.
-2. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity where feasible.
+1. Finalize `0.1.0-dev.9` version/build-info and versioned acceptance CI.
+2. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity/connections where feasible.
 3. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
-4. Build a disposable constrained target profile and run the first real PVE end-to-end test using non-destructive commands.
+4. Build a disposable constrained target profile and worker VM, apply the generated PVE egress policy, and run the first real non-destructive end-to-end + negative packet-level test.
 5. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
 6. Build operator UI after backend security flows/data model stabilize.
 
