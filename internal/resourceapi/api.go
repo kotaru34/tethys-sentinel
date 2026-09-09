@@ -102,7 +102,9 @@ func (a *API) history(w http.ResponseWriter, r *http.Request) {
 		}
 		filtered = append(filtered, event)
 	}
-	writeJSON(w, http.StatusOK, internalapi.HistoryResponse{Events: filtered})
+	writeJSON(w, http.StatusOK, internalapi.HistoryResponse{
+		TrustLevel: domain.Trust2, Authoritative: false, Events: filtered,
+	})
 }
 
 func (a *API) listNotes(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +127,9 @@ func (a *API) listNotes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "notes unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, internalapi.NotesListResponse{Notes: items})
+	writeJSON(w, http.StatusOK, internalapi.NotesListResponse{
+		TrustLevel: domain.Trust2, Authoritative: false, Notes: items,
+	})
 }
 
 func (a *API) writeNote(w http.ResponseWriter, r *http.Request) {
