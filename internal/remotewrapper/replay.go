@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -35,6 +36,10 @@ func ConsumeExecution(dir, jobID, binding string, now time.Time) error {
 	if info.Mode().Perm()&0o077 != 0 {
 		return errors.New("replay state directory must not grant group/other permissions")
 	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Geteuid()) {
+		return errors.New("replay state directory must be owned by the effective uid")
+	}
 	marker := filepath.Join(dir, jobID)
 	file, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
@@ -43,7 +48,7 @@ func ConsumeExecution(dir, jobID, binding string, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("create execution replay marker: %w", err)
 	}
-	ok := false
+	ok = false
 	defer func() {
 		_ = file.Close()
 		if !ok {
