@@ -26,20 +26,13 @@ func ConsumeExecution(dir, jobID, binding string, now time.Time) error {
 	if _, err := decodeBinding(binding); err != nil {
 		return err
 	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return fmt.Errorf("stat replay state directory: %w", err)
+	if err := validateOwnedPrivateDirectory(filepath.Dir(dir)); err != nil {
+		return fmt.Errorf("replay state parent: %w", err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("replay state path must be a real directory")
+	if err := validateOwnedPrivateDirectory(dir); err != nil {
+		return fmt.Errorf("replay state directory: %w", err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return errors.New("replay state directory must not grant group/other permissions")
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Geteuid()) {
-		return errors.New("replay state directory must be owned by the effective uid")
-	}
+
 	marker := filepath.Join(dir, jobID)
 	file, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
@@ -48,10 +41,10 @@ func ConsumeExecution(dir, jobID, binding string, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("create execution replay marker: %w", err)
 	}
-	ok = false
+	committed := false
 	defer func() {
 		_ = file.Close()
-		if !ok {
+		if !committed {
 			_ = os.Remove(marker)
 		}
 	}()
@@ -65,6 +58,24 @@ func ConsumeExecution(dir, jobID, binding string, now time.Time) error {
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close execution replay marker: %w", err)
 	}
-	ok = true
+	committed = true
+	return nil
+}
+
+func validateOwnedPrivateDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("path must be a real directory")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return errors.New("directory must not grant group/other permissions")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Geteuid()) {
+		return errors.New("directory must be owned by the effective uid")
+	}
 	return nil
 }
