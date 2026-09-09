@@ -1,7 +1,7 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.6` (`0.1.0-dev.7` release candidate)
+Current development version: `0.1.0-dev.7`
 Branch: `wip/bootstrap-security-core`
 Deployment: not deployed; no merge to `main` yet
 
@@ -54,40 +54,33 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 
 ### Through `0.1.0-dev.2` — capability, approval and audit core
 
-- Opaque 256-bit capability lifecycle with hashed-at-rest lookup, expiry and revocation.
-- Separate Control Plane/Gateway, TLS 1.3/mTLS internal transport, persistent narrow approvals, Trust-0 bootstrap and hash-chained audit.
+- Opaque capability lifecycle, separated Control Plane/Gateway, protected transports, narrow approvals, Trust-0 bootstrap and hash-chained audit.
 
 ### `0.1.0-dev.3` — authoritative context and continuity
 
-- Strict Control-Plane-owned Trust-0 context with scoped inventory/runbooks.
-- Target/session/agent-scoped Trust-2 history and target-scoped continuity notes.
+- Strict Control-Plane-owned Trust-0 context with scoped inventory/runbooks and scoped non-authoritative history/notes.
 
 ### `0.1.0-dev.4` — execution-job security protocol
 
-- Atomic `/commands/submit`, immutable HMAC-protected jobs, request-ID idempotency/rebinding rejection.
-- `staged -> pending -> claimed -> running -> terminal`, one-shot worker claim secret, authoritative `start`, crash recovery.
+- Atomic submit, immutable HMAC-protected jobs, request idempotency, staged/claim/start/terminal lifecycle and crash/revocation handling.
 - Acceptance: commit `7d263af6bf6aa9699e2a770efc023e585ddbeb56`, Actions run `34389191377`.
 
 ### `0.1.0-dev.5` — isolated SSH CA/Signer
 
-- Standalone constrained Ed25519 OpenSSH signer with dedicated mTLS/token boundary.
-- Signer-owned principal/source/force-command/extensions/TTL and per-job worker key.
+- Standalone constrained Ed25519 signer, dedicated mTLS/token boundary, signer-owned certificate shape and ephemeral per-job worker identity.
 - Acceptance: commit `750d5d8d0ba899ff2fe45e3b39c70a8969b6a469`, Actions run `34392961793`.
 
 ### `0.1.0-dev.6` — real SSH execution boundary
 
-- Protected logical-target registry -> literal IP/port + Unix user + exact pinned host key.
-- Standalone worker and complete `claim -> start -> cert+target -> pinned SSH -> wrapper -> complete` flow.
-- Deterministic command envelope, direct argv wrapper, root-only target replay consume helper.
-- Bounded handshake, job-expiry execution deadline, bounded output hashing/termination.
+- Protected logical-target registry, pinned-key real SSH worker, deterministic direct-argv wrapper, root-only replay consume helper and bounded execution/output.
 - Pre-release gate: commit `c6e84402d58bb282e9d63877ba8d0807fb960310`, run `34396499517`.
 - Versioned acceptance: commit `9eaa16febd801b4082221e45e7b929969e91b72c`, run `34397117715`.
 
-### `0.1.0-dev.7` — powerful execution policy (release candidate)
+### `0.1.0-dev.7` — powerful execution policy
 
 - Added conservative `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER` and `REMOTE_EXEC` classification for known interpreters/shells, generic command carriers, privilege/namespace launchers, SSH/Ansible/network pivots, Kubernetes remote operations, container run/exec, `find -exec`, tar checkpoint exec and related escape patterns.
 - Powerful command approval scope is SHA-256 of canonical complete argv including executable path.
-- Added `exec`/`shell` separation to enforcement: powerful classes require explicit `shell=true` in addition to `exec=true` and approval.
+- Added `exec`/`shell` separation: powerful classes require explicit `shell=true` in addition to `exec=true` and approval.
 - Gateway rejects unreachable powerful submissions early when `shell=false`.
 - Hard certificate gate reclassifies immutable argv with current policy immediately before signing, checks category/scope freshness, re-authenticates grant, and requires `shell` again before signer invocation.
 - Old queued jobs whose risk classification changes fail closed rather than retaining grandfathered authority.
@@ -96,26 +89,28 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Stable semantic categories such as narrowly scoped service restart can still support constrained session approval.
 - Added regression coverage for full-argv collision/path separation, shell capability enforcement, Gateway prefilter, certificate-time policy freshness, one-shot powerful approval, and legacy unsafe approval invalidation.
 - Added `docs/EXECUTION_POLICY.md`; README/API/architecture/threat model synchronized.
-- Pre-release code gate: commit `b1bbab9243fee12a1bf3e6cbb2b2a0174263e941`, Actions run `34401421958`; module tidy, gofmt, vet and `go test -race ./...` passed.
+- Pre-release code gate: commit `b1bbab9243fee12a1bf3e6cbb2b2a0174263e941`, Actions run `34401421958`; all module tidy/gofmt/vet/race tests passed.
+- Versioned acceptance: commit `58318f7a1f0693941dce4d791ea97fac8e3d3519`, Actions run `34401911162`; all module tidy/gofmt/vet/race tests passed.
 
 ## Current phase
 
-`0.1.0-dev.7` code and documentation are complete as a release candidate. Remaining release work is version/build-info bump and a clean versioned acceptance CI on the final documentation head.
+`0.1.0-dev.7` is complete and CI-accepted. It remains a development build and has not been exercised on intended PVE infrastructure.
 
-This is still a development build and has not been exercised on intended PVE infrastructure. File-backed stores remain bootstrap/development persistence, not final production state.
+File-backed stores remain bootstrap/development persistence, not final production state.
 
 Do not merge to `main` yet: the operator merge rule requires a functioning constrained real-infrastructure execution test first.
 
+The next separated milestone is `0.1.0-dev.8`: semantic operational-risk coverage for high-impact administrative state mutation. This should not devolve into approval for every ordinary file operation; Unix permissions/sudo remain the file-authority boundary. The classifier should focus on administrator primitives with large blast radius and use stable semantic resource scopes where reusable approval is genuinely safe enough.
+
 ## Next implementation steps
 
-1. Finalize `0.1.0-dev.7` version/build-info and versioned acceptance CI.
-2. `0.1.0-dev.8`: expand semantic operational-risk coverage independently of the powerful-code-carrier milestone. Review targets include broader `systemctl` mutations, `ip`/routing/link operations, package managers, mount/storage/LVM/mdadm and hypervisor/container administrative operations.
-3. Add independent worker VM egress enforcement for registered target IPs/ports plus required Control Plane endpoints.
-4. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity where feasible.
-5. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
-6. Build a disposable constrained target profile and run the first real PVE end-to-end test using non-destructive commands.
-7. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
-8. Build operator UI after backend security flows/data model stabilize.
+1. `0.1.0-dev.8`: cover broader service lifecycle, network/routing/link changes, package state, storage topology/raw writes, kernel controls, container/orchestrator state and hypervisor state.
+2. Add independent worker VM egress enforcement for registered target IPs/ports plus required Control Plane endpoints.
+3. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity where feasible.
+4. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
+5. Build a disposable constrained target profile and run the first real PVE end-to-end test using non-destructive commands.
+6. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
+7. Build operator UI after backend security flows/data model stabilize.
 
 ## Deployment state
 
