@@ -33,11 +33,12 @@ type Policy struct {
 }
 
 type Request struct {
-	JobID         string `json:"job_id"`
-	GrantID       string `json:"grant_id"`
-	Target        string `json:"target"`
-	CommandSHA256 string `json:"command_sha256"`
-	PublicKey     string `json:"public_key"`
+	JobID         string    `json:"job_id"`
+	GrantID       string    `json:"grant_id"`
+	Target        string    `json:"target"`
+	CommandSHA256 string    `json:"command_sha256"`
+	PublicKey     string    `json:"public_key"`
+	NotAfter      time.Time `json:"not_after"`
 }
 
 type Response struct {
@@ -144,14 +145,28 @@ func (s *Service) Sign(req Request) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
+
+	now := s.now().UTC()
+	if req.NotAfter.IsZero() {
+		return Response{}, errors.New("not_after is required")
+	}
+	requestLimit := req.NotAfter.UTC()
+	if !now.Before(requestLimit) {
+		return Response{}, errors.New("not_after must be in the future")
+	}
+	validBefore := now.Add(s.ttl)
+	if requestLimit.Before(validBefore) {
+		validBefore = requestLimit
+	}
+	if validBefore.Unix() <= now.Unix() {
+		return Response{}, errors.New("certificate validity window is too short")
+	}
+
 	serial, err := randomSerial()
 	if err != nil {
 		return Response{}, err
 	}
-
-	now := s.now().UTC()
 	validAfter := now.Add(-s.backdate)
-	validBefore := now.Add(s.ttl)
 	forceCommand := fmt.Sprintf("%s --job %s --binding %s", s.wrapperPath, jobID, binding)
 	keyID := fmt.Sprintf("tethys-sentinel:job:%s:grant:%s:target:%s", jobID, grantID, target)
 
