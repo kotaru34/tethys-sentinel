@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -224,5 +223,3 @@ func handleTestSSHConn(conn net.Conn, config *ssh.ServerConfig, commands chan<- 
 		}()
 	}
 }
-
-var _ = errors.New
