@@ -33,24 +33,24 @@ func (f *fakeSigner) Sign(_ context.Context, req sshsigner.Request) (sshsigner.R
 		return sshsigner.Response{}, f.err
 	}
 	return sshsigner.Response{
-		Certificate: "ssh-ed25519-cert-v01@openssh.com AAAA",
-		Serial: 42,
-		Principal: "sentinel-ai",
-		CAFingerprint: "SHA256:ca",
+		Certificate:            "ssh-ed25519-cert-v01@openssh.com AAAA",
+		Serial:                 42,
+		Principal:              "sentinel-ai",
+		CAFingerprint:          "SHA256:ca",
 		CertificateFingerprint: "SHA256:cert",
-		PublicKeyFingerprint: "SHA256:key",
-		ValidBefore: req.NotAfter,
+		PublicKeyFingerprint:   "SHA256:key",
+		ValidBefore:            req.NotAfter,
 	}, nil
 }
 
 type testFixture struct {
-	api       *API
-	caps      *capability.Service
-	jobs      *executionjob.Store
-	signer    *fakeSigner
-	grant     domain.Grant
-	claim     executionjob.Claim
-	now       time.Time
+	api    *API
+	caps   *capability.Service
+	jobs   *executionjob.Store
+	signer *fakeSigner
+	grant  domain.Grant
+	claim  executionjob.Claim
+	now    time.Time
 }
 
 func TestCertificateRequiresRunningJobAndValidWorkerCredential(t *testing.T) {
