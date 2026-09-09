@@ -3,6 +3,7 @@ package internalapi
 import (
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
+	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 )
 
 type IssueSSHCertificateRequest struct {
@@ -14,4 +15,5 @@ type IssueSSHCertificateRequest struct {
 type IssueSSHCertificateResponse struct {
 	Job         executionjob.Job   `json:"job"`
 	Certificate sshsigner.Response `json:"certificate"`
+	Target      sshtarget.Spec     `json:"target"`
 }
