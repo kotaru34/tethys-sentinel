@@ -12,6 +12,7 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 - `exec` and `shell` are separate capabilities; operator approval cannot manufacture a missing capability.
 - Arbitrary-code, privilege-launcher and remote-exec classes require `shell=true` and one-shot operator approval.
 - Reusable session approval is forbidden for powerful execution classes because identical argv can still reference mutable scripts, remote state or other changing inputs.
+- High-impact administrator mutations are semantically classified while known read-only inspection paths remain autonomous.
 - Control Plane, AI Gateway, Execution Worker, and SSH Signer are separate security boundaries.
 - Execution uses immutable one-shot jobs rather than a separable `authorize now / execute later` flow.
 - A claimed job requires an authoritative pre-execution start gate so grant revocation can still stop it before executor invocation.
@@ -29,7 +30,7 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 
 ## Status
 
-`0.1.0-dev.7` — the real SSH execution boundary is extended with a conservative powerful-execution policy for interpreters, shells, generic command carriers, privilege launchers and remote-execution/pivot tools.
+`0.1.0-dev.8` release candidate — the real SSH execution boundary and powerful-execution policy are extended with semantic operational-risk coverage for high-impact administration across Linux/BSD services, networking/firewalls, packages, storage, kernel/process state, containers/orchestrators, and hypervisors.
 
 The worker path remains:
 
@@ -43,11 +44,13 @@ The Control Plane resolves logical targets through a protected server-side SSH r
 
 On the target, the signer-generated certificate force-command invokes `tethys-sentinel-exec`. The wrapper verifies job ID, canonical command binding and the host's local target ID, consumes a root-protected one-shot replay marker, and then executes the exact argv directly without shell re-parsing.
 
-Powerful execution classes such as `bash`, Python, `sudo`, `nsenter`, SSH/Ansible pivots, `kubectl exec`, `docker run`, `find -exec` and equivalent carriers require both `exec=true` and `shell=true`. Their approval scope binds the complete argv, but they are still `allow_once` only: a reusable approval cannot be made safe merely by hashing argv because referenced scripts, images, remote systems or other external state may change.
+Powerful execution classes such as shells/interpreters, privilege launchers, remote pivots, container workload execution/start/build, namespace execution and guest/jail exec paths require both `exec=true` and `shell=true`. They are `allow_once` only.
 
-The Gateway rejects an unreachable powerful request early when `shell=false`, but the hard enforcement point remains immediately before SSH certificate issuance. At that point the Control Plane re-runs the current classifier against immutable `job.argv`, requires category/scope consistency with the job, re-authenticates the grant, and withholds credentials if current policy or capabilities no longer permit execution.
+`dev.8` additionally distinguishes known administrator inspection paths from state mutation. Examples such as `systemctl status`, `ip route show`, `nft list ruleset`, `iptables -nvL`, `pfctl -vvsr`, package queries, ZFS/RAID status, and PVE status reads remain ordinary `exec` operations. Mutating equivalents require scoped approval. Ambiguous sensitive forms fail conservatively.
 
-`dev.7` is still **not a production release**. Before production trust, semantic risk coverage for additional operational mutation classes must be expanded, bootstrap file stores must move to production persistence, network egress must independently enforce the target set, revoke-all semantics must be completed, and the full stack must be exercised on a disposable/constrained infrastructure target.
+The classifier remains a risk-routing layer, not the hard authority boundary. Unix permissions/sudo policy still determine actual file/root authority, and current risk classification is rechecked against immutable argv immediately before SSH certificate issuance.
+
+`dev.8` is still **not a production release**. Before production trust, worker network egress must independently enforce the target set, revoke-all semantics must be completed, bootstrap file stores must move to production persistence, and the full stack must be exercised on a disposable/constrained infrastructure target.
 
 ## Documentation
 
@@ -56,6 +59,7 @@ The Gateway rejects an unreachable powerful request early when `shell=false`, bu
 - `docs/API.md` — current development API surface
 - `docs/EXECUTION_PROTOCOL.md` — staged/claim/start/complete semantics, idempotency and revocation behavior
 - `docs/EXECUTION_POLICY.md` — `exec`/`shell` capability split, powerful execution classes and approval semantics
+- `docs/OPERATIONAL_RISK.md` — semantic administrator mutation/read-only routing introduced in dev.8
 - `docs/SSH_CA.md` — isolated SSH signer and certificate constraints
 - `docs/SSH_EXECUTION.md` — real worker SSH transport, target registry, wrapper and replay boundary
 - `HANDOFF.md` — development state, decisions and operator-mandated workflow rules
