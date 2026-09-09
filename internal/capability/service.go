@@ -60,6 +60,22 @@ func (s *Service) AuthenticateHash(ctx context.Context, hash [32]byte, now time.
 	if err != nil {
 		return domain.Grant{}, err
 	}
+	return authenticateGrant(grant, now)
+}
+
+func (s *Service) AuthenticateID(ctx context.Context, id string, now time.Time) (domain.Grant, error) {
+	grant, err := s.store.GrantByID(ctx, id)
+	if err != nil {
+		return domain.Grant{}, err
+	}
+	return authenticateGrant(grant, now)
+}
+
+func (s *Service) Revoke(ctx context.Context, id string, at time.Time) error {
+	return s.store.RevokeGrant(ctx, id, at)
+}
+
+func authenticateGrant(grant domain.Grant, now time.Time) (domain.Grant, error) {
 	if grant.RevokedAt != nil {
 		return domain.Grant{}, ErrRevoked
 	}
@@ -67,10 +83,6 @@ func (s *Service) AuthenticateHash(ctx context.Context, hash [32]byte, now time.
 		return domain.Grant{}, ErrExpired
 	}
 	return grant, nil
-}
-
-func (s *Service) Revoke(ctx context.Context, id string, at time.Time) error {
-	return s.store.RevokeGrant(ctx, id, at)
 }
 
 func randomID() (string, error) {
