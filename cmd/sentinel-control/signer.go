@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -62,5 +63,6 @@ func loopbackHost(host string) bool {
 	if host == "localhost" {
 		return true
 	}
-	return netParseIPLoopback(host)
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
