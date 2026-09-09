@@ -26,6 +26,9 @@ func run(args []string) error {
 	controlURL := fs.String("control", "", "literal-IP HTTPS Control Plane URL")
 	format := fs.String("format", "pve", "output format: pve or json")
 	checkPath := fs.String("check", "", "compare rendered output byte-for-byte with this file")
+	pveClusterFW := fs.String("pve-cluster-fw", "", "Proxmox Datacenter firewall file to verify")
+	pveVMConfig := fs.String("pve-vm-config", "", "Proxmox worker VM config file to verify")
+	pveNet := fs.String("pve-net", "", "worker VM network interface to verify, for example net0")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -34,6 +37,10 @@ func run(args []string) error {
 	}
 	if strings.TrimSpace(*targetsPath) == "" || strings.TrimSpace(*controlURL) == "" {
 		return errors.New("-targets and -control are required")
+	}
+	activationArgs := []string{strings.TrimSpace(*pveClusterFW), strings.TrimSpace(*pveVMConfig), strings.TrimSpace(*pveNet)}
+	if someButNotAll(activationArgs) {
+		return errors.New("-pve-cluster-fw, -pve-vm-config and -pve-net must be supplied together")
 	}
 
 	store, err := sshtarget.Open(*targetsPath)
@@ -70,9 +77,35 @@ func run(args []string) error {
 			hash, _ := policy.SHA256()
 			return fmt.Errorf("egress policy drift detected for %s (expected policy_sha256=%s)", path, hash)
 		}
-		return nil
 	}
 
+	if activationArgs[0] != "" {
+		clusterFW, err := os.ReadFile(activationArgs[0])
+		if err != nil {
+			return fmt.Errorf("read Proxmox cluster firewall: %w", err)
+		}
+		vmConfig, err := os.ReadFile(activationArgs[1])
+		if err != nil {
+			return fmt.Errorf("read Proxmox VM config: %w", err)
+		}
+		if err := egresspolicy.VerifyPVEActivation(clusterFW, vmConfig, activationArgs[2]); err != nil {
+			return fmt.Errorf("Proxmox firewall activation check failed: %w", err)
+		}
+	}
+
+	if strings.TrimSpace(*checkPath) != "" {
+		return nil
+	}
 	_, err = os.Stdout.Write(rendered)
 	return err
+}
+
+func someButNotAll(values []string) bool {
+	present := 0
+	for _, value := range values {
+		if value != "" {
+			present++
+		}
+	}
+	return present != 0 && present != len(values)
 }
