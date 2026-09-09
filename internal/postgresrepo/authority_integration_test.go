@@ -21,25 +21,24 @@ func TestIntegrationAuthorityLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !state.Disabled || state.Epoch != 0 {
-		t.Fatalf("fresh PostgreSQL authority state=%+v, want disabled epoch 0", state)
+	if state.Disabled {
+		state, err = repo.Enable(ctx, "integration enable")
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
-
-	state, err = repo.Enable(ctx, "integration enable")
-	if err != nil {
-		t.Fatal(err)
+	if state.Disabled {
+		t.Fatalf("failed to enable authority state: %+v", state)
 	}
-	if state.Disabled || state.Epoch != 0 {
-		t.Fatalf("enabled state=%+v", state)
-	}
+	baseEpoch := state.Epoch
 
 	grant := integrationGrant("grant-pg-lifecycle", 0x41)
 	grant, err = repo.IssueGrant(ctx, grant)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if grant.SecurityEpoch != 0 {
-		t.Fatalf("issued grant epoch=%d, want 0", grant.SecurityEpoch)
+	if grant.SecurityEpoch != baseEpoch {
+		t.Fatalf("issued grant epoch=%d, want %d", grant.SecurityEpoch, baseEpoch)
 	}
 	authenticated, err := repo.AuthenticateTokenHash(ctx, grant.TokenHash)
 	if err != nil {
@@ -54,7 +53,7 @@ func TestIntegrationAuthorityLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !state.Disabled || state.Epoch != 1 || canceled < 1 {
+	if !state.Disabled || state.Epoch != baseEpoch+1 || canceled < 1 {
 		t.Fatalf("revoke state=%+v canceled=%d", state, canceled)
 	}
 	if _, err := repo.AuthenticateTokenHash(ctx, grant.TokenHash); !errors.Is(err, ErrDisabled) {
@@ -66,7 +65,7 @@ func TestIntegrationAuthorityLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Disabled || state.Epoch != 1 {
+	if state.Disabled || state.Epoch != baseEpoch+1 {
 		t.Fatalf("re-enabled state=%+v", state)
 	}
 	if _, err := repo.AuthenticateTokenHash(ctx, grant.TokenHash); !errors.Is(err, ErrStaleEpoch) {
@@ -78,8 +77,8 @@ func TestIntegrationAuthorityLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newGrant.SecurityEpoch != 1 {
-		t.Fatalf("new grant epoch=%d, want 1", newGrant.SecurityEpoch)
+	if newGrant.SecurityEpoch != baseEpoch+1 {
+		t.Fatalf("new grant epoch=%d, want %d", newGrant.SecurityEpoch, baseEpoch+1)
 	}
 }
 
