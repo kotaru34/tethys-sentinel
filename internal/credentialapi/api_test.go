@@ -19,6 +19,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
+	"github.com/kotaru34/tethys-sentinel/internal/risk"
 	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 	"github.com/kotaru34/tethys-sentinel/internal/store"
@@ -125,6 +126,51 @@ func TestRunningJobReceivesJobBoundCertificateAndResolvedTarget(t *testing.T) {
 	}
 }
 
+func TestShellCapabilityRequiredBeforeArbitraryCodeCertificate(t *testing.T) {
+	f := newFixtureWithCommand(t, true, []string{"bash", "-c", "id"}, domain.Permissions{Exec: true}, nil)
+	body := certificateBody(t, f.claim, "ssh-ed25519 AAAA-test")
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/"+f.claim.Job.ID+"/ssh-certificate", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+credentialTestWorkerToken)
+	rr := httptest.NewRecorder()
+	f.api.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict || f.signer.calls != 0 {
+		t.Fatalf("shell-less arbitrary code status=%d body=%s signer_calls=%d", rr.Code, rr.Body.String(), f.signer.calls)
+	}
+	job, ok, err := f.jobs.ByID(context.Background(), f.claim.Job.ID)
+	if err != nil || !ok || job.Status != executionjob.Canceled || job.Result == nil || job.Result.ErrorKind != "shell_permission_required_before_ssh_certificate" {
+		t.Fatalf("shell-less job=%+v ok=%v err=%v", job, ok, err)
+	}
+}
+
+func TestShellCapabilityAllowsMatchingArbitraryCodeJobToReachSigner(t *testing.T) {
+	f := newFixtureWithCommand(t, true, []string{"bash", "-c", "id"}, domain.Permissions{Exec: true, Shell: true}, nil)
+	body := certificateBody(t, f.claim, "ssh-ed25519 AAAA-test")
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/"+f.claim.Job.ID+"/ssh-certificate", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+credentialTestWorkerToken)
+	rr := httptest.NewRecorder()
+	f.api.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || f.signer.calls != 1 {
+		t.Fatalf("shell-capable arbitrary code status=%d body=%s signer_calls=%d", rr.Code, rr.Body.String(), f.signer.calls)
+	}
+}
+
+func TestCurrentRiskPolicyRejectsStaleJobClassification(t *testing.T) {
+	stale := risk.Result{Decision: risk.Allow, Level: risk.Low, Category: "DEFAULT", ScopeKey: "bash"}
+	f := newFixtureWithCommand(t, true, []string{"bash", "-c", "id"}, domain.Permissions{Exec: true, Shell: true}, &stale)
+	body := certificateBody(t, f.claim, "ssh-ed25519 AAAA-test")
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/"+f.claim.Job.ID+"/ssh-certificate", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+credentialTestWorkerToken)
+	rr := httptest.NewRecorder()
+	f.api.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict || f.signer.calls != 0 {
+		t.Fatalf("stale policy status=%d body=%s signer_calls=%d", rr.Code, rr.Body.String(), f.signer.calls)
+	}
+	job, ok, err := f.jobs.ByID(context.Background(), f.claim.Job.ID)
+	if err != nil || !ok || job.Status != executionjob.Canceled || job.Result == nil || job.Result.ErrorKind != "risk_policy_changed_before_ssh_certificate" {
+		t.Fatalf("stale policy job=%+v ok=%v err=%v", job, ok, err)
+	}
+}
+
 func TestUnconfiguredTargetFailsBeforeSigner(t *testing.T) {
 	f := newFixture(t, true)
 	api, err := New(f.caps, f.jobs, f.audit, f.signer, failingResolver{}, credentialTestWorkerToken)
@@ -167,12 +213,17 @@ func TestRevocationAfterStartBlocksCertificate(t *testing.T) {
 
 func newFixture(t *testing.T, start bool) *testFixture {
 	t.Helper()
+	return newFixtureWithCommand(t, start, []string{"true"}, domain.Permissions{Exec: true}, nil)
+}
+
+func newFixtureWithCommand(t *testing.T, start bool, argv []string, permissions domain.Permissions, storedRisk *risk.Result) *testFixture {
+	t.Helper()
 	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC)
 	grantStore := store.NewMemoryGrantStore()
 	caps := capability.NewService(grantStore)
 	grant, _, err := caps.Issue(context.Background(), domain.Grant{
 		Agent: "agent-a", Purpose: "test SSH signer", Targets: []string{"dns01"},
-		Permissions: domain.Permissions{Exec: true}, IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+		Permissions: permissions, IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -181,9 +232,18 @@ func newFixture(t *testing.T, start bool) *testFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	classified := risk.Classify(argv)
+	if storedRisk != nil {
+		classified = *storedRisk
+	}
+	approvalID := ""
+	if classified.Decision == risk.ApprovalRequired {
+		approvalID = "approval-test-01"
+	}
 	job, created, err := jobs.Enqueue(context.Background(), executionjob.EnqueueInput{
 		RequestID: "req-credential-01", GrantID: grant.ID, Agent: grant.Agent, Target: "dns01",
-		Argv: []string{"true"}, ExpiresAt: now.Add(30 * time.Second),
+		Argv: append([]string(nil), argv...), ApprovalID: approvalID,
+		RiskCategory: classified.Category, ScopeKey: classified.ScopeKey, ExpiresAt: now.Add(30 * time.Second),
 	})
 	if err != nil || !created {
 		t.Fatalf("enqueue created=%v err=%v", created, err)
