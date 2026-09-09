@@ -17,7 +17,7 @@ func TestArbitraryCodeRequiresAllowOncePerRequest(t *testing.T) {
 	_, token, err := a.caps.Issue(ctx, domain.Grant{
 		Agent: "agent-a", Purpose: "approved diagnostic shell", Targets: []string{"dns01"},
 		Permissions: domain.Permissions{Exec: true, Shell: true},
-		IssuedAt: a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
+		IssuedAt:    a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
