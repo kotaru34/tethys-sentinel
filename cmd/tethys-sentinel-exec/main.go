@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/remotewrapper"
 )
@@ -36,7 +35,7 @@ func main() {
 	if err != nil {
 		fatal(127, err.Error())
 	}
-	if err := remotewrapper.ConsumeExecution("", *jobID, *binding, time.Now()); err != nil {
+	if err := remotewrapper.ConsumeViaHelper(*jobID, *binding); err != nil {
 		fatal(125, err.Error())
 	}
 
