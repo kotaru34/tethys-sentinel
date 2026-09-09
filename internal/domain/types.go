@@ -44,6 +44,7 @@ type Bootstrap struct {
 	Targets       []string             `json:"targets"`
 	Permissions   Permissions          `json:"permissions"`
 	History       HistoryScope         `json:"history"`
+	Resources     ResourceLinks        `json:"resources"`
 	IssuedAt      time.Time            `json:"issued_at"`
 	ExpiresAt     time.Time            `json:"expires_at"`
 	Authoritative AuthoritativeContext `json:"authoritative"`
