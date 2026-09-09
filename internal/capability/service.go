@@ -13,29 +13,38 @@ import (
 )
 
 var (
-	ErrExpired       = errors.New("capability expired")
-	ErrRevoked       = errors.New("capability revoked")
-	ErrGlobalRevoked = errors.New("global AI access revoked")
+	ErrExpired           = errors.New("capability expired")
+	ErrRevoked           = errors.New("capability revoked")
+	ErrGlobalRevoked     = errors.New("global AI access revoked")
+	ErrBackendUnavailable = errors.New("capability backend unavailable")
 )
 
-type Service struct {
-	store     store.GrantStore
-	emergency *emergency.Store
+// Backend owns persistent authority semantics. In particular, production
+// backends may atomically serialize grant issuance with emergency epoch changes.
+type Backend interface {
+	IssueGrant(context.Context, domain.Grant) (domain.Grant, error)
+	AuthenticateHash(context.Context, [32]byte, time.Time) (domain.Grant, error)
+	AuthenticateID(context.Context, string, time.Time) (domain.Grant, error)
+	Revoke(context.Context, string, time.Time) error
 }
 
-func NewService(s store.GrantStore) *Service { return &Service{store: s} }
+type Service struct {
+	backend Backend
+}
+
+func NewService(s store.GrantStore) *Service {
+	return &Service{backend: &legacyBackend{store: s}}
+}
 
 func NewServiceWithEmergency(s store.GrantStore, emergencyStore *emergency.Store) *Service {
-	return &Service{store: s, emergency: emergencyStore}
+	return &Service{backend: &legacyBackend{store: s, emergency: emergencyStore}}
 }
 
+func NewServiceWithBackend(backend Backend) *Service { return &Service{backend: backend} }
+
 func (s *Service) Issue(ctx context.Context, grant domain.Grant) (domain.Grant, string, error) {
-	if s.emergency != nil {
-		state := s.emergency.Snapshot()
-		if state.Disabled {
-			return domain.Grant{}, "", ErrGlobalRevoked
-		}
-		grant.SecurityEpoch = state.Epoch
+	if s == nil || s.backend == nil {
+		return domain.Grant{}, "", ErrBackendUnavailable
 	}
 	if grant.ID == "" {
 		id, err := randomID()
@@ -56,7 +65,8 @@ func (s *Service) Issue(ctx context.Context, grant domain.Grant) (domain.Grant, 
 		return domain.Grant{}, "", err
 	}
 	grant.TokenHash = hash
-	if err := s.store.CreateGrant(ctx, grant); err != nil {
+	grant, err = s.backend.IssueGrant(ctx, grant)
+	if err != nil {
 		return domain.Grant{}, "", err
 	}
 	return grant, token, nil
@@ -70,28 +80,80 @@ func (s *Service) Authenticate(ctx context.Context, token string, now time.Time)
 }
 
 func (s *Service) AuthenticateHash(ctx context.Context, hash [32]byte, now time.Time) (domain.Grant, error) {
-	grant, err := s.store.GrantByTokenHash(ctx, hash)
-	if err != nil {
-		return domain.Grant{}, err
+	if s == nil || s.backend == nil {
+		return domain.Grant{}, ErrBackendUnavailable
 	}
-	return s.authenticateGrant(grant, now)
+	return s.backend.AuthenticateHash(ctx, hash, now)
 }
 
 func (s *Service) AuthenticateID(ctx context.Context, id string, now time.Time) (domain.Grant, error) {
-	grant, err := s.store.GrantByID(ctx, id)
-	if err != nil {
-		return domain.Grant{}, err
+	if s == nil || s.backend == nil {
+		return domain.Grant{}, ErrBackendUnavailable
 	}
-	return s.authenticateGrant(grant, now)
+	return s.backend.AuthenticateID(ctx, id, now)
 }
 
 func (s *Service) Revoke(ctx context.Context, id string, at time.Time) error {
-	return s.store.RevokeGrant(ctx, id, at)
+	if s == nil || s.backend == nil {
+		return ErrBackendUnavailable
+	}
+	return s.backend.Revoke(ctx, id, at)
 }
 
-func (s *Service) authenticateGrant(grant domain.Grant, now time.Time) (domain.Grant, error) {
-	if s.emergency != nil {
-		if err := s.emergency.ValidateEpoch(grant.SecurityEpoch); err != nil {
+type legacyBackend struct {
+	store     store.GrantStore
+	emergency *emergency.Store
+}
+
+func (b *legacyBackend) IssueGrant(ctx context.Context, grant domain.Grant) (domain.Grant, error) {
+	if b.store == nil {
+		return domain.Grant{}, ErrBackendUnavailable
+	}
+	if b.emergency != nil {
+		state := b.emergency.Snapshot()
+		if state.Disabled {
+			return domain.Grant{}, ErrGlobalRevoked
+		}
+		grant.SecurityEpoch = state.Epoch
+	}
+	if err := b.store.CreateGrant(ctx, grant); err != nil {
+		return domain.Grant{}, err
+	}
+	return grant, nil
+}
+
+func (b *legacyBackend) AuthenticateHash(ctx context.Context, hash [32]byte, now time.Time) (domain.Grant, error) {
+	if b.store == nil {
+		return domain.Grant{}, ErrBackendUnavailable
+	}
+	grant, err := b.store.GrantByTokenHash(ctx, hash)
+	if err != nil {
+		return domain.Grant{}, err
+	}
+	return b.authenticateGrant(grant, now)
+}
+
+func (b *legacyBackend) AuthenticateID(ctx context.Context, id string, now time.Time) (domain.Grant, error) {
+	if b.store == nil {
+		return domain.Grant{}, ErrBackendUnavailable
+	}
+	grant, err := b.store.GrantByID(ctx, id)
+	if err != nil {
+		return domain.Grant{}, err
+	}
+	return b.authenticateGrant(grant, now)
+}
+
+func (b *legacyBackend) Revoke(ctx context.Context, id string, at time.Time) error {
+	if b.store == nil {
+		return ErrBackendUnavailable
+	}
+	return b.store.RevokeGrant(ctx, id, at)
+}
+
+func (b *legacyBackend) authenticateGrant(grant domain.Grant, now time.Time) (domain.Grant, error) {
+	if b.emergency != nil {
+		if err := b.emergency.ValidateEpoch(grant.SecurityEpoch); err != nil {
 			return domain.Grant{}, ErrGlobalRevoked
 		}
 	}
