@@ -1,8 +1,10 @@
 # Execution policy and powerful-command boundary
 
-This document defines the execution-risk boundary introduced for `0.1.0-dev.7`.
+This document defines the powerful-execution boundary introduced in `0.1.0-dev.7` and retained by `0.1.0-dev.8`.
 
 The policy deliberately does **not** attempt to prove arbitrary shell/interpreter syntax safe. A command that can act as a general code carrier, privilege launcher, or lateral/remote execution primitive is treated as a broader execution capability even when its top-level argv looks simple.
+
+`0.1.0-dev.8` adds a separate semantic operational-risk layer for administrator mutations such as service/network/package/storage/container/hypervisor state. See `docs/OPERATIONAL_RISK.md`. That layer routes approval decisions but does not weaken or replace the powerful-execution boundary described here.
 
 ## Capability model
 
@@ -31,10 +33,9 @@ Current classes requiring `shell=true` are:
 Examples include:
 
 - shells and interpreters such as `sh`, `bash`, Python, Perl, Ruby, Node, PHP, Lua and PowerShell;
-- general command carriers/launchers such as `env`, `xargs`, `timeout`, `nohup`, `nice`, `setsid`, `flock`, `watch`, `make`, editors/debuggers and similar tools;
-- `docker`/`podman` operations such as `run`, `exec` and `create`;
-- `find -exec`/`-execdir`;
-- GNU tar checkpoint actions that execute a command;
+- general command carriers/launchers such as `env`, `xargs`, `timeout`, `nohup`, `nice`, `setsid`, `flock`, `watch`, build tools, editors/debuggers and similar escape-capable tools;
+- container operations that execute/start/build mutable workloads;
+- `find -exec`/`-execdir`, executable tar/cpio modes, compiler/linker/plugin and VCS escape surfaces;
 - `go run` / `cargo run`;
 - arbitrary absolute-path executables outside the fixed trusted system binary directories.
 
@@ -42,13 +43,13 @@ This list is conservative and is expected to grow as bypass patterns are found.
 
 ### `PRIVILEGE_LAUNCHER`
 
-Examples include `sudo`, `doas`, `su`, `runuser`, `pkexec`, `setpriv`, `capsh`, `chroot`, `nsenter`, `unshare`, `systemd-run` and `machinectl`.
+Examples include `sudo`, `doas`, `su`, `runuser`, `pkexec`, `setpriv`, `capsh`, `chroot`, `nsenter`, `unshare`, `systemd-run`, `machinectl`, and equivalent privilege/identity/namespace launchers.
 
 The classifier does not attempt to infer that a particular invocation is harmless. These tools can alter privilege, namespace, execution identity, or process boundary and therefore require explicit broader authority.
 
 ### `REMOTE_EXEC`
 
-Examples include SSH-family tools, Ansible/Salt remote execution, netcat/socat-style network pivots, Kubernetes `exec`/`run`/`debug`/`attach`/`port-forward`/`proxy`, and remote/machine `systemctl` transports.
+Examples include SSH-family tools, Ansible/Salt remote execution, netcat/socat-style network pivots, Kubernetes exec/copy/port-forward operations, remote/machine service transports, container remote contexts, namespace/jail/VM console or guest-execution paths.
 
 These operations can cross the logical target boundary or create another execution/network path, so they require `shell=true` in addition to operator approval.
 
@@ -64,7 +65,7 @@ However, an identical argv still does not prove identical behavior. For example:
 bash /tmp/task.sh
 ```
 
-can execute different content if `/tmp/task.sh` changes after approval. The same problem applies to interpreters, config-driven launchers, remote destinations whose state changes, and many other code carriers.
+can execute different content if `/tmp/task.sh` changes after approval. The same problem applies to interpreters, config-driven launchers, container images, remote destinations and other mutable inputs.
 
 Therefore:
 
@@ -74,7 +75,7 @@ Therefore:
 
 `allow_session` is rejected for those categories even when argv is identical. Legacy persisted `allow_session` decisions for these categories are ignored and cannot match after upgrade.
 
-Narrow semantic categories such as a specific service restart may still support scoped session approval when their rule defines a stable resource scope.
+Narrow semantic operational categories may still support scoped session approval where their classifier defines a stable reusable operation/resource. See `docs/OPERATIONAL_RISK.md`.
 
 ## Policy freshness at signing time
 
@@ -96,4 +97,4 @@ If policy changed since job creation, certificate issuance fails closed and the 
 
 Classification is a risk-routing layer, not a proof that commands left in lower-risk categories are intrinsically safe. Hard limits still come from capability scope, approvals, SSH credential constraints, target account permissions, forced-command/replay enforcement, sudo/doas rules and network isolation.
 
-Operational semantic coverage will continue to be expanded separately; missing a semantic risk rule must not be treated as permission to bypass the lower enforcement layers.
+`dev.8` materially expands semantic coverage, but missing a future executable/option/escape must never be interpreted as permission to bypass those lower enforcement layers.
