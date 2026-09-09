@@ -16,6 +16,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
+	"github.com/kotaru34/tethys-sentinel/internal/risk"
 	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 )
@@ -85,12 +86,29 @@ func (a *API) issueCertificate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "SSH certificate issuance rejected")
 		return
 	}
-	if _, err := a.caps.AuthenticateID(r.Context(), job.GrantID, a.now()); err != nil {
+
+	currentRisk := risk.Classify(job.Argv)
+	if currentRisk.Decision == risk.Deny || currentRisk.Category != job.RiskCategory || currentRisk.ScopeKey != job.ScopeKey {
+		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "risk_policy_changed_before_ssh_certificate")
+		a.auditRejection(r.Context(), req.WorkerID, job, "current risk policy no longer matches the immutable execution job")
+		writeError(w, http.StatusConflict, "SSH certificate issuance rejected because execution policy changed")
+		return
+	}
+
+	grant, err := a.caps.AuthenticateID(r.Context(), job.GrantID, a.now())
+	if err != nil {
 		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "grant_inactive_before_ssh_certificate")
 		a.auditRejection(r.Context(), req.WorkerID, job, "grant inactive before SSH certificate issuance")
 		writeError(w, http.StatusConflict, "SSH certificate issuance rejected")
 		return
 	}
+	if risk.RequiresShell(currentRisk) && !grant.Permissions.Shell {
+		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "shell_permission_required_before_ssh_certificate")
+		a.auditRejection(r.Context(), req.WorkerID, job, "powerful execution class requires explicit shell capability")
+		writeError(w, http.StatusConflict, "SSH certificate issuance rejected because shell capability is not granted")
+		return
+	}
+
 	target, err := a.targets.Resolve(job.Target)
 	if err != nil {
 		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "ssh_target_resolution_failed")
