@@ -56,6 +56,9 @@ func TestBuildRequiresLiteralHTTPSControlAndTargets(t *testing.T) {
 		"http://10.169.0.10:9091",
 		"https://control.internal:9091",
 		"https://0.0.0.0:9091",
+		"https://127.0.0.1:9091",
+		"https://[::1]:9091",
+		"https://[fe80::10]:9091",
 		"https://10.169.0.10:9091/path",
 		"https://user@10.169.0.10:9091",
 	} {
@@ -66,8 +69,10 @@ func TestBuildRequiresLiteralHTTPSControlAndTargets(t *testing.T) {
 	if _, err := Build("https://10.169.0.10:9091", nil); err == nil {
 		t.Fatal("empty target inventory accepted")
 	}
-	if _, err := Build("https://10.169.0.10:9091", []sshtarget.Spec{{Name: "dns01", Address: "dns01.internal:22"}}); err == nil {
-		t.Fatal("DNS SSH destination accepted")
+	for _, address := range []string{"dns01.internal:22", "127.0.0.1:22", "[::1]:22", "[fe80::53]:22"} {
+		if _, err := Build("https://10.169.0.10:9091", []sshtarget.Spec{{Name: "dns01", Address: address}}); err == nil {
+			t.Fatalf("unsafe SSH destination accepted: %s", address)
+		}
 	}
 }
 
