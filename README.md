@@ -30,7 +30,7 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 
 ## Status
 
-`0.1.0-dev.9` release candidate — the real SSH execution boundary, powerful-command policy and semantic operational-risk routing now have an independent worker egress policy layer designed for host-side Proxmox VE enforcement.
+`0.1.0-dev.9` — the real SSH execution boundary, powerful-command policy and semantic operational-risk routing now have an independent worker egress policy layer designed for host-side Proxmox VE enforcement.
 
 The worker path remains:
 
