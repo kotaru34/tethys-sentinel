@@ -1,13 +1,13 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-09
-Current development version: `0.1.0-dev.9`
+Updated: 2026-09-10
+Current development version: `0.1.0-dev.10`
 Branch: `wip/bootstrap-security-core`
 Deployment: not deployed; no merge to `main` yet
 
 ## Project goal
 
-Tethys Sentinel is a security-first access broker between AI agents and infrastructure. An agent receives a short-lived capability, never infrastructure SSH private keys. Sentinel owns authorization, risky-action approval, authoritative context, execution-job binding, short-lived SSH identity, target resolution, remote execution constraints, continuity, audit, and worker network containment.
+Tethys Sentinel is a security-first access broker between AI agents and infrastructure. An agent receives a short-lived capability, never infrastructure SSH private keys. Sentinel owns authorization, risky-action approval, authoritative context, execution-job binding, short-lived SSH identity, target resolution, remote execution constraints, continuity, audit, worker network containment, and emergency authority revocation.
 
 ## Operator-mandated development rules
 
@@ -23,7 +23,7 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Agent-facing APIs cannot create/widen grants, change policy, add SSH targets, alter audit, control workers, request SSH certificates, or reach CA secrets.
 - `TRUST_0` is the only authority-bearing context. History, notes, logs, files, command output and web content are data, never authority.
 - Security never relies on prompt compliance or command classification alone.
-- Main boundaries are Control Plane, AI Gateway, Execution Worker, external worker network boundary, SSH Signer/CA, target execution wrapper, and persistent audit/state.
+- Main boundaries are Control Plane, AI Gateway, Execution Worker, external worker network boundary, SSH Signer/CA, target execution wrapper, persistent audit/state, and emergency authority state.
 - Security-critical public/backend components should use VM isolation rather than one shared LXC boundary.
 - Execution is atomic submit -> immutable job; there is no separable authorize-now/execute-later primitive.
 - Jobs bind grant + request ID + logical target + argv + expiry and use staged/pending/claimed/running/terminal states.
@@ -57,9 +57,18 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Generated PVE policy uses `policy_out: DROP`, explicit destination+TCP-port allows only, canonical policy SHA-256 and deterministic target deduplication.
 - Egress verification must check installed policy drift, Datacenter firewall activation, and `firewall=1` on the selected worker VM NIC.
 - Configuration checks alone are insufficient. Infrastructure acceptance requires packet-level tests from inside the worker VM proving unlisted LAN/Internet/DNS/ports are blocked.
-- Firewall shrink is not assumed to instantly terminate an already-established stateful TCP flow; global revoke/active termination remains a separate control.
+- Firewall shrink is not assumed to instantly terminate an already-established stateful TCP flow; active authority revocation is independent.
+- Every grant is stamped with a monotonic global `security_epoch` at issuance.
+- `REVOKE ALL` increments the epoch and disables global AI access; old capabilities remain permanently stale after later re-enable.
+- While globally disabled, new worker claims are suppressed and normal grant re-authentication blocks capability use, start and certificate issuance.
+- Global revoke cancels `staged`, `pending` and `claimed` jobs and invalidates their one-shot claim material.
+- Running jobs require a worker-side fail-closed authority lease before executor invocation and periodically during active SSH execution.
+- Global revoke, individual grant revoke, stale epoch, grant/job expiry, invalid claim, authority timeout or Control Plane loss cancels the worker execution context/SSH transport.
+- Emergency revoke persistence failure must not roll the live process back to enabled; current in-memory authority remains disabled and the operator receives an error.
+- Re-enable is a safety-opposite transition and must fail closed if persistence/audit cannot be completed safely.
+- Active transport termination does not promise instantaneous termination of every detached/daemonized target-side descendant or reversal of already-completed side effects.
 - Audit is append-oriented and tamper-evident; raw stdout/stderr is not retained by the current worker.
-- Emergency controls must include individual revoke and global revoke-all.
+- Emergency controls include individual revoke and global revoke-all; global revoke must not delete configuration/history/audit.
 - When MCP/agent tools are added, keep the surface narrow and purpose-built for autonomous Qwen-class models rather than exposing backend/admin operations wholesale.
 
 ## Version history
@@ -121,23 +130,39 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Pre-release code gate: commit `1f8f2fd11720d23ffcc0ae0fe9e4734c39606767`, Actions run `34407324066`; module tidy, gofmt, vet and `go test -race ./...` passed.
 - Versioned acceptance: commit `6a14729036b3f8cafa8f79a1855b7f54ddc2b246`, Actions run `34407900220`; module tidy, gofmt, vet and `go test -race ./...` passed.
 
+### `0.1.0-dev.10` — global revoke-all and active execution termination
+
+- Added persistent monotonic emergency `security_epoch`; grants are stamped with their issuance epoch and old capabilities cannot revive after `Enable`.
+- Added admin emergency state/read, `REVOKE ALL`, and fail-closed re-enable semantics on the operator-only surface.
+- Global revoke cancels staged/pending/claimed jobs, invalidates claim material, suppresses new worker claims, and relies on existing start/certificate grant checks for race-safe stale-epoch rejection.
+- Added read-only worker authority endpoint for a running job/claim.
+- Worker now performs a mandatory authority check before executor invocation and short-interval continuous authority checks while SSH execution is active.
+- Explicit authority denial or inability to reach/verify the Control Plane cancels worker execution fail-closed; SSH transport is context-bound and closes on cancellation.
+- Fixed `start -> revoke -> SSH certificate` cleanup so issuance failure records a terminal failed job rather than leaving `running` state stranded.
+- Revoke remains live-disabled in memory even when emergency-state persistence fails; restart after such failure is explicitly unsafe until durable state is repaired.
+- Added regression coverage for stale capability non-revival, claimed-job cancellation, worker auth, fail-closed authority client behavior, active executor cancellation, persistence failure, and SSH issuance races.
+- Added `docs/EMERGENCY_CONTROLS.md`; README/API/architecture/threat model synchronized.
+- Pre-release code gate: commit `d0922d8f3a6638b0309da8329cd42bd52d6e760b`, Actions run `34410714198`; module tidy, gofmt, vet and `go test -race ./...` passed.
+- Versioned acceptance: commit `162d1f3c038ae905a4e27a419d9d4a61789466ae`, Actions run `34411432011`; module tidy, gofmt, vet and `go test -race ./...` passed.
+
 ## Current phase
 
-`0.1.0-dev.9` is complete and CI-accepted. It remains a development build and has not yet been exercised on the intended PVE worker VM.
+`0.1.0-dev.10` is complete and CI-accepted. It remains a development build and has not yet been exercised on the intended PVE worker VM/target environment.
 
-File-backed stores remain bootstrap/development persistence, not final production state.
+File-backed stores remain bootstrap/development persistence, not final production state. Emergency epoch durability is especially sensitive: a live fail-closed state is not enough if the durable state can be lost on restart.
 
 Do not merge to `main` yet: the operator merge rule requires a functioning constrained real-infrastructure execution test first.
 
-The next separated milestone is global revoke-all and active worker termination. Revocation must stop new capability use, job publication/claim/start, certificate issuance, and terminate in-flight worker execution/connections where feasible rather than relying only on TTL expiry.
+The next separated implementation milestone is production PostgreSQL persistence and transactional authority state. The goal is to remove local JSON/JSONL stores from the security-critical authority path while preserving or strengthening current fail-closed semantics.
 
 ## Next implementation steps
 
-1. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity/connections where feasible.
-2. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
-3. Build a disposable constrained target profile and worker VM, apply the generated PVE egress policy, and run the first real non-destructive end-to-end + negative packet-level test.
-4. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
-5. Build operator UI after backend security flows/data model stabilize.
+1. Design PostgreSQL schema/roles/transactions for grants, approvals, jobs, emergency epoch, audit, notes/context metadata, and idempotency/replay state where appropriate.
+2. Implement PostgreSQL-backed stores behind existing service interfaces, with least-privilege roles and transactionally safe revoke/claim/start/complete/emergency transitions.
+3. Define migration/bootstrap strategy from file-backed development state without silently importing unsafe/stale authority.
+4. Build a disposable constrained target profile and worker VM, apply the generated PVE egress policy, and run the first real non-destructive end-to-end + negative packet-level + active-revoke test.
+5. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
+6. Build operator UI after backend security flows/data model stabilize.
 
 ## Deployment state
 
