@@ -23,6 +23,7 @@ type Status string
 const (
 	Pending   Status = "pending"
 	Claimed   Status = "claimed"
+	Running   Status = "running"
 	Succeeded Status = "succeeded"
 	Failed    Status = "failed"
 	Canceled  Status = "canceled"
@@ -30,11 +31,12 @@ const (
 )
 
 var (
-	ErrNoJob          = errors.New("no execution job available")
+	ErrNoJob           = errors.New("no execution job available")
 	ErrRequestConflict = errors.New("request id already bound to a different command")
-	ErrInvalidClaim   = errors.New("invalid execution job claim")
-	ErrNotPending     = errors.New("execution job is not pending")
-	ErrIntegrity      = errors.New("execution job store integrity check failed")
+	ErrInvalidClaim    = errors.New("invalid execution job claim")
+	ErrNotPending      = errors.New("execution job is not pending")
+	ErrExpired         = errors.New("execution job expired")
+	ErrIntegrity       = errors.New("execution job store integrity check failed")
 )
 
 type Job struct {
@@ -52,6 +54,7 @@ type Job struct {
 	ExpiresAt     time.Time  `json:"expires_at"`
 	Status        Status     `json:"status"`
 	ClaimedAt     *time.Time `json:"claimed_at,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 	Result        *Result    `json:"result,omitempty"`
 }
@@ -102,10 +105,10 @@ func Open(path string, authKey []byte) (*Store, error) {
 		return nil, errors.New("execution job auth key must be at least 32 bytes")
 	}
 	s := &Store{
-		path: path,
+		path:    path,
 		authKey: append([]byte(nil), authKey...),
 		records: make(map[string]record),
-		now: func() time.Time { return time.Now().UTC() },
+		now:     func() time.Time { return time.Now().UTC() },
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -235,7 +238,7 @@ func (s *Store) Claim(_ context.Context) (Claim, error) {
 	return Claim{}, ErrNoJob
 }
 
-func (s *Store) Complete(_ context.Context, id, claimToken string, result Result) (Job, error) {
+func (s *Store) Start(_ context.Context, id, claimToken string) (Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[id]
@@ -245,19 +248,49 @@ func (s *Store) Complete(_ context.Context, id, claimToken string, result Result
 	if err := s.verifyRecord(rec); err != nil {
 		return Job{}, err
 	}
-	got := sha256.Sum256([]byte(claimToken))
-	want, err := hex.DecodeString(rec.ClaimTokenSHA256)
-	if err != nil || len(want) != sha256.Size || subtle.ConstantTimeCompare(got[:], want) != 1 {
+	if !validClaimToken(rec, claimToken) {
 		return Job{}, ErrInvalidClaim
 	}
-	if result.OutputSHA256 != "" {
-		decoded, err := hex.DecodeString(result.OutputSHA256)
-		if err != nil || len(decoded) != sha256.Size {
-			return Job{}, errors.New("output_sha256 must be a 64-character SHA-256 hex digest")
+	old := copyRecord(rec)
+	now := s.now()
+	if !now.Before(rec.Job.ExpiresAt) {
+		rec.Job.Status = Expired
+		rec.ClaimTokenSHA256 = ""
+		rec.IntegrityMAC, _ = s.recordMAC(rec)
+		s.records[id] = rec
+		if err := s.persistLocked(); err != nil {
+			s.records[id] = old
+			return Job{}, err
 		}
+		return Job{}, ErrExpired
 	}
-	if len(result.ErrorKind) > 128 {
-		return Job{}, errors.New("error_kind is too long")
+	rec.Job.Status = Running
+	t := now
+	rec.Job.StartedAt = &t
+	rec.IntegrityMAC, _ = s.recordMAC(rec)
+	s.records[id] = rec
+	if err := s.persistLocked(); err != nil {
+		s.records[id] = old
+		return Job{}, err
+	}
+	return copyJob(rec.Job), nil
+}
+
+func (s *Store) Complete(_ context.Context, id, claimToken string, result Result) (Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[id]
+	if !ok || rec.Job.Status != Running {
+		return Job{}, ErrInvalidClaim
+	}
+	if err := s.verifyRecord(rec); err != nil {
+		return Job{}, err
+	}
+	if !validClaimToken(rec, claimToken) {
+		return Job{}, ErrInvalidClaim
+	}
+	if err := validateResult(result); err != nil {
+		return Job{}, err
 	}
 	old := copyRecord(rec)
 	now := s.now()
@@ -268,6 +301,41 @@ func (s *Store) Complete(_ context.Context, id, claimToken string, result Result
 	} else {
 		rec.Job.Status = Failed
 	}
+	rec.ClaimTokenSHA256 = ""
+	rec.IntegrityMAC, _ = s.recordMAC(rec)
+	s.records[id] = rec
+	if err := s.persistLocked(); err != nil {
+		s.records[id] = old
+		return Job{}, err
+	}
+	return copyJob(rec.Job), nil
+}
+
+func (s *Store) RejectClaim(_ context.Context, id, claimToken, errorKind string) (Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[id]
+	if !ok || (rec.Job.Status != Claimed && rec.Job.Status != Running) {
+		return Job{}, ErrInvalidClaim
+	}
+	if err := s.verifyRecord(rec); err != nil {
+		return Job{}, err
+	}
+	if !validClaimToken(rec, claimToken) {
+		return Job{}, ErrInvalidClaim
+	}
+	result := Result{Success: false, ExitCode: -1, ErrorKind: strings.TrimSpace(errorKind)}
+	if result.ErrorKind == "" {
+		result.ErrorKind = "execution_rejected"
+	}
+	if err := validateResult(result); err != nil {
+		return Job{}, err
+	}
+	old := copyRecord(rec)
+	now := s.now()
+	rec.Job.Status = Canceled
+	rec.Job.CompletedAt = &now
+	rec.Job.Result = &result
 	rec.ClaimTokenSHA256 = ""
 	rec.IntegrityMAC, _ = s.recordMAC(rec)
 	s.records[id] = rec
@@ -297,6 +365,47 @@ func (s *Store) CancelPending(_ context.Context, id string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) CancelPendingByGrant(_ context.Context, grantID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := make(map[string]record)
+	count := 0
+	for id, rec := range s.records {
+		if rec.Job.GrantID != grantID || rec.Job.Status != Pending {
+			continue
+		}
+		if err := s.verifyRecord(rec); err != nil {
+			return 0, err
+		}
+		changed[id] = rec
+		rec.Job.Status = Canceled
+		rec.IntegrityMAC, _ = s.recordMAC(rec)
+		s.records[id] = rec
+		count++
+	}
+	if count == 0 {
+		return 0, nil
+	}
+	if err := s.persistLocked(); err != nil {
+		s.rollbackLocked(changed)
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *Store) ByID(_ context.Context, id string) (Job, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[id]
+	if !ok {
+		return Job{}, false, nil
+	}
+	if err := s.verifyRecord(rec); err != nil {
+		return Job{}, false, err
+	}
+	return copyJob(rec.Job), true, nil
 }
 
 func (s *Store) ByRequest(_ context.Context, grantID, requestID string) (Job, bool, error) {
@@ -334,6 +443,19 @@ func validateInput(in EnqueueInput) error {
 	return nil
 }
 
+func validateResult(result Result) error {
+	if result.OutputSHA256 != "" {
+		decoded, err := hex.DecodeString(result.OutputSHA256)
+		if err != nil || len(decoded) != sha256.Size {
+			return errors.New("output_sha256 must be a 64-character SHA-256 hex digest")
+		}
+	}
+	if len(result.ErrorKind) > 128 {
+		return errors.New("error_kind is too long")
+	}
+	return nil
+}
+
 func bindingHash(grantID, requestID, target string, argv []string) (string, error) {
 	payload := struct {
 		GrantID   string   `json:"grant_id"`
@@ -347,6 +469,12 @@ func bindingHash(grantID, requestID, target string, argv []string) (string, erro
 	}
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:]), nil
+}
+
+func validClaimToken(rec record, claimToken string) bool {
+	got := sha256.Sum256([]byte(claimToken))
+	want, err := hex.DecodeString(rec.ClaimTokenSHA256)
+	return err == nil && len(want) == sha256.Size && subtle.ConstantTimeCompare(got[:], want) == 1
 }
 
 func (s *Store) verifyRecord(rec record) error {
@@ -443,6 +571,10 @@ func copyJob(in Job) Job {
 	if in.ClaimedAt != nil {
 		t := *in.ClaimedAt
 		out.ClaimedAt = &t
+	}
+	if in.StartedAt != nil {
+		t := *in.StartedAt
+		out.StartedAt = &t
 	}
 	if in.CompletedAt != nil {
 		t := *in.CompletedAt
