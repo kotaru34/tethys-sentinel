@@ -1,7 +1,7 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.8` (`0.1.0-dev.9` release candidate)
+Current development version: `0.1.0-dev.9`
 Branch: `wip/bootstrap-security-core`
 Deployment: not deployed; no merge to `main` yet
 
@@ -105,7 +105,7 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Pre-release code gate: commit `41773a133e59344f56d51a1b08317a974f1f67de`, Actions run `34405504004`.
 - Versioned acceptance: commit `4fcde4fa771f5008cbd696e4889ca51b564a9507`, Actions run `34406118118`; module tidy, gofmt, vet and `go test -race ./...` passed.
 
-### `0.1.0-dev.9` — external worker egress enforcement (release candidate)
+### `0.1.0-dev.9` — external worker egress enforcement
 
 - Added deterministic `sentinel-egress-policy` operator utility and `internal/egresspolicy` model.
 - Runtime policy is deny-by-default and permits only literal-IP Control Plane HTTPS plus registered target SSH IP:port endpoints.
@@ -119,23 +119,25 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Documented stateful-flow caveat: external rule shrink is containment, not guaranteed immediate active-session termination.
 - Added `docs/WORKER_EGRESS.md`; README/architecture/threat model synchronized.
 - Pre-release code gate: commit `1f8f2fd11720d23ffcc0ae0fe9e4734c39606767`, Actions run `34407324066`; module tidy, gofmt, vet and `go test -race ./...` passed.
+- Versioned acceptance: commit `6a14729036b3f8cafa8f79a1855b7f54ddc2b246`, Actions run `34407900220`; module tidy, gofmt, vet and `go test -race ./...` passed.
 
 ## Current phase
 
-`0.1.0-dev.9` code and documentation are complete as a release candidate. Remaining release work is the version/build-info bump and a clean versioned acceptance CI.
+`0.1.0-dev.9` is complete and CI-accepted. It remains a development build and has not yet been exercised on the intended PVE worker VM.
 
-It remains a development build and has not been exercised on the intended PVE worker VM. File-backed stores remain bootstrap/development persistence, not final production state.
+File-backed stores remain bootstrap/development persistence, not final production state.
 
 Do not merge to `main` yet: the operator merge rule requires a functioning constrained real-infrastructure execution test first.
 
+The next separated milestone is global revoke-all and active worker termination. Revocation must stop new capability use, job publication/claim/start, certificate issuance, and terminate in-flight worker execution/connections where feasible rather than relying only on TTL expiry.
+
 ## Next implementation steps
 
-1. Finalize `0.1.0-dev.9` version/build-info and versioned acceptance CI.
-2. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity/connections where feasible.
-3. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
-4. Build a disposable constrained target profile and worker VM, apply the generated PVE egress policy, and run the first real non-destructive end-to-end + negative packet-level test.
-5. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
-6. Build operator UI after backend security flows/data model stabilize.
+1. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity/connections where feasible.
+2. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
+3. Build a disposable constrained target profile and worker VM, apply the generated PVE egress policy, and run the first real non-destructive end-to-end + negative packet-level test.
+4. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
+5. Build operator UI after backend security flows/data model stabilize.
 
 ## Deployment state
 
