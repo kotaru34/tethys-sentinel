@@ -17,6 +17,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
+	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 )
 
 type Signer interface {
@@ -28,19 +29,20 @@ type API struct {
 	jobs           *executionjob.Store
 	audit          *audit.Log
 	signer         Signer
+	targets        sshtarget.Resolver
 	workerTokenSHA [32]byte
 	now            func() time.Time
 }
 
-func New(caps *capability.Service, jobs *executionjob.Store, auditLog *audit.Log, signer Signer, workerToken string) (*API, error) {
-	if caps == nil || jobs == nil || auditLog == nil || signer == nil {
-		return nil, errors.New("capability, job, audit and signer dependencies are required")
+func New(caps *capability.Service, jobs *executionjob.Store, auditLog *audit.Log, signer Signer, targets sshtarget.Resolver, workerToken string) (*API, error) {
+	if caps == nil || jobs == nil || auditLog == nil || signer == nil || targets == nil {
+		return nil, errors.New("capability, job, audit, signer and SSH target dependencies are required")
 	}
 	if len(workerToken) < 32 {
 		return nil, errors.New("worker token must be at least 32 characters")
 	}
 	return &API{
-		caps: caps, jobs: jobs, audit: auditLog, signer: signer,
+		caps: caps, jobs: jobs, audit: auditLog, signer: signer, targets: targets,
 		workerTokenSHA: sha256.Sum256([]byte(workerToken)),
 		now:            func() time.Time { return time.Now().UTC() },
 	}, nil
@@ -89,6 +91,19 @@ func (a *API) issueCertificate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "SSH certificate issuance rejected")
 		return
 	}
+	target, err := a.targets.Resolve(job.Target)
+	if err != nil {
+		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "ssh_target_resolution_failed")
+		a.auditRejection(r.Context(), req.WorkerID, job, "operator-owned SSH target resolution failed")
+		writeError(w, http.StatusServiceUnavailable, "SSH target is not configured for execution")
+		return
+	}
+	if target.Name != job.Target {
+		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "ssh_target_identity_mismatch")
+		a.auditRejection(r.Context(), req.WorkerID, job, "resolved SSH target identity does not match job target")
+		writeError(w, http.StatusServiceUnavailable, "SSH target configuration is inconsistent")
+		return
+	}
 
 	certificate, err := a.signer.Sign(r.Context(), sshsigner.Request{
 		JobID: job.ID, GrantID: job.GrantID, Target: job.Target, CommandSHA256: job.CommandSHA256,
@@ -113,6 +128,8 @@ func (a *API) issueCertificate(w http.ResponseWriter, r *http.Request) {
 			"certificate_fingerprint": certificate.CertificateFingerprint,
 			"public_key_fingerprint":  certificate.PublicKeyFingerprint,
 			"valid_before":            certificate.ValidBefore.Format(time.RFC3339Nano),
+			"ssh_address":             target.Address,
+			"ssh_user":                target.User,
 		},
 	}); err != nil {
 		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "audit_failure_after_ssh_certificate")
@@ -120,7 +137,7 @@ func (a *API) issueCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, internalapi.IssueSSHCertificateResponse{Job: job, Certificate: certificate})
+	writeJSON(w, http.StatusOK, internalapi.IssueSSHCertificateResponse{Job: job, Certificate: certificate, Target: target})
 }
 
 func (a *API) auditRejection(ctx context.Context, workerID string, job executionjob.Job, reason string) {
