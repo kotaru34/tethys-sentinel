@@ -15,7 +15,7 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 
 ## Status
 
-`0.1.0-dev.0` — security architecture and core capability/risk engine are under active development on `wip/bootstrap-security-core`.
+`0.1.0-dev.1` — control-plane/gateway trust boundary is implemented for grant issuance, mTLS introspection, Trust-0 bootstrap, revocation and command risk evaluation. Real SSH execution is intentionally not enabled yet.
 
 **Do not expose this project to untrusted networks yet.** No release is considered deployable until it has been tested and merged as WIP according to the project workflow.
 

@@ -1,7 +1,7 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.0`
+Current development version: `0.1.0-dev.1`
 Branch: `wip/bootstrap-security-core`
 
 ## Project goal
@@ -31,7 +31,7 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Risk engine intercepts sensitive commands. Default decision is approval-required rather than permanent deny where safely supportable.
 - Approval choices: deny, allow once, allow narrowly for the current session. Session approval is scoped to rule + target + relevant resource, not all dangerous commands.
 - Security enforcement must not rely on prompts or regex classification alone. Multiple independent layers are required.
-- Planned boundaries: Control Plane, AI Gateway, Execution Worker, SSH CA/Signer, PostgreSQL/audit storage.
+- Planned boundaries: Control Plane, AI Gateway, Execution Worker, SSH CA/Signer, persistent audit/storage.
 - Prefer VM isolation for security-critical public-facing/backend components rather than putting the whole trust boundary in one LXC.
 - Planned SSH model: short-lived OpenSSH certificates; no agent forwarding; forwarding/upload/download are separate capabilities.
 - Audit is append-oriented and tamper-evident; raw stdout/stderr retention is configurable because outputs may contain secrets.
@@ -39,24 +39,34 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 
 ## Work completed
 
-- Repository initialized.
-- WIP development branch created.
-- Initial architecture/threat model documents added in this phase.
-- Core opaque-token and capability lifecycle implementation prepared and locally unit-tested.
-- Initial risk classifier implementation prepared and locally unit-tested.
+- Repository initialized and WIP branch created.
+- Architecture and threat model documented.
+- Opaque 256-bit capability tokens implemented; only SHA-256 hashes are retained.
+- Capability issue/authenticate/expiry/revoke lifecycle implemented and unit-tested.
+- Persistent atomic file-backed grant store implemented for the bootstrap milestone (0600 state file, atomic rename/fsync).
+- Initial risky-command classifier implemented and unit-tested.
+- Separate control-plane and gateway APIs implemented.
+- Admin grant issuance/revocation is physically absent from the gateway API.
+- Gateway sends only capability hashes to the internal introspection API.
+- Internal control-plane connection supports TLS 1.3 mutual TLS; plaintext requires an explicit loopback-only development flag.
+- Public gateway requires TLS 1.3; plaintext requires an explicit loopback-only development flag.
+- Gateway Trust-0 `/v1/bootstrap` and scoped `/v1/commands/evaluate` implemented and tested.
+- Local `go test ./...` and `go vet ./...` pass on the implementation (source remains compatible with the local Go toolchain; CI targets Go 1.27.1).
 
 ## Current phase
 
-Phase 0/1: establish security invariants and implement the capability/policy core before any real SSH execution path is enabled.
+`0.1.0-dev.1`: prove capability and process trust boundaries end-to-end before enabling any SSH execution. No real infrastructure action endpoint exists yet by design.
 
 ## Next implementation steps
 
-1. Commit the tested capability/risk core and CI.
-2. Add persistent PostgreSQL model for grants, approvals, audit events, inventory and notes.
-3. Split runnable services into control-plane, gateway and worker APIs with least-privilege DB roles/internal interfaces.
-4. Implement approval workflow and tamper-evident audit chain.
-5. Implement SSH certificate signer and worker only after policy enforcement is covered by tests.
-6. Build the operator UI after backend security boundaries and flows are stable.
+1. Commit `0.1.0-dev.1` and validate CI.
+2. Add approval objects and append-only tamper-evident audit events.
+3. Add agent history/notes with explicit per-grant read/write scope.
+4. Add inventory and authoritative runbook/context delivery.
+5. Implement execution worker job protocol.
+6. Implement isolated SSH certificate signer and remote hard-limit policy.
+7. Only then enable real SSH execution and perform a constrained test deployment.
+8. Build operator UI after backend security flows stabilize.
 
 ## Deployment state
 
