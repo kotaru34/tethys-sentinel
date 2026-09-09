@@ -12,6 +12,7 @@
                     | grants/policy |
                     | approvals     |
                     | Trust-0 ctx   |
+                    | job issuance  |
                     +-------+-------+
                             |
              internal authenticated interfaces
@@ -23,43 +24,63 @@
 | public API |                           | CA boundary |
 +------+-----+                           +------+------+
        |                                        |
-       | narrow execution jobs                 | short-lived certs
-       v                                        v
-+------+----------------------------------------+------+
-|                   Execution Worker                  |
-| no grant issuance / no policy administration        |
-+--------------------------+---------------------------+
+       | submit only                            | short-lived certs
+       |                                        |
+       +-------------------+--------------------+
                            |
-                          SSH
+                    +------v------+
+                    | Execution   |
+                    | Worker      |
+                    | claim/start |
+                    | /complete   |
+                    +------+------+ 
+                           |
+                          SSH (future)
                            |
                     Infrastructure
 ```
 
-The bootstrap implementation uses restricted local files for grants, approvals, audit, notes and authoritative context so security boundaries can be tested before introducing database complexity. Persistent state is planned to move to PostgreSQL with separate least-privilege roles before production deployment. The gateway must never have database privileges that let it create or broaden grants/policies.
+The bootstrap implementation uses restricted local files for grants, approvals, audit, notes, authoritative context and execution jobs so security boundaries can be tested before introducing database complexity. Persistent state is planned to move to PostgreSQL with separate least-privilege roles before production deployment. The gateway must never have database privileges that let it create or broaden grants/policies.
 
 ## Components
 
 ### Control Plane
 
-Human/operator authority. Owns grant creation, revocation, policy decisions, approvals, authoritative context/inventory, history filtering and emergency controls. It is not directly exposed to the AI-facing public interface.
+Human/operator authority. Owns grant creation, revocation, policy decisions, approvals, authoritative context/inventory, history filtering, execution-job issuance and emergency controls. It is not directly exposed to the AI-facing public interface.
 
 The current authoritative context source is a local JSON file selected with `SENTINEL_CONTEXT_FILE`. Production deployment must make this file root/operator-owned and read-only to the Sentinel service account or replace it with an equivalently protected control-plane store. No AI-facing API can modify it.
 
+The Control Plane is also the only component allowed to publish executable jobs. It recomputes policy/risk state, stages immutable command material, commits approval/audit state, and only then publishes the job for workers.
+
 ### AI Gateway
 
-Validates capability format and exposes only the operations available to an agent: bootstrap/context, permitted history, notes, and command-authorization requests. For authoritative decisions it forwards the capability hash to the control plane, which re-authenticates and re-applies scope. The gateway cannot grant itself more authority.
+Validates capability format and exposes only agent operations: bootstrap/context, permitted history, notes, and atomic command submission. It forwards the capability hash plus request material to the Control Plane. It cannot issue a worker claim, broaden a grant, approve an operation, mutate Trust-0 state or reach SSH CA secrets.
+
+The public agent flow deliberately does not expose a separate `authorize now / execute later` primitive.
 
 ### Execution Worker
 
-Planned next major boundary. It consumes narrowly described approved jobs and performs SSH operations. It will not expose policy-management endpoints and must not hold a long-lived infrastructure-wide SSH private key.
+Private execution boundary. It never receives the plaintext agent capability and does not expose policy/grant administration.
+
+The worker:
+
+1. claims one immutable pending job using its dedicated worker credential;
+2. verifies the job's canonical command binding locally;
+3. calls the authoritative Control Plane `start` gate using the one-shot claim secret;
+4. invokes an executor only after start succeeds;
+5. completes the job once with result metadata.
+
+A claim by itself is not execution authority. The `start` gate revalidates the original grant immediately before execution, closing the revocation race between queueing/claiming and executor invocation.
+
+`0.1.0-dev.4` implements this protocol but intentionally does not yet provide a real SSH executor.
 
 ### SSH Signer
 
-Planned isolated signer. It holds the SSH CA key or equivalent signing capability, accepts only constrained internal signing requests and issues short-lived OpenSSH certificates. It is isolated from the public gateway.
+Planned isolated signer. It holds the SSH CA key or equivalent signing capability, accepts only constrained internal signing requests and issues short-lived OpenSSH certificates. It is isolated from the public gateway and will be reached only through a narrowly scoped execution/signing path.
 
 ### PostgreSQL / persistent state
 
-Planned production store for grants by token hash, approvals, inventory, action metadata, history/notes and audit state. Raw command output will be optional/configurable and treated as potentially secret-bearing data.
+Planned production store for grants by token hash, approvals, inventory, action metadata, history/notes, execution jobs and audit state. Raw command output will be optional/configurable and treated as potentially secret-bearing data.
 
 Until that migration, file-backed stores are development/bootstrap mechanisms rather than a production persistence architecture.
 
@@ -119,16 +140,41 @@ The policy engine classifies sensitive actions before execution. A matching oper
 
 An approval for `systemctl restart pdns` on `dns01` must not imply permission to restart `sshd`, alter firewall rules, or restart another host.
 
+Execution publication is coupled to approval state. One-shot approval consumption and staged-job recovery are designed so retries/crashes cannot silently create a second job or reuse a consumed approval for a different command.
+
+## Execution-job protocol
+
+The job lifecycle is:
+
+```text
+staged -> pending -> claimed -> running -> succeeded/failed
+                  \-> canceled/expired where applicable
+```
+
+Important properties:
+
+- `staged` is durable but not claimable;
+- `pending` is published and claimable once;
+- claim produces a random one-shot secret whose plaintext is not persisted;
+- job records are HMAC-protected in the bootstrap store;
+- target/argv are bound by a canonical SHA-256 digest;
+- `request_id` provides idempotency and prevents rebinding;
+- `start` revalidates the original grant immediately before execution;
+- completion is one-shot and terminal.
+
+See `docs/EXECUTION_PROTOCOL.md` for the detailed state machine and crash/replay semantics.
+
 ## Defense in depth
 
 1. Agent authoritative instructions and provenance labels.
 2. Capability scope.
 3. Control-plane policy engine.
 4. Approval engine.
-5. Execution-job integrity/replay protection (planned).
-6. SSH certificate constraints (planned).
-7. Remote Unix account permissions.
-8. sudo/doas policy.
-9. Network segmentation and service isolation.
+5. Immutable staged execution jobs, HMAC integrity and replay protection.
+6. Authoritative pre-execution start/revocation gate.
+7. SSH certificate constraints (planned).
+8. Remote Unix account permissions.
+9. sudo/doas policy.
+10. Network segmentation and service isolation.
 
 No single layer is considered sufficient.
