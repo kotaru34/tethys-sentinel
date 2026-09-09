@@ -80,7 +80,7 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 	}
 	certificate, target, err := r.Control.IssueSSHAccess(ctx, workerID, claim, ephemeral.PublicKey())
 	if err != nil {
-		return true, err
+		return true, r.completeLocalFailure(ctx, workerID, claim, "ssh_access_issuance_failed", err)
 	}
 	credential, err := ephemeral.Bind(started, certificate, now)
 	if err != nil {
