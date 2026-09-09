@@ -27,6 +27,8 @@ const (
 func testAPI(t *testing.T) *API {
 	t.Helper()
 	dir := t.TempDir()
+	fixedNow := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return fixedNow }
 	approvals, err := approval.Open(dir + "/approvals.json")
 	if err != nil {
 		t.Fatal(err)
@@ -35,12 +37,12 @@ func testAPI(t *testing.T) *API {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := executionjob.Open(dir+"/jobs.json", []byte("0123456789abcdef0123456789abcdef"))
+	jobs, err := executionjob.OpenWithClock(dir+"/jobs.json", []byte("0123456789abcdef0123456789abcdef"), clock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := New(capability.NewService(store.NewMemoryGrantStore()), approvals, auditLog, jobs, testAdminToken, testWorkerToken)
-	a.now = func() time.Time { return time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC) }
+	a.now = clock
 	return a
 }
 
