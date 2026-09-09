@@ -80,6 +80,61 @@ func TestExecutorRejectsWrongPinnedHostKeyBeforeExec(t *testing.T) {
 	}
 }
 
+func TestExecutorStopsWhenOutputLimitIsExceeded(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	hostSigner := newSigner(t)
+	server := startTestSSHServerWithOutput(t, hostSigner, bytes.Repeat([]byte("x"), 8192))
+	defer server.Close()
+	job, credential := testCredential(t, now)
+	target := sshtarget.Spec{
+		Name: job.Target, Address: server.Address(), User: "sentinel-ai",
+		HostKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostSigner.PublicKey()))),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := (Executor{DialTimeout: time.Second, OutputLimitBytes: 64}).Execute(ctx, job, credential, target)
+	if err == nil || result.Success || result.ErrorKind != "output_limit_exceeded" {
+		t.Fatalf("overflow result=%+v err=%v", result, err)
+	}
+	if len(result.OutputSHA256) != 64 {
+		t.Fatalf("overflow result missing digest: %+v", result)
+	}
+}
+
+func TestExecutorBoundsHandshakeWithoutContextDeadline(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	release := make(chan struct{})
+	defer close(release)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		<-release
+	}()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	job, credential := testCredential(t, now)
+	target := sshtarget.Spec{
+		Name: job.Target, Address: listener.Addr().String(), User: "sentinel-ai",
+		HostKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(newSigner(t).PublicKey()))),
+	}
+	started := time.Now()
+	result, err := (Executor{DialTimeout: 100 * time.Millisecond}).Execute(context.Background(), job, credential, target)
+	elapsed := time.Since(started)
+	if err == nil || result.ErrorKind != "ssh_handshake_failed" {
+		t.Fatalf("stalled handshake result=%+v err=%v", result, err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("stalled handshake exceeded bound: %s", elapsed)
+	}
+}
+
 func TestDigestWriterAccountsWithoutRetainingRawOutput(t *testing.T) {
 	writer := newDigestWriter(4)
 	payload := []byte("super-secret-output")
@@ -155,6 +210,11 @@ type testSSHServer struct {
 
 func startTestSSHServer(t *testing.T, hostSigner ssh.Signer) *testSSHServer {
 	t.Helper()
+	return startTestSSHServerWithOutput(t, hostSigner, []byte("ok\n"))
+}
+
+func startTestSSHServerWithOutput(t *testing.T, hostSigner ssh.Signer, output []byte) *testSSHServer {
+	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +233,7 @@ func startTestSSHServer(t *testing.T, hostSigner ssh.Signer) *testSSHServer {
 			if err != nil {
 				return
 			}
-			go handleTestSSHConn(conn, config, server.commands)
+			go handleTestSSHConn(conn, config, server.commands, output)
 		}
 	}()
 	return server
@@ -186,7 +246,7 @@ func (s *testSSHServer) Close() {
 	<-s.done
 }
 
-func handleTestSSHConn(conn net.Conn, config *ssh.ServerConfig, commands chan<- string) {
+func handleTestSSHConn(conn net.Conn, config *ssh.ServerConfig, commands chan<- string, output []byte) {
 	defer conn.Close()
 	_, channels, requests, err := ssh.NewServerConn(conn, config)
 	if err != nil {
@@ -216,7 +276,7 @@ func handleTestSSHConn(conn net.Conn, config *ssh.ServerConfig, commands chan<- 
 				}
 				commands <- message.Command
 				_ = req.Reply(true, nil)
-				_, _ = channel.Write([]byte("ok\n"))
+				_, _ = channel.Write(output)
 				_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 				return
 			}
