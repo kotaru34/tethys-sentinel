@@ -127,8 +127,13 @@ func iptablesMutatingOption(arg string) bool {
 		if arg == option || strings.HasPrefix(arg, option+"=") {
 			return true
 		}
-		if len(option) == 2 && strings.HasPrefix(arg, option) && len(arg) > 2 {
-			return true
+	}
+	if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 2 {
+		for _, flag := range arg[1:] {
+			switch flag {
+			case 'A', 'D', 'I', 'R', 'F', 'Z', 'N', 'X', 'P', 'E':
+				return true
+			}
 		}
 	}
 	return false
@@ -139,15 +144,28 @@ func pfctlReadOnly(args []string) bool {
 		return false
 	}
 	for _, arg := range args {
-		if arg == "-e" || arg == "-d" || arg == "-f" || strings.HasPrefix(arg, "-f") ||
-			arg == "-F" || strings.HasPrefix(arg, "-F") || arg == "-k" || strings.HasPrefix(arg, "-k") ||
-			arg == "-K" || strings.HasPrefix(arg, "-K") || arg == "-T" || strings.HasPrefix(arg, "-T") ||
-			arg == "-x" || strings.HasPrefix(arg, "-x") || arg == "-z" || arg == "-Z" {
+		if pfctlMutatingOption(arg) {
 			return false
 		}
 	}
 	for _, arg := range args {
 		if arg == "-s" || strings.HasPrefix(arg, "-s") || arg == "-i" || strings.HasPrefix(arg, "-i") || arg == "-v" || strings.HasPrefix(arg, "-v") {
+			return true
+		}
+	}
+	return false
+}
+
+func pfctlMutatingOption(arg string) bool {
+	if !strings.HasPrefix(arg, "-") || arg == "-" {
+		return false
+	}
+	if strings.HasPrefix(arg, "--") {
+		return true
+	}
+	for _, flag := range arg[1:] {
+		switch flag {
+		case 'e', 'd', 'f', 'F', 'k', 'K', 'T', 'x', 'z', 'Z':
 			return true
 		}
 	}
