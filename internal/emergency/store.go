@@ -99,14 +99,15 @@ func (s *Store) RevokeAll(reason string, at time.Time) (State, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	old := s.state
 	if s.state.Epoch == math.MaxUint64 {
 		s.state.Disabled = true
 		s.state.UpdatedAt = at
 		s.state.Reason = reason
 		if err := s.persistLocked(); err != nil {
-			s.state = old
-			return State{}, err
+			// A kill switch must remain active in the live process even when
+			// durability is impaired. Restart is unsafe until persistence is
+			// repaired and reconciled by the operator.
+			return s.state, err
 		}
 		return s.state, ErrEpochExhausted
 	}
@@ -115,8 +116,10 @@ func (s *Store) RevokeAll(reason string, at time.Time) (State, error) {
 	s.state.UpdatedAt = at
 	s.state.Reason = reason
 	if err := s.persistLocked(); err != nil {
-		s.state = old
-		return State{}, err
+		// Do not roll back the in-memory kill switch. Returning the desired
+		// disabled state lets callers report the correct epoch while execution
+		// continues to fail closed for this process.
+		return s.state, err
 	}
 	return s.state, nil
 }
@@ -138,6 +141,8 @@ func (s *Store) Enable(reason string, at time.Time) (State, error) {
 	s.state.UpdatedAt = at
 	s.state.Reason = reason
 	if err := s.persistLocked(); err != nil {
+		// Enabling is the opposite safety direction: if it cannot be persisted,
+		// restore the prior disabled state and refuse to enable.
 		s.state = old
 		return State{}, err
 	}
