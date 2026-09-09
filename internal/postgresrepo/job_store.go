@@ -99,11 +99,11 @@ func (s *JobStore) Publish(ctx context.Context, id string) (executionjob.Job, er
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE sentinel.execution_jobs
-		SET status = CASE WHEN expires_at <= clock_timestamp() THEN 'expired' ELSE 'pending' END,
-		    completed_at = CASE WHEN expires_at <= clock_timestamp() THEN clock_timestamp() ELSE completed_at END,
-		    result_success = CASE WHEN expires_at <= clock_timestamp() THEN false ELSE result_success END,
-		    result_exit_code = CASE WHEN expires_at <= clock_timestamp() THEN -1 ELSE result_exit_code END,
-		    error_kind = CASE WHEN expires_at <= clock_timestamp() THEN 'job_expired' ELSE error_kind END
+		SET status = CASE WHEN expires_at <= statement_timestamp() THEN 'expired' ELSE 'pending' END,
+		    completed_at = CASE WHEN expires_at <= statement_timestamp() THEN statement_timestamp() ELSE completed_at END,
+		    result_success = CASE WHEN expires_at <= statement_timestamp() THEN false ELSE result_success END,
+		    result_exit_code = CASE WHEN expires_at <= statement_timestamp() THEN -1 ELSE result_exit_code END,
+		    error_kind = CASE WHEN expires_at <= statement_timestamp() THEN 'job_expired' ELSE error_kind END
 		WHERE id = $1
 	`, id); err != nil {
 		return executionjob.Job{}, err
@@ -375,12 +375,13 @@ func scanJobRecord(row rowScanner) (executionjob.Job, []byte, error) {
 	var resultSuccess pgtype.Bool
 	var resultExitCode pgtype.Int4
 	var status string
+	var errorKind string
 	if err := row.Scan(
 		&job.ID, &job.RequestID, &job.GrantID, &job.Agent, &job.Target, &job.Argv,
 		&commandHash, &approvalID, &job.RiskCategory, &job.ScopeKey,
 		&job.CreatedAt, &job.ExpiresAt, &status, &claimHash,
 		&claimedAt, &startedAt, &completedAt, &resultSuccess, &resultExitCode,
-		&outputHash, &jobErrorKind,
+		&outputHash, &errorKind,
 	); err != nil {
 		return executionjob.Job{}, nil, err
 	}
@@ -404,8 +405,8 @@ func scanJobRecord(row rowScanner) (executionjob.Job, []byte, error) {
 		t := completedAt.Time
 		job.CompletedAt = &t
 	}
-	if resultSuccess.Valid || resultExitCode.Valid || len(outputHash) > 0 || jobErrorKind != "" {
-		result := executionjob.Result{ErrorKind: jobErrorKind}
+	if resultSuccess.Valid || resultExitCode.Valid || len(outputHash) > 0 || errorKind != "" {
+		result := executionjob.Result{ErrorKind: errorKind}
 		if resultSuccess.Valid {
 			result.Success = resultSuccess.Bool
 		}
@@ -425,8 +426,6 @@ func scanJobRecord(row rowScanner) (executionjob.Job, []byte, error) {
 	}
 	return job, claimHash, nil
 }
-
-var jobErrorKind string
 
 func postgresClaimToken() (string, []byte, error) {
 	var secret [32]byte
