@@ -69,6 +69,14 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Active transport termination does not promise instantaneous termination of every detached/daemonized target-side descendant or reversal of already-completed side effects.
 - Audit is append-oriented and tamper-evident; raw stdout/stderr is not retained by the current worker.
 - Emergency controls include individual revoke and global revoke-all; global revoke must not delete configuration/history/audit.
+- Production mutable security state will use PostgreSQL as a transaction engine, not as independent SQL replicas of JSON stores.
+- PostgreSQL production scope is grants, approvals, execution jobs, emergency authority state, audit, and agent notes. Trust-0 context, SSH target inventory, signer key/policy and external PVE egress policy remain separate operator-owned configuration boundaries for this milestone.
+- Grant issuance and global revoke must serialize on the same PostgreSQL `authority_state` row so no grant can commit from a stale pre-revoke epoch snapshot.
+- Global revoke + non-running job cancellation + emergency audit append must commit atomically in PostgreSQL.
+- `allow_once` consumption + bound staged-job publication + authorization audit must commit atomically in PostgreSQL.
+- Production PostgreSQL runtime uses a least-privilege Control Plane role with no schema ownership/CREATE/DELETE/superuser/role-admin privileges; Gateway, Worker and Signer receive no DB credentials.
+- PostgreSQL backend selection must be explicit and must never silently fall back to file-backed authority after connection/schema failure.
+- Fresh PostgreSQL authority starts `disabled=true`; cutover does not import old active bearer authority as active.
 - When MCP/agent tools are added, keep the surface narrow and purpose-built for autonomous Qwen-class models rather than exposing backend/admin operations wholesale.
 
 ## Version history
@@ -145,24 +153,50 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Pre-release code gate: commit `d0922d8f3a6638b0309da8329cd42bd52d6e760b`, Actions run `34410714198`; module tidy, gofmt, vet and `go test -race ./...` passed.
 - Versioned acceptance: commit `162d1f3c038ae905a4e27a419d9d4a61789466ae`, Actions run `34411432011`; module tidy, gofmt, vet and `go test -race ./...` passed.
 
+## `0.1.0-dev.11` WIP — PostgreSQL transactional persistence
+
+Completed foundation checkpoint:
+
+- Defined the production persistence/transaction contract in `docs/POSTGRESQL_PERSISTENCE.md`.
+- Added least-privilege PostgreSQL owner/migrator/runtime role bootstrap and explicit database bootstrap order.
+- Added schema version 1 for mutable grants/targets, approvals, jobs/claim hashes, emergency authority, hash-chained audit and Trust-2 agent notes.
+- Fresh PostgreSQL state starts globally disabled.
+- Added DB constraints for hash sizes, lifecycle states, pending-approval scope uniqueness and grant/request idempotency.
+- Added PostgreSQL 15 + 18 CI matrix using real service containers, migration execution, runtime privilege assertions and integration tests.
+- Added pgx/v5 repository connection validation: production TLS required, exact schema version required, runtime role may not have schema CREATE or owner membership.
+- Added first transactional authority repository for issue/authenticate, global revoke-all and enable.
+- Global revoke is one PostgreSQL transaction covering epoch change, non-running job cancellation and canonical audit append.
+- Grant issue locks the same authority row as revoke-all, giving issue/revoke a total order.
+- Enable writes both audit events and the state transition in one transaction, removing the file-store compensating-revoke window.
+- Added canonical audit event builder shared with file-backed hashing so PostgreSQL does not introduce a second event-hash format.
+- Added real runtime-role integration tests for authority lifecycle, stale capability non-revival, revoke rollback when audit cannot commit, and concurrent issue vs revoke ordering.
+- Foundation acceptance checkpoint: commit `e2e9ca6b6265b3bc16dbcbddc6651a06d6e9f26a`, Actions run `34413119563`; project Go tidy/gofmt/vet/race plus PostgreSQL 15 and 18 schema/integration jobs all passed.
+
+This is **not yet a dev.11 release** and version remains `0.1.0-dev.10` until the full PostgreSQL backend is wired through the Control Plane and accepted.
+
 ## Current phase
 
-`0.1.0-dev.10` is complete and CI-accepted. It remains a development build and has not yet been exercised on the intended PVE worker VM/target environment.
+`0.1.0-dev.10` remains the latest completed release. `0.1.0-dev.11` is actively implementing production PostgreSQL transactional persistence.
 
-File-backed stores remain bootstrap/development persistence, not final production state. Emergency epoch durability is especially sensitive: a live fail-closed state is not enough if the durable state can be lost on restart.
+The PostgreSQL schema/role/authority foundation is now real-CI accepted, but approvals, full job lifecycle, standalone audit/history reads and notes are not yet backed by PostgreSQL in the running Control Plane.
+
+File-backed stores remain the current wired runtime backend. PostgreSQL must not be advertised as production-active until explicit backend selection and remaining transaction paths are complete.
 
 Do not merge to `main` yet: the operator merge rule requires a functioning constrained real-infrastructure execution test first.
 
-The next separated implementation milestone is production PostgreSQL persistence and transactional authority state. The goal is to remove local JSON/JSONL stores from the security-critical authority path while preserving or strengthening current fail-closed semantics.
-
 ## Next implementation steps
 
-1. Design PostgreSQL schema/roles/transactions for grants, approvals, jobs, emergency epoch, audit, notes/context metadata, and idempotency/replay state where appropriate.
-2. Implement PostgreSQL-backed stores behind existing service interfaces, with least-privilege roles and transactionally safe revoke/claim/start/complete/emergency transitions.
-3. Define migration/bootstrap strategy from file-backed development state without silently importing unsafe/stale authority.
-4. Build a disposable constrained target profile and worker VM, apply the generated PVE egress policy, and run the first real non-destructive end-to-end + negative packet-level + active-revoke test.
-5. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
-6. Build operator UI after backend security flows/data model stabilize.
+1. Extract narrow storage interfaces from Control Plane/resource/credential APIs so file and PostgreSQL backends can share business logic without concrete-store coupling.
+2. Implement PostgreSQL individual grant revoke + job cleanup + audit in one transaction.
+3. Implement approvals and the atomic `allow_once consume + staged-job publication + audit` transaction.
+4. Implement PostgreSQL execution job enqueue/idempotency/publish/claim/start/authority/complete/reject with row locking and `SKIP LOCKED` claim semantics.
+5. Implement PostgreSQL standalone audit append + fully verified history reads and Trust-2 notes persistence.
+6. Add explicit `file|postgres` backend selection; PostgreSQL failure/schema mismatch must terminate Control Plane with no file fallback.
+7. Define/test safe disabled cutover from file development state; never import active bearer authority as live.
+8. Bump/release `0.1.0-dev.11` only after full PostgreSQL backend + CI acceptance.
+9. Build a disposable constrained target profile and worker VM, apply the generated PVE egress policy, and run the first real non-destructive end-to-end + negative packet-level + active-revoke test.
+10. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
+11. Build operator UI after backend security flows/data model stabilize.
 
 ## Deployment state
 
