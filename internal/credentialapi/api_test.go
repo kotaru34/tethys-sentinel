@@ -2,12 +2,17 @@ package credentialapi
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
@@ -15,6 +20,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
+	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 	"github.com/kotaru34/tethys-sentinel/internal/store"
 )
 
@@ -43,10 +49,17 @@ func (f *fakeSigner) Sign(_ context.Context, req sshsigner.Request) (sshsigner.R
 	}, nil
 }
 
+type failingResolver struct{}
+
+func (failingResolver) Resolve(string) (sshtarget.Spec, error) {
+	return sshtarget.Spec{}, errors.New("missing target")
+}
+
 type testFixture struct {
 	api    *API
 	caps   *capability.Service
 	jobs   *executionjob.Store
+	audit  *audit.Log
 	signer *fakeSigner
 	grant  domain.Grant
 	claim  executionjob.Claim
@@ -73,7 +86,7 @@ func TestCertificateRequiresRunningJobAndValidWorkerCredential(t *testing.T) {
 	}
 }
 
-func TestRunningJobReceivesJobBoundCertificateRequest(t *testing.T) {
+func TestRunningJobReceivesJobBoundCertificateAndResolvedTarget(t *testing.T) {
 	f := newFixture(t, true)
 	body := certificateBody(t, f.claim, "ssh-ed25519 AAAA-test")
 	req := httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/"+f.claim.Job.ID+"/ssh-certificate", strings.NewReader(body))
@@ -106,6 +119,30 @@ func TestRunningJobReceivesJobBoundCertificateRequest(t *testing.T) {
 	}
 	if response.Certificate.Serial != 42 || response.Job.ID != job.ID {
 		t.Fatalf("unexpected response: %+v", response)
+	}
+	if response.Target.Name != "dns01" || response.Target.Address != "10.169.0.53:22" || response.Target.User != "sentinel-ai" || response.Target.HostKey == "" {
+		t.Fatalf("unexpected resolved target: %+v", response.Target)
+	}
+}
+
+func TestUnconfiguredTargetFailsBeforeSigner(t *testing.T) {
+	f := newFixture(t, true)
+	api, err := New(f.caps, f.jobs, f.audit, f.signer, failingResolver{}, credentialTestWorkerToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.now = func() time.Time { return f.now }
+	body := certificateBody(t, f.claim, "ssh-ed25519 AAAA-test")
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/"+f.claim.Job.ID+"/ssh-certificate", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+credentialTestWorkerToken)
+	rr := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable || f.signer.calls != 0 {
+		t.Fatalf("missing target status=%d body=%s signer_calls=%d", rr.Code, rr.Body.String(), f.signer.calls)
+	}
+	job, ok, err := f.jobs.ByID(context.Background(), f.claim.Job.ID)
+	if err != nil || !ok || job.Status != executionjob.Canceled {
+		t.Fatalf("missing target job=%+v ok=%v err=%v", job, ok, err)
 	}
 }
 
@@ -171,12 +208,31 @@ func newFixture(t *testing.T, start bool) *testFixture {
 		t.Fatal(err)
 	}
 	signer := &fakeSigner{}
-	api, err := New(caps, jobs, auditLog, signer, credentialTestWorkerToken)
+	targets, err := sshtarget.NewStatic([]sshtarget.Spec{{
+		Name: "dns01", Address: "10.169.0.53:22", User: "sentinel-ai", HostKey: targetHostKey(t),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := New(caps, jobs, auditLog, signer, targets, credentialTestWorkerToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	api.now = func() time.Time { return now }
-	return &testFixture{api: api, caps: caps, jobs: jobs, signer: signer, grant: grant, claim: claim, now: now}
+	return &testFixture{api: api, caps: caps, jobs: jobs, audit: auditLog, signer: signer, grant: grant, claim: claim, now: now}
+}
+
+func targetHostKey(t *testing.T) string {
+	t.Helper()
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 }
 
 func certificateBody(t *testing.T, claim executionjob.Claim, publicKey string) string {
