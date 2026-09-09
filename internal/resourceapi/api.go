@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
@@ -164,10 +165,8 @@ func (a *API) grantFromHash(r *http.Request, encoded string) (domain.Grant, erro
 	}
 	var hash [32]byte
 	copy(hash[:], raw)
-	return a.caps.AuthenticateHash(r.Context(), hash, r.Context().Value(nowKey{}).(interface{ UTC() }).UTC())
+	return a.caps.AuthenticateHash(r.Context(), hash, time.Now().UTC())
 }
-
-type nowKey struct{}
 
 func targetAllowed(targets []string, target string) bool {
 	if target == "" {
