@@ -106,6 +106,12 @@ func Classify(argv []string) Result {
 		}
 	}
 
+	if cmd == "sysrc" && sysrcReadOnly(args) {
+		return Result{Decision: Allow, Level: Low, Category: "DEFAULT", ScopeKey: cmd, Reason: "read-only sysrc query"}
+	}
+	if result, ok := classifyOperational(executable, cmd, args, argv); ok {
+		return result
+	}
 	if isArbitraryCodeCarrier(cmd) {
 		return approval(High, "ARBITRARY_CODE", exactScope(argv), "interpreter or command carrier can execute arbitrary code")
 	}
@@ -221,7 +227,8 @@ func isArbitraryCodeCarrier(cmd string) bool {
 		"taskset", "ionice", "chrt", "fakeroot", "start-stop-daemon",
 		"script", "expect", "parallel", "screen", "tmux",
 		"gdb", "lldb", "strace", "ltrace", "valgrind",
-		"sed", "psql", "mysql", "sqlite3", "lftp":
+		"sed", "psql", "mysql", "sqlite3", "lftp",
+		"crontab", "at", "batch":
 		return true
 	}
 	return pythonLike(cmd) || strings.HasPrefix(cmd, "pypy") || strings.HasPrefix(cmd, "ld-linux") || cmd == "ld.so"
