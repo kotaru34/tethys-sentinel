@@ -41,8 +41,8 @@ func TestContextAndNotesAreScopedByGrant(t *testing.T) {
 	grant, token, err := caps.Issue(context.Background(), domain.Grant{
 		Agent: "agent-a", Purpose: "dns", Targets: []string{"dns01"},
 		Permissions: domain.Permissions{NotesRead: true, NotesWrite: true, HistoryRead: true},
-		History: domain.HistoryScope{CurrentSession: true},
-		ExpiresAt: time.Now().UTC().Add(time.Hour),
+		History:     domain.HistoryScope{CurrentSession: true},
+		ExpiresAt:   time.Now().UTC().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
