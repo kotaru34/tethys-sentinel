@@ -50,10 +50,16 @@ func TestTargetStoreRejectsUnknownFieldsAndWritableConfig(t *testing.T) {
 	}
 }
 
-func TestTargetStoreRejectsMalformedEndpointAndCertificateHostKey(t *testing.T) {
+func TestTargetStoreRejectsMalformedOrDNSAddress(t *testing.T) {
 	key := testHostKey(t)
 	if _, err := NewStatic([]Spec{{Name: "dns01", Address: "10.169.0.53", User: "sentinel-ai", HostKey: key}}); err == nil {
 		t.Fatal("endpoint without port accepted")
+	}
+	if _, err := NewStatic([]Spec{{Name: "dns01", Address: "dns01.internal:22", User: "sentinel-ai", HostKey: key}}); err == nil {
+		t.Fatal("DNS target endpoint accepted")
+	}
+	if _, err := NewStatic([]Spec{{Name: "dns01", Address: "0.0.0.0:22", User: "sentinel-ai", HostKey: key}}); err == nil {
+		t.Fatal("unspecified target endpoint accepted")
 	}
 	if _, err := NewStatic([]Spec{{Name: "dns01", Address: "10.169.0.53:22", User: "-root", HostKey: key}}); err == nil {
 		t.Fatal("unsafe user accepted")
