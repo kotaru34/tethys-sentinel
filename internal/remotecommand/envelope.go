@@ -14,8 +14,8 @@ import (
 const (
 	Prefix            = "sentinel-exec-v1 "
 	maxEncodedCommand = 32 << 10
-	maxArgv            = 256
-	maxArgumentBytes   = 16 << 10
+	maxArgv           = 256
+	maxArgumentBytes  = 16 << 10
 )
 
 type Envelope struct {
