@@ -30,8 +30,8 @@ type Resolver interface {
 }
 
 type Store struct {
-	mu      sync.RWMutex
-	byName  map[string]Spec
+	mu     sync.RWMutex
+	byName map[string]Spec
 }
 
 func Open(path string) (*Store, error) {
@@ -152,7 +152,13 @@ func safeUser(value string) bool {
 		return false
 	}
 	for i, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9' && i > 0) || strings.ContainsRune("._-", r) {
+		if i == 0 {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' {
+				continue
+			}
+			return false
+		}
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("._-", r) {
 			continue
 		}
 		return false
