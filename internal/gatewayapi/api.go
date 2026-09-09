@@ -71,10 +71,18 @@ func (a *API) requireCapability(next http.Handler) http.Handler {
 func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 	capCtx := r.Context().Value(capabilityContextKey{}).(capabilityContext)
 	grant := capCtx.Grant
+	resources := domain.ResourceLinks{Context: "/v1/context"}
+	if grant.Permissions.HistoryRead {
+		resources.History = "/v1/history"
+	}
+	if grant.Permissions.NotesRead || grant.Permissions.NotesWrite {
+		resources.Notes = "/v1/notes"
+	}
 	writeJSON(w, http.StatusOK, domain.Bootstrap{
 		SessionID: grant.ID, Purpose: grant.Purpose, Agent: grant.Agent, Targets: grant.Targets,
-		Permissions: grant.Permissions, History: grant.History, IssuedAt: grant.IssuedAt, ExpiresAt: grant.ExpiresAt,
-		Authoritative: domain.AuthoritativeContext{TrustLevel: "TRUST_0", Statement: authorityStatement},
+		Permissions: grant.Permissions, History: grant.History, Resources: resources,
+		IssuedAt: grant.IssuedAt, ExpiresAt: grant.ExpiresAt,
+		Authoritative: domain.AuthoritativeContext{TrustLevel: domain.Trust0, Statement: authorityStatement},
 	})
 }
 
