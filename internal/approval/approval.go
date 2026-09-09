@@ -125,7 +125,7 @@ func (s *Store) Decide(_ context.Context, id string, decision Decision, actor st
 	return req, nil
 }
 
-func (s *Store) MatchAndConsume(_ context.Context, grantID, target, category, scopeKey string) (Decision, string, bool, error) {
+func (s *Store) Match(_ context.Context, grantID, target, category, scopeKey string) (Request, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var matches []Request
@@ -135,16 +135,49 @@ func (s *Store) MatchAndConsume(_ context.Context, grantID, target, category, sc
 		}
 	}
 	if len(matches) == 0 {
-		return "", "", false, nil
+		return Request{}, false, nil
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].CreatedAt.After(matches[j].CreatedAt) })
-	req := matches[0]
+	return matches[0], true, nil
+}
+
+func (s *Store) ConsumeAllowOnce(_ context.Context, id string) (Request, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	req, ok := s.requests[id]
+	if !ok {
+		return Request{}, errors.New("approval not found")
+	}
+	if req.Status == Consumed && req.Decision == AllowOnce {
+		return req, nil
+	}
+	if req.Status != Decided || req.Decision != AllowOnce {
+		return Request{}, errors.New("approval is not a consumable allow-once decision")
+	}
+	old := req
+	req.Status = Consumed
+	s.requests[id] = req
+	if err := s.persistLocked(); err != nil {
+		s.requests[id] = old
+		return Request{}, err
+	}
+	return req, nil
+}
+
+func (s *Store) Get(_ context.Context, id string) (Request, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	req, ok := s.requests[id]
+	return req, ok
+}
+
+func (s *Store) MatchAndConsume(ctx context.Context, grantID, target, category, scopeKey string) (Decision, string, bool, error) {
+	req, matched, err := s.Match(ctx, grantID, target, category, scopeKey)
+	if err != nil || !matched {
+		return "", "", matched, err
+	}
 	if req.Decision == AllowOnce {
-		old := req
-		req.Status = Consumed
-		s.requests[req.ID] = req
-		if err := s.persistLocked(); err != nil {
-			s.requests[req.ID] = old
+		if _, err := s.ConsumeAllowOnce(ctx, req.ID); err != nil {
 			return "", "", false, err
 		}
 	}
