@@ -8,16 +8,20 @@ import (
 	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
+	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
+	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
+	"github.com/kotaru34/tethys-sentinel/internal/workeridentity"
 )
 
 type Control interface {
 	Claim(context.Context, string) (executionjob.Claim, error)
 	Start(context.Context, string, executionjob.Claim) (executionjob.Job, error)
+	IssueSSHAccess(context.Context, string, executionjob.Claim, string) (sshsigner.Response, sshtarget.Spec, error)
 	Complete(context.Context, string, executionjob.Claim, executionjob.Result) (executionjob.Job, error)
 }
 
 type Executor interface {
-	Execute(context.Context, string, []string) (executionjob.Result, error)
+	Execute(context.Context, executionjob.Job, workeridentity.Credential, sshtarget.Spec) (executionjob.Result, error)
 }
 
 type Runner struct {
@@ -66,7 +70,25 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	result, executeErr := r.Executor.Execute(ctx, started.Target, append([]string(nil), started.Argv...))
+	ephemeral, err := workeridentity.Generate()
+	if err != nil {
+		return true, r.completeLocalFailure(ctx, workerID, claim, "ephemeral_key_generation_failed", err)
+	}
+	certificate, target, err := r.Control.IssueSSHAccess(ctx, workerID, claim, ephemeral.PublicKey())
+	if err != nil {
+		return true, err
+	}
+	credential, err := ephemeral.Bind(started, certificate, now)
+	if err != nil {
+		return true, r.completeLocalFailure(ctx, workerID, claim, "ssh_certificate_validation_failed", err)
+	}
+	if target.Name != started.Target {
+		return true, r.completeLocalFailure(ctx, workerID, claim, "ssh_target_mismatch", errors.New("resolved SSH target does not match running job"))
+	}
+
+	execCtx, cancel := context.WithDeadline(ctx, started.ExpiresAt)
+	defer cancel()
+	result, executeErr := r.Executor.Execute(execCtx, started, credential, target)
 	if executeErr != nil {
 		result.Success = false
 		if strings.TrimSpace(result.ErrorKind) == "" {
@@ -77,6 +99,14 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	return true, executeErr
+}
+
+func (r Runner) completeLocalFailure(ctx context.Context, workerID string, claim executionjob.Claim, kind string, cause error) error {
+	result := executionjob.Result{Success: false, ExitCode: -1, ErrorKind: kind}
+	if _, err := r.Control.Complete(ctx, workerID, claim, result); err != nil {
+		return err
+	}
+	return cause
 }
 
 func sameImmutableJob(claimed, started executionjob.Job) bool {
