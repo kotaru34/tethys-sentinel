@@ -36,7 +36,7 @@ type API struct {
 	adminTokenSHA  [32]byte
 	workerTokenSHA [32]byte
 	now            func() time.Time
-	submitMu       sync.Mutex
+	executionMu    sync.Mutex
 }
 
 type IssueGrantRequest struct {
@@ -83,6 +83,7 @@ func (a *API) InternalHandler() http.Handler {
 	mux.HandleFunc("POST /internal/v1/introspect", a.introspect)
 	mux.HandleFunc("POST /internal/v1/commands/submit", a.submitCommand)
 	mux.Handle("POST /internal/v1/execution/jobs/claim", a.requireWorker(http.HandlerFunc(a.claimExecutionJob)))
+	mux.Handle("POST /internal/v1/execution/jobs/{id}/start", a.requireWorker(http.HandlerFunc(a.startExecutionJob)))
 	mux.Handle("POST /internal/v1/execution/jobs/{id}/complete", a.requireWorker(http.HandlerFunc(a.completeExecutionJob)))
 	return mux
 }
@@ -126,13 +127,26 @@ func (a *API) issueGrant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) revokeGrant(w http.ResponseWriter, r *http.Request) {
+	a.executionMu.Lock()
+	defer a.executionMu.Unlock()
+
 	id := r.PathValue("id")
-	if err := a.caps.Revoke(r.Context(), id, a.now()); err != nil {
+	now := a.now()
+	if err := a.caps.Revoke(r.Context(), id, now); err != nil {
 		writeError(w, http.StatusNotFound, "grant not found")
 		return
 	}
-	if _, err := a.audit.Append(r.Context(), audit.Input{Kind: "grant.revoked", Actor: "operator", GrantID: id}); err != nil {
+	canceled, cancelErr := a.jobs.CancelPendingByGrant(r.Context(), id)
+	metadata := map[string]string{"canceled_unclaimed_jobs": strconv.Itoa(canceled)}
+	if cancelErr != nil {
+		metadata["job_cancellation_error"] = "true"
+	}
+	if _, err := a.audit.Append(r.Context(), audit.Input{Kind: "grant.revoked", Actor: "operator", GrantID: id, Metadata: metadata}); err != nil {
 		writeError(w, http.StatusInternalServerError, "grant revoked but audit append failed")
+		return
+	}
+	if cancelErr != nil {
+		writeError(w, http.StatusInternalServerError, "grant revoked but pending job cleanup failed")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -178,8 +192,8 @@ func (a *API) introspect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) submitCommand(w http.ResponseWriter, r *http.Request) {
-	a.submitMu.Lock()
-	defer a.submitMu.Unlock()
+	a.executionMu.Lock()
+	defer a.executionMu.Unlock()
 
 	var req internalapi.SubmitCommandRequest
 	if err := decodeJSON(w, r, &req); err != nil {
@@ -200,6 +214,8 @@ func (a *API) submitCommand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "target is not in capability scope")
 		return
 	}
+
+	riskResult := risk.Classify(req.Argv)
 	if existing, ok, err := a.jobs.ByRequest(r.Context(), grant.ID, req.RequestID); err != nil {
 		writeError(w, http.StatusInternalServerError, "execution job lookup failed")
 		return
@@ -208,15 +224,18 @@ func (a *API) submitCommand(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "request_id is already bound to a different command")
 			return
 		}
+		if existing.Status == executionjob.Staged {
+			a.finalizeStagedJob(w, r, grant, req, existing, riskResult)
+			return
+		}
 		if existing.Status == executionjob.Canceled || existing.Status == executionjob.Expired {
 			writeError(w, http.StatusConflict, "request_id is already consumed by a non-executable job; use a new request_id")
 			return
 		}
-		writeJSON(w, http.StatusOK, acceptedResponse(existing, risk.Classify(req.Argv)))
+		writeJSON(w, http.StatusOK, acceptedResponse(existing, riskResult))
 		return
 	}
 
-	riskResult := risk.Classify(req.Argv)
 	response := internalapi.SubmitCommandResponse{Risk: riskResult}
 	if riskResult.Decision == risk.Deny {
 		response.Decision = "deny"
@@ -228,18 +247,18 @@ func (a *API) submitCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if riskResult.Decision == risk.Allow {
-		a.enqueueAuthorized(w, r, grant, req, response)
+		a.stageAndFinalize(w, r, grant, req, response, "")
 		return
 	}
 
-	decision, approvalID, matched, err := a.approvals.MatchAndConsume(r.Context(), grant.ID, req.Target, riskResult.Category, riskResult.ScopeKey)
+	matchedApproval, matched, err := a.approvals.Match(r.Context(), grant.ID, req.Target, riskResult.Category, riskResult.ScopeKey)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "approval lookup failed")
 		return
 	}
 	if matched {
-		response.ApprovalID = approvalID
-		if decision == approval.Deny {
+		response.ApprovalID = matchedApproval.ID
+		if matchedApproval.Decision == approval.Deny {
 			response.Decision = "deny"
 			if err := a.logSubmissionDenied(r, grant, req, response, "operator denied matching approval scope"); err != nil {
 				writeError(w, http.StatusInternalServerError, "audit append failed")
@@ -248,7 +267,7 @@ func (a *API) submitCommand(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
-		a.enqueueAuthorized(w, r, grant, req, response)
+		a.stageAndFinalize(w, r, grant, req, response, matchedApproval.ID)
 		return
 	}
 
@@ -276,14 +295,14 @@ func (a *API) submitCommand(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (a *API) enqueueAuthorized(w http.ResponseWriter, r *http.Request, grant domain.Grant, req internalapi.SubmitCommandRequest, response internalapi.SubmitCommandResponse) {
+func (a *API) stageAndFinalize(w http.ResponseWriter, r *http.Request, grant domain.Grant, req internalapi.SubmitCommandRequest, response internalapi.SubmitCommandResponse, approvalID string) {
 	expiresAt := a.now().Add(executionJobTTL)
 	if grant.ExpiresAt.Before(expiresAt) {
 		expiresAt = grant.ExpiresAt
 	}
-	job, created, err := a.jobs.Enqueue(r.Context(), executionjob.EnqueueInput{
+	job, _, err := a.jobs.Enqueue(r.Context(), executionjob.EnqueueInput{
 		RequestID: req.RequestID, GrantID: grant.ID, Agent: grant.Agent, Target: req.Target,
-		Argv: append([]string(nil), req.Argv...), ApprovalID: response.ApprovalID,
+		Argv: append([]string(nil), req.Argv...), ApprovalID: approvalID,
 		RiskCategory: response.Risk.Category, ScopeKey: response.Risk.ScopeKey, ExpiresAt: expiresAt,
 	})
 	if errors.Is(err, executionjob.ErrRequestConflict) {
@@ -294,26 +313,102 @@ func (a *API) enqueueAuthorized(w http.ResponseWriter, r *http.Request, grant do
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if created {
-		_, auditErr := a.audit.Append(r.Context(), audit.Input{
-			Kind: "execution.job_enqueued", Actor: grant.Agent, GrantID: grant.ID, Target: job.Target, Argv: job.Argv,
-			Decision: "allow", Category: response.Risk.Category, ScopeKey: response.Risk.ScopeKey,
-			ApprovalID: response.ApprovalID, Reason: strings.TrimSpace(req.AgentReason),
-			Metadata: map[string]string{
-				"job_id": job.ID, "request_id": job.RequestID, "command_sha256": job.CommandSHA256,
-				"expires_at": job.ExpiresAt.Format(time.RFC3339Nano),
-			},
-		})
-		if auditErr != nil {
+	a.finalizeStagedJob(w, r, grant, req, job, response.Risk)
+}
+
+func (a *API) finalizeStagedJob(w http.ResponseWriter, r *http.Request, grant domain.Grant, req internalapi.SubmitCommandRequest, job executionjob.Job, riskResult risk.Result) {
+	if job.Status != executionjob.Staged {
+		writeJSON(w, http.StatusOK, acceptedResponse(job, riskResult))
+		return
+	}
+	if riskResult.Decision == risk.Deny {
+		_ = a.jobs.CancelPending(r.Context(), job.ID)
+		response := internalapi.SubmitCommandResponse{Decision: "deny", Risk: riskResult}
+		if err := a.logSubmissionDenied(r, grant, req, response, "policy changed before staged job publication"); err != nil {
+			writeError(w, http.StatusInternalServerError, "audit append failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	var approvalItem approval.Request
+	if riskResult.Decision == risk.ApprovalRequired {
+		if job.ApprovalID == "" {
 			_ = a.jobs.CancelPending(r.Context(), job.ID)
-			writeError(w, http.StatusInternalServerError, "job canceled because audit append failed")
+			writeError(w, http.StatusConflict, "staged risky job has no approval binding")
+			return
+		}
+		item, ok := a.approvals.Get(r.Context(), job.ApprovalID)
+		if !ok || item.GrantID != grant.ID || item.Target != job.Target || item.Category != riskResult.Category || item.ScopeKey != riskResult.ScopeKey {
+			_ = a.jobs.CancelPending(r.Context(), job.ID)
+			writeError(w, http.StatusConflict, "staged job approval binding is invalid")
+			return
+		}
+		approvalItem = item
+		if item.Decision == approval.Deny {
+			_ = a.jobs.CancelPending(r.Context(), job.ID)
+			response := internalapi.SubmitCommandResponse{Decision: "deny", ApprovalID: item.ID, Risk: riskResult}
+			if err := a.logSubmissionDenied(r, grant, req, response, "operator denied staged job scope"); err != nil {
+				writeError(w, http.StatusInternalServerError, "audit append failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		if item.Decision == approval.AllowSession && item.Status != approval.Decided {
+			_ = a.jobs.CancelPending(r.Context(), job.ID)
+			writeError(w, http.StatusConflict, "session approval is no longer active")
+			return
+		}
+		if item.Decision == approval.AllowOnce && item.Status != approval.Decided && item.Status != approval.Consumed {
+			_ = a.jobs.CancelPending(r.Context(), job.ID)
+			writeError(w, http.StatusConflict, "allow-once approval is not executable")
+			return
+		}
+		if item.Decision != approval.AllowSession && item.Decision != approval.AllowOnce {
+			_ = a.jobs.CancelPending(r.Context(), job.ID)
+			writeError(w, http.StatusConflict, "approval does not authorize execution")
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, acceptedResponse(job, response.Risk))
+
+	if _, err := a.audit.Append(r.Context(), audit.Input{
+		Kind: "execution.job_authorized", Actor: grant.Agent, GrantID: grant.ID, Target: job.Target, Argv: job.Argv,
+		Decision: "allow", Category: riskResult.Category, ScopeKey: riskResult.ScopeKey,
+		ApprovalID: job.ApprovalID, Reason: strings.TrimSpace(req.AgentReason),
+		Metadata: map[string]string{
+			"job_id": job.ID, "request_id": job.RequestID, "command_sha256": job.CommandSHA256,
+			"expires_at": job.ExpiresAt.Format(time.RFC3339Nano),
+		},
+	}); err != nil {
+		_ = a.jobs.CancelPending(r.Context(), job.ID)
+		writeError(w, http.StatusInternalServerError, "staged job canceled because audit append failed")
+		return
+	}
+
+	if approvalItem.Decision == approval.AllowOnce && approvalItem.Status == approval.Decided {
+		if _, err := a.approvals.ConsumeAllowOnce(r.Context(), approvalItem.ID); err != nil {
+			_ = a.jobs.CancelPending(r.Context(), job.ID)
+			writeError(w, http.StatusInternalServerError, "staged job canceled because allow-once consumption failed")
+			return
+		}
+	}
+	published, err := a.jobs.Publish(r.Context(), job.ID)
+	if err != nil {
+		if !errors.Is(err, executionjob.ErrExpired) {
+			_ = a.jobs.CancelPending(r.Context(), job.ID)
+		}
+		writeError(w, http.StatusConflict, "execution job expired or could not be published")
+		return
+	}
+	writeJSON(w, http.StatusOK, acceptedResponse(published, riskResult))
 }
 
 func (a *API) claimExecutionJob(w http.ResponseWriter, r *http.Request) {
+	a.executionMu.Lock()
+	defer a.executionMu.Unlock()
+
 	var req internalapi.ClaimExecutionJobRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -338,10 +433,61 @@ func (a *API) claimExecutionJob(w http.ResponseWriter, r *http.Request) {
 		Category: claim.Job.RiskCategory, ScopeKey: claim.Job.ScopeKey, ApprovalID: claim.Job.ApprovalID,
 		Metadata: map[string]string{"job_id": claim.Job.ID, "request_id": claim.Job.RequestID, "command_sha256": claim.Job.CommandSHA256},
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "job was quarantined after audit append failure")
+		_, _ = a.jobs.RejectClaim(r.Context(), claim.Job.ID, claim.ClaimToken, "audit_failure_before_execution")
+		writeError(w, http.StatusInternalServerError, "claimed job canceled because audit append failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, internalapi.ClaimExecutionJobResponse{Job: claim.Job, ClaimToken: claim.ClaimToken})
+}
+
+func (a *API) startExecutionJob(w http.ResponseWriter, r *http.Request) {
+	a.executionMu.Lock()
+	defer a.executionMu.Unlock()
+
+	var req internalapi.StartExecutionJobRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.WorkerID = strings.TrimSpace(req.WorkerID)
+	if req.WorkerID == "" || len(req.WorkerID) > 128 || strings.TrimSpace(req.ClaimToken) == "" {
+		writeError(w, http.StatusBadRequest, "worker_id and claim_token are required")
+		return
+	}
+	job, ok, err := a.jobs.ByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "execution job lookup failed")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusConflict, "execution start rejected")
+		return
+	}
+	if _, err := a.caps.AuthenticateID(r.Context(), job.GrantID, a.now()); err != nil {
+		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "grant_inactive_before_execution")
+		_, _ = a.audit.Append(r.Context(), audit.Input{
+			Kind: "execution.job_rejected", Actor: req.WorkerID, GrantID: job.GrantID, Target: job.Target, Argv: job.Argv,
+			Decision: "deny", Category: job.RiskCategory, ScopeKey: job.ScopeKey, ApprovalID: job.ApprovalID,
+			Reason: "grant inactive before execution start", Metadata: map[string]string{"job_id": job.ID, "request_id": job.RequestID},
+		})
+		writeError(w, http.StatusConflict, "execution start rejected")
+		return
+	}
+	started, err := a.jobs.Start(r.Context(), job.ID, req.ClaimToken)
+	if err != nil {
+		writeError(w, http.StatusConflict, "execution start rejected")
+		return
+	}
+	if _, err := a.audit.Append(r.Context(), audit.Input{
+		Kind: "execution.job_started", Actor: req.WorkerID, GrantID: started.GrantID, Target: started.Target, Argv: started.Argv,
+		Decision: "allow", Category: started.RiskCategory, ScopeKey: started.ScopeKey, ApprovalID: started.ApprovalID,
+		Metadata: map[string]string{"job_id": started.ID, "request_id": started.RequestID, "command_sha256": started.CommandSHA256},
+	}); err != nil {
+		_, _ = a.jobs.RejectClaim(r.Context(), started.ID, req.ClaimToken, "audit_failure_at_execution_start")
+		writeError(w, http.StatusInternalServerError, "execution start canceled because audit append failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, internalapi.StartExecutionJobResponse{Job: started})
 }
 
 func (a *API) completeExecutionJob(w http.ResponseWriter, r *http.Request) {
