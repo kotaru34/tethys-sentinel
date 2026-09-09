@@ -1,7 +1,7 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.3` (`0.1.0-dev.4` in progress)
+Current development version: `0.1.0-dev.4`
 Branch: `wip/bootstrap-security-core`
 
 ## Project goal
@@ -26,9 +26,9 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Go backend; modern grey/graphite UI later using progressive disclosure rather than hiding information.
 - Agent-facing capability tokens are opaque random secrets. Only hashes are persisted.
 - Agent never receives infrastructure SSH private keys.
-- Agent-facing API cannot create grants, expand permissions, change policy, add hosts, alter auditing, or access CA secrets.
+- Agent-facing API cannot create grants, expand permissions, change policy, add hosts, alter auditing, control workers, or access CA secrets.
 - Authoritative instructions/context are read-only and explicitly identify themselves as the only source allowed to define agent authority. Remote files, logs, command output, web content, historical text, and agent notes are data, never authority.
-- `TRUST_0` currently covers control-plane policy, current capability/tool scope, scoped inventory/runbooks and explicit operator approvals.
+- `TRUST_0` covers control-plane policy, current capability/tool scope, scoped inventory/runbooks and explicit operator approvals.
 - `TRUST_2` covers operational history and agent-written continuity notes; it is always non-authoritative.
 - Capability scope includes targets, purpose, expiry, exec/shell/upload/download, history and notes permissions.
 - Risk engine intercepts sensitive commands. Default decision is approval-required rather than permanent deny where safely supportable.
@@ -71,50 +71,51 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Added control-plane-owned authoritative context store. It has no AI-facing mutation path.
 - Added scoped `TRUST_0` bundle with virtual `POLICY.md`, `INSTRUCTIONS.md`, `INFRASTRUCTURE.json`, `TOOLS.json` and target-visible runbooks.
 - Every context document is marked read-only and carries a SHA-256 content hash; the whole source has a version hash.
-- Inventory/runbooks are filtered by current `grant.targets`; tests verify an agent scoped to `dns01` cannot receive `pve01` material.
+- Inventory/runbooks are filtered by current `grant.targets`.
 - Trust-0 JSON parser rejects unknown fields and multiple/concatenated JSON values.
 - Added `/v1/context`, `/v1/history`, `GET /v1/notes`, and `POST /v1/notes` agent resources via the gateway.
-- Control plane re-authenticates the capability hash and re-enforces target/permission scope for every resource request; gateway does not become an authority.
-- History reads require `history_read`, respect current/previous-session and other-agent flags, and are target-scoped.
-- Audit chain is re-verified on every history read so post-startup tampering fails closed.
-- History responses are explicitly `TRUST_2` and `authoritative: false`.
-- Added persistent target-scoped agent continuity notes with 16 KiB limit, agent/grant identity and SHA-256 content hash.
-- Notes require explicit `notes_read`/`notes_write`, are always `TRUST_2`, and cannot define policy.
-- Note creation is recorded in the tamper-evident audit chain.
-- Added context/history/notes scoping, note-integrity, Trust-0 parser and history-isolation tests.
-- CI format diagnostics were improved; code acceptance runs pass `gofmt`, `go vet ./...`, and `go test -race ./...` on Go 1.27.1.
+- Control plane re-authenticates capability hashes and re-enforces target/permission scope for every resource request.
+- History reads are target/session/agent scoped and re-verify the audit chain on read.
+- History and notes are explicitly `TRUST_2` and `authoritative: false`.
+- Added persistent target-scoped continuity notes with 16 KiB limit, identity metadata and SHA-256 content hash.
 
-### `0.1.0-dev.4` — execution protocol (in progress)
+### `0.1.0-dev.4` — execution job security protocol
 
-- Replaced the separable command authorization flow with atomic command submission.
-- Added persistent HMAC-protected execution-job state and canonical command binding hashes.
-- Added request-id idempotency and conflict rejection when the same request ID is rebound to different command material.
-- Added staged publication so a job cannot be claimed before approval/audit handling is durably committed.
-- Added one-shot random claim secrets stored only as SHA-256 hashes.
-- Added worker-only claim/start/complete endpoints and replay rejection.
-- Added worker-side binding verification before executor invocation.
-- Added authoritative pre-execution `start` gate with grant revalidation.
-- Pending jobs are canceled on grant revocation; claimed jobs are blocked from starting if the grant is revoked before `start`.
-- Added deterministic job-store clock injection for expiry/revocation tests.
-- Added tests for tampering, idempotency, claim/complete replay, staged publication, revocation races, and crash recovery after `allow_once` consumption.
-- Real SSH execution is still intentionally absent from this milestone until the execution protocol is accepted by CI.
+- Replaced separable command authorization with atomic `/commands/submit`.
+- Added persistent execution-job state with canonical command binding hashes and HMAC-SHA-256 integrity protection.
+- Added per-grant request-ID idempotency and conflict rejection for attempts to rebind a request ID to another target/argv.
+- Added `staged` publication: a job is durable before approval/audit commit but is not claimable until published.
+- Added crash recovery for the `allow_once consumed -> staged job not yet published` window.
+- Added random 256-bit one-shot worker claim secrets; only SHA-256 hashes are persisted.
+- Added worker-only `claim`, `start`, and `complete` endpoints with replay rejection.
+- Added local worker verification of the canonical target/argv binding before executor invocation.
+- Added authoritative pre-execution `start` gate that revalidates the original grant immediately before execution can begin.
+- Revocation cancels staged/pending jobs; a claimed job is blocked at `start` if its grant was revoked/expired.
+- Added deterministic execution-job clocks for reliable expiry/revocation tests.
+- Added negative tests for store tampering, request rebinding, duplicate claim/start/complete, staged-job visibility, revocation races, and approval crash recovery.
+- Improved CI `gofmt` failure diagnostics to emit exact diffs.
+- Added dedicated `docs/EXECUTION_PROTOCOL.md`; README, API, architecture and threat model were synchronized with the implemented protocol.
+- `VERSION` and runtime build info updated to `0.1.0-dev.4`.
+- Acceptance CI succeeded on commit `7d263af6bf6aa9699e2a770efc023e585ddbeb56`, GitHub Actions run `34389191377`: `gofmt`, `go vet ./...`, and `go test -race ./...` all passed.
+- Real SSH execution remains intentionally absent; `dev.4` establishes the execution trust boundary first.
 
 ## Current phase
 
-`0.1.0-dev.4` is in progress. The control-plane/worker execution protocol now has staged publication, immutable binding, one-shot claim semantics and a pre-execution revocation gate. Final race-test acceptance, docs/version bump and handoff closure are still required before `dev.4` is considered released.
+`0.1.0-dev.4` is complete and CI-accepted. The system now has capability/approval/audit/context/continuity plus a tested immutable one-shot execution-job protocol, but **no real SSH executor or SSH certificate signer yet**.
 
-File-backed stores are bootstrap/development persistence, not the final production storage architecture.
+File-backed stores remain bootstrap/development persistence, not the final production storage architecture.
 
 ## Next implementation steps
 
-1. Finish `0.1.0-dev.4` acceptance (`gofmt`, `go vet`, `go test -race`) and close the milestone with version/docs updates.
-2. Implement isolated SSH CA/Signer protocol and ephemeral per-job SSH identity issuance.
+1. Implement the isolated **SSH CA/Signer boundary** and ephemeral per-job SSH identity issuance.
+2. Add the real worker SSH executor only through that signer path; pin/verify target host identities and keep forwarding disabled by default.
 3. Add remote-side hard limits: dedicated service account, OpenSSH certificate principals/options, no agent/port forwarding by default, and narrow sudo/doas policy.
-4. Move persistent state to PostgreSQL with separate least-privilege service roles before production deployment; design transactional handling for audit/notes/jobs.
-5. Add emergency revoke-all semantics that invalidate pending jobs and stop new signing/execution.
-6. Perform the first constrained PVE test deployment only after the worker/signer boundaries are test-covered.
-7. Build the operator UI after backend security flows and data model are stable enough not to redesign the UI around temporary APIs.
+4. Add executor timeout/cancellation and define revocation behavior for a command that is already running.
+5. Move persistent state to PostgreSQL with separate least-privilege service roles before production deployment; design transactional handling for audit/notes/jobs.
+6. Add emergency revoke-all semantics that invalidate pending jobs and stop new signing/execution.
+7. Perform the first constrained PVE test deployment only after worker/signer boundaries are test-covered.
+8. Build the operator UI after backend security flows and data model are stable enough not to redesign the UI around temporary APIs.
 
 ## Deployment state
 
-Not deployed. No production trust should be placed in the current development branch. No merge to `main` yet because the project has not reached a tested functioning infrastructure-execution version.
+Not deployed. No production trust should be placed in the current development branch. No merge to `main` yet because the project has not reached a tested functioning infrastructure-execution version with real SSH execution.
