@@ -114,7 +114,20 @@ func iptablesReadOnly(args []string) bool {
 			return false
 		}
 	}
-	return hasOptionPrefix(args, "-L", "--list", "-S", "--list-rules", "-C", "--check")
+	if hasOptionPrefix(args, "-L", "--list", "-S", "--list-rules", "-C", "--check") {
+		return true
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 2 {
+			for _, flag := range arg[1:] {
+				switch flag {
+				case 'L', 'S', 'C':
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func iptablesMutatingOption(arg string) bool {
