@@ -50,12 +50,12 @@ func Classify(argv []string) Result {
 	case "mkfs", "mkfs.ext4", "mkfs.xfs", "wipefs", "shred":
 		return approval(Critical, "FILESYSTEM_DESTRUCTIVE", exactScope(argv), "destructive storage operation")
 	case "zpool":
-		if firstArg(args) == "destroy" {
-			return approval(Critical, "STORAGE_DESTRUCTIVE", semanticScope(executable, resourceScope("zpool:destroy", args[1:])), "zpool destruction")
+		if containsAny(args, "destroy") {
+			return approval(Critical, "STORAGE_DESTRUCTIVE", exactScope(argv), "zpool destruction")
 		}
 	case "zfs":
-		if firstArg(args) == "destroy" {
-			return approval(Critical, "STORAGE_DESTRUCTIVE", semanticScope(executable, resourceScope("zfs:destroy", args[1:])), "ZFS dataset destruction")
+		if containsAny(args, "destroy") {
+			return approval(Critical, "STORAGE_DESTRUCTIVE", exactScope(argv), "ZFS dataset destruction")
 		}
 	case "rm":
 		return approval(High, "FILESYSTEM_DELETE", exactScope(argv), "file deletion")
@@ -64,6 +64,9 @@ func Classify(argv []string) Result {
 	case "nft", "iptables", "ip6tables", "pfctl":
 		return approval(High, "NETWORK_CONTROL", exactScope(argv), "firewall policy change")
 	case "systemctl":
+		if hasOptionPrefix(args, "--host", "-H", "--machine", "-M") {
+			return approval(High, "REMOTE_EXEC", exactScope(argv), "systemctl remote/machine transport can cross the local target boundary")
+		}
 		action, unit := systemctlAction(args)
 		switch action {
 		case "stop", "disable", "mask":
@@ -75,14 +78,14 @@ func Classify(argv []string) Result {
 		if contains(args, "system", "prune") || contains(args, "volume", "prune") {
 			return approval(Critical, "CONTAINER_DESTRUCTIVE", exactScope(argv), "destructive container cleanup")
 		}
-		if subcommandIn(args, "exec", "run", "create") {
-			return approval(High, "ARBITRARY_CODE", exactScope(argv), "container command can execute arbitrary code")
+		if containsAny(args, "exec", "run", "create") {
+			return approval(High, "ARBITRARY_CODE", exactScope(argv), "container operation can execute arbitrary code")
 		}
 	case "kubectl":
-		switch firstNonFlag(args) {
-		case "delete":
+		if containsAny(args, "delete") {
 			return approval(High, "ORCHESTRATOR_DESTRUCTIVE", exactScope(argv), "Kubernetes resource deletion")
-		case "exec", "run", "debug", "attach", "port-forward", "proxy":
+		}
+		if containsAny(args, "exec", "run", "debug", "attach", "port-forward", "proxy") {
 			return approval(High, "REMOTE_EXEC", exactScope(argv), "Kubernetes operation can execute code or expose a network path")
 		}
 	case "find":
@@ -94,11 +97,11 @@ func Classify(argv []string) Result {
 			return approval(High, "ARBITRARY_CODE", exactScope(argv), "tar checkpoint action can execute arbitrary commands")
 		}
 	case "go":
-		if firstNonFlag(args) == "run" {
+		if containsAny(args, "run") {
 			return approval(High, "ARBITRARY_CODE", exactScope(argv), "go run executes supplied code")
 		}
 	case "cargo":
-		if firstNonFlag(args) == "run" {
+		if containsAny(args, "run") {
 			return approval(High, "ARBITRARY_CODE", exactScope(argv), "cargo run executes supplied code")
 		}
 	}
@@ -120,31 +123,6 @@ func approval(level Level, category, scope, reason string) Result {
 	return Result{Decision: ApprovalRequired, Level: level, Category: category, ScopeKey: scope, Reason: reason}
 }
 
-func firstArg(args []string) string {
-	if len(args) == 0 {
-		return ""
-	}
-	return args[0]
-}
-
-func firstNonFlag(args []string) string {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			return arg
-		}
-	}
-	return ""
-}
-
-func resourceScope(prefix string, args []string) string {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			return prefix + ":" + arg
-		}
-	}
-	return prefix + ":*"
-}
-
 func exactScope(argv []string) string {
 	payload, _ := json.Marshal(argv)
 	h := sha256.Sum256(payload)
@@ -161,15 +139,22 @@ func semanticScope(executable, resource string) string {
 }
 
 func systemctlAction(args []string) (string, string) {
-	for i, a := range args {
-		if strings.HasPrefix(a, "-") {
+	actions := map[string]struct{}{
+		"stop": {}, "disable": {}, "mask": {},
+		"restart": {}, "try-restart": {}, "reload-or-restart": {},
+	}
+	for i, arg := range args {
+		if _, ok := actions[arg]; !ok {
 			continue
 		}
 		unit := "*"
-		if i+1 < len(args) {
-			unit = args[i+1]
+		for _, candidate := range args[i+1:] {
+			if !strings.HasPrefix(candidate, "-") {
+				unit = candidate
+				break
+			}
 		}
-		return a, unit
+		return arg, unit
 	}
 	return "", "*"
 }
@@ -185,7 +170,6 @@ func contains(args []string, sequence ...string) bool {
 				ok = false
 				break
 			}
-		}
 		if ok {
 			return true
 		}
@@ -204,11 +188,12 @@ func containsAny(args []string, values ...string) bool {
 	return false
 }
 
-func subcommandIn(args []string, values ...string) bool {
-	command := firstNonFlag(args)
-	for _, value := range values {
-		if command == value {
-			return true
+func hasOptionPrefix(args []string, values ...string) bool {
+	for _, arg := range args {
+		for _, value := range values {
+			if arg == value || strings.HasPrefix(arg, value+"=") || (len(value) == 2 && strings.HasPrefix(arg, value) && len(arg) > len(value)) {
+				return true
+			}
 		}
 	}
 	return false
