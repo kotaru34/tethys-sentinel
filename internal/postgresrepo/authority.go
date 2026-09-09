@@ -9,6 +9,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -342,7 +343,16 @@ func (r *Repository) appendAuditTx(ctx context.Context, tx pgx.Tx, at time.Time,
 	if previousHex != "" {
 		previousDB = previousHash
 	}
-	metadata, err := json.Marshal(event.Metadata)
+
+	argv := event.Argv
+	if argv == nil {
+		argv = []string{}
+	}
+	metadataValue := event.Metadata
+	if metadataValue == nil {
+		metadataValue = map[string]string{}
+	}
+	metadata, err := json.Marshal(metadataValue)
 	if err != nil {
 		return audit.Event{}, err
 	}
@@ -365,7 +375,7 @@ func (r *Repository) appendAuditTx(ctx context.Context, tx pgx.Tx, at time.Time,
 			$15, $16
 		)
 	`,
-		lastSequence+1, event.ID, event.Timestamp, event.Kind, event.Actor, grantID, event.Target, event.Argv,
+		lastSequence+1, event.ID, event.Timestamp, event.Kind, event.Actor, grantID, event.Target, argv,
 		event.Decision, event.Category, event.ScopeKey, approvalID, event.Reason, string(metadata),
 		previousDB, eventHash,
 	); err != nil {
@@ -382,11 +392,15 @@ func (r *Repository) appendAuditTx(ctx context.Context, tx pgx.Tx, at time.Time,
 }
 
 func normalizeReason(reason string) string {
-	reason = strings.TrimSpace(reason)
-	if len(reason) > 512 {
-		reason = reason[:512]
+	reason = strings.ToValidUTF8(strings.TrimSpace(reason), "")
+	if len(reason) <= 512 {
+		return reason
 	}
-	return reason
+	cut := 512
+	for cut > 0 && !utf8.ValidString(reason[:cut]) {
+		cut--
+	}
+	return reason[:cut]
 }
 
 func uniqueTargets(targets []string) []string {
