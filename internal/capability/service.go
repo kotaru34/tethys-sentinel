@@ -52,7 +52,11 @@ func (s *Service) Authenticate(ctx context.Context, token string, now time.Time)
 	if err := ValidateFormat(token); err != nil {
 		return domain.Grant{}, err
 	}
-	grant, err := s.store.GrantByTokenHash(ctx, Hash(token))
+	return s.AuthenticateHash(ctx, Hash(token), now)
+}
+
+func (s *Service) AuthenticateHash(ctx context.Context, hash [32]byte, now time.Time) (domain.Grant, error) {
+	grant, err := s.store.GrantByTokenHash(ctx, hash)
 	if err != nil {
 		return domain.Grant{}, err
 	}
