@@ -139,6 +139,9 @@ func (s *Store) Match(_ context.Context, grantID, target, category, scopeKey str
 	defer s.mu.Unlock()
 	var matches []Request
 	for _, req := range s.requests {
+		if req.Decision == AllowSession && !risk.SessionApprovalAllowedCategory(req.Category) {
+			continue
+		}
 		if req.GrantID == grantID && req.Target == target && req.Category == category && req.ScopeKey == scopeKey && req.Status == Decided {
 			matches = append(matches, req)
 		}
