@@ -1,12 +1,12 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.4`
+Current development version: `0.1.0-dev.4` (`0.1.0-dev.5` in progress)
 Branch: `wip/bootstrap-security-core`
 
 ## Project goal
 
-Tethys Sentinel is a security-first access broker between AI agents and infrastructure. An agent receives a short-lived capability, never an infrastructure SSH private key. Sentinel decides what the capability can access, enforces risky-action approvals, provides authoritative context and scoped continuity, records actions, and later obtains short-lived SSH identities for execution.
+Tethys Sentinel is a security-first access broker between AI agents and infrastructure. An agent receives a short-lived capability, never an infrastructure SSH private key. Sentinel decides what the capability can access, enforces risky-action approvals, provides authoritative context and scoped continuity, records actions, and obtains short-lived SSH identities through an isolated signer for execution.
 
 ## Operator-mandated development rules
 
@@ -36,7 +36,12 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Security enforcement must not rely on prompts or regex classification alone. Multiple independent layers are required.
 - Boundaries: Control Plane, AI Gateway, Execution Worker, SSH CA/Signer, persistent audit/storage.
 - Prefer VM isolation for security-critical public-facing/backend components rather than putting the whole trust boundary in one LXC.
-- Planned SSH model: short-lived OpenSSH certificates; no agent forwarding; forwarding/upload/download are separate capabilities.
+- SSH credentials use short-lived OpenSSH user certificates; no agent forwarding, PTY or port forwarding extensions by default.
+- SSH CA/Signer is a standalone service. Gateway and worker do not contact it directly; only Control Plane does.
+- Worker generates a fresh Ed25519 keypair per job. The private key remains in worker process memory and is not serialized by Sentinel.
+- Signer receives only job/grant/target/binding/public-key/not-after material. Principal, force-command, source-address policy, extensions and signer TTL are signer-owned and cannot be supplied by the caller.
+- Signer certificates are source-bound to configured exact worker IPs and contain signer-generated `force-command`; validity cannot outlive the job.
+- SSH certificate issuance requires a `running` job, a valid one-shot claim secret, valid immutable command binding, and another Control Plane grant revalidation immediately before signing.
 - Audit is append-oriented and tamper-evident; raw stdout/stderr retention is configurable because outputs may contain secrets.
 - Emergency controls: revoke individual session and revoke all AI access.
 - Agent execution uses an atomic submit flow rather than a separable `authorize now / execute later` flow.
@@ -99,22 +104,38 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Acceptance CI succeeded on commit `7d263af6bf6aa9699e2a770efc023e585ddbeb56`, GitHub Actions run `34389191377`: `gofmt`, `go vet ./...`, and `go test -race ./...` all passed.
 - Real SSH execution remains intentionally absent; `dev.4` establishes the execution trust boundary first.
 
+### `0.1.0-dev.5` — isolated SSH CA/Signer boundary (in progress)
+
+- Added `golang.org/x/crypto/ssh` and CI enforcement that `go.mod`/`go.sum` remain tidy.
+- Added constrained OpenSSH user-certificate signer core using Ed25519 CA and Ed25519 ephemeral client keys only.
+- Signer owns principal, wrapper path, source-address scope, certificate TTL and extensions; callers cannot request an arbitrary shell, principal, extension set or TTL.
+- Certificates use empty extensions, exact worker source-address critical option and signer-generated force-command critical option.
+- Certificate validity is capped by execution-job expiry.
+- Added standalone `sentinel-signer` service with its own mTLS client CA and dedicated API token; plaintext is loopback-only explicit dev mode.
+- Control Plane is the only signer client. AI Gateway and Execution Worker have no direct signer path.
+- Added worker-facing Control Plane certificate gate requiring worker credential, valid running-job claim, command-binding verification and another grant revalidation before signing.
+- Revocation after `start` but before certificate issuance blocks signing and cancels the job record.
+- Added in-memory per-job Ed25519 worker identity helper; it verifies an issued certificate matches the ephemeral private key and does not outlive the job.
+- Added `docs/SSH_CA.md` documenting signer trust boundary and future target-side requirements.
+- Real SSH dial/host-key verification/target wrapper are intentionally deferred to the next milestone.
+
 ## Current phase
 
-`0.1.0-dev.4` is complete and CI-accepted. The system now has capability/approval/audit/context/continuity plus a tested immutable one-shot execution-job protocol, but **no real SSH executor or SSH certificate signer yet**.
+`0.1.0-dev.4` remains the last released development version. `0.1.0-dev.5` implementation is underway and is not considered complete until the full signer/control/worker stack passes module-tidy, format, vet and race-test acceptance and the version/docs are synchronized.
 
 File-backed stores remain bootstrap/development persistence, not the final production storage architecture.
 
 ## Next implementation steps
 
-1. Implement the isolated **SSH CA/Signer boundary** and ephemeral per-job SSH identity issuance.
-2. Add the real worker SSH executor only through that signer path; pin/verify target host identities and keep forwarding disabled by default.
-3. Add remote-side hard limits: dedicated service account, OpenSSH certificate principals/options, no agent/port forwarding by default, and narrow sudo/doas policy.
-4. Add executor timeout/cancellation and define revocation behavior for a command that is already running.
-5. Move persistent state to PostgreSQL with separate least-privilege service roles before production deployment; design transactional handling for audit/notes/jobs.
-6. Add emergency revoke-all semantics that invalidate pending jobs and stop new signing/execution.
-7. Perform the first constrained PVE test deployment only after worker/signer boundaries are test-covered.
-8. Build the operator UI after backend security flows and data model are stable enough not to redesign the UI around temporary APIs.
+1. Finish `0.1.0-dev.5` full CI acceptance and close the signer milestone with version/documentation updates.
+2. Implement the real worker SSH executor using only the in-memory ephemeral identity and Control-Plane-issued certificate.
+3. Pin or CA-verify target SSH host identities; never use insecure host-key acceptance.
+4. Add remote-side hard limits: dedicated service account, trusted user CA/principal policy, root-owned forced-command wrapper, no agent/port forwarding or PTY, and narrow sudo/doas policy.
+5. Add executor timeout/cancellation and define revocation behavior for a command that is already running.
+6. Move persistent state to PostgreSQL with separate least-privilege service roles before production deployment; design transactional handling for audit/notes/jobs.
+7. Add emergency revoke-all semantics that invalidate pending jobs and stop new signing/execution.
+8. Perform the first constrained PVE test deployment only after worker/signer/remote execution boundaries are test-covered.
+9. Build the operator UI after backend security flows and data model are stable enough not to redesign the UI around temporary APIs.
 
 ## Deployment state
 
