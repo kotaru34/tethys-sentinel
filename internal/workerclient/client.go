@@ -11,6 +11,7 @@ import (
 
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
+	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
 )
 
 var ErrNoJob = errors.New("no execution job available")
@@ -66,6 +67,28 @@ func (c *Client) Start(ctx context.Context, workerID string, claim executionjob.
 		return executionjob.Job{}, err
 	}
 	return out.Job, nil
+}
+
+func (c *Client) IssueSSHCertificate(ctx context.Context, workerID string, claim executionjob.Claim, publicKey string) (sshsigner.Response, error) {
+	body, err := json.Marshal(internalapi.IssueSSHCertificateRequest{
+		WorkerID: workerID, ClaimToken: claim.ClaimToken, PublicKey: publicKey,
+	})
+	if err != nil {
+		return sshsigner.Response{}, err
+	}
+	resp, err := c.post(ctx, "/internal/v1/execution/jobs/"+claim.Job.ID+"/ssh-certificate", body)
+	if err != nil {
+		return sshsigner.Response{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return sshsigner.Response{}, fmt.Errorf("SSH certificate request rejected with status %d", resp.StatusCode)
+	}
+	var out internalapi.IssueSSHCertificateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return sshsigner.Response{}, err
+	}
+	return out.Certificate, nil
 }
 
 func (c *Client) Complete(ctx context.Context, workerID string, claim executionjob.Claim, result executionjob.Result) (executionjob.Job, error) {
