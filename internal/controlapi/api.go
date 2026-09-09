@@ -30,9 +30,9 @@ const (
 
 type API struct {
 	caps           *capability.Service
-	approvals      *approval.Store
-	audit          *audit.Log
-	jobs           *executionjob.Store
+	approvals      ApprovalStore
+	audit          AuditStore
+	jobs           JobStore
 	adminTokenSHA  [32]byte
 	workerTokenSHA [32]byte
 	now            func() time.Time
@@ -57,11 +57,11 @@ type DecideApprovalRequest struct {
 	Decision approval.Decision `json:"decision"`
 }
 
-func New(caps *capability.Service, approvals *approval.Store, auditLog *audit.Log, jobs *executionjob.Store, adminToken, workerToken string) *API {
+func New(caps *capability.Service, approvals ApprovalStore, auditStore AuditStore, jobs JobStore, adminToken, workerToken string) *API {
 	return &API{
 		caps:           caps,
 		approvals:      approvals,
-		audit:          auditLog,
+		audit:          auditStore,
 		jobs:           jobs,
 		adminTokenSHA:  sha256.Sum256([]byte(adminToken)),
 		workerTokenSHA: sha256.Sum256([]byte(workerToken)),
