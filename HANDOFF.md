@@ -1,7 +1,7 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.7` (`0.1.0-dev.8` release candidate)
+Current development version: `0.1.0-dev.8`
 Branch: `wip/bootstrap-security-core`
 Deployment: not deployed; no merge to `main` yet
 
@@ -88,7 +88,7 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Pre-release code gate: commit `b1bbab9243fee12a1bf3e6cbb2b2a0174263e941`, Actions run `34401421958`.
 - Versioned acceptance: commit `58318f7a1f0693941dce4d791ea97fac8e3d3519`, Actions run `34401911162`; all module tidy/gofmt/vet/race tests passed.
 
-### `0.1.0-dev.8` — semantic operational-risk policy (release candidate)
+### `0.1.0-dev.8` — semantic operational-risk policy
 
 - Split operational risk routing into focused service/network/package/storage/system/runtime/escape classifiers rather than expanding one monolithic switch.
 - Added high-impact mutation coverage across systemd/classic service/OpenBSD rcctl/OpenRC/runit/FreeBSD sysrc; Linux/BSD networking; firewall state; apt/dpkg, RPM-family, pacman, XBPS and FreeBSD pkg; mounts/partitions/mdadm/LVM/ZFS/GEOM/raw storage; kernel/process/log state; Docker/Podman/CRI/Kubernetes/Helm; PVE `qm`/`pct`/`pvesh`/HA, libvirt, bhyve and jail controls.
@@ -100,24 +100,26 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Removed a legacy blanket firewall rule that shadowed the new read-vs-mutation classifier.
 - Added `docs/OPERATIONAL_RISK.md`; README/API/execution-policy/architecture/threat-model documentation synchronized.
 - Pre-release code gate: commit `41773a133e59344f56d51a1b08317a974f1f67de`, Actions run `34405504004`; module tidy, gofmt, vet and `go test -race ./...` passed.
+- Versioned acceptance: commit `4fcde4fa771f5008cbd696e4889ca51b564a9507`, Actions run `34406118118`; module tidy, gofmt, vet and `go test -race ./...` passed.
 
 ## Current phase
 
-`0.1.0-dev.8` code and documentation are complete as a release candidate. Remaining release work is the version/build-info bump and a clean versioned acceptance CI.
+`0.1.0-dev.8` is complete and CI-accepted. It remains a development build and has not been exercised on intended PVE infrastructure.
 
-It remains a development build and has not been exercised on intended PVE infrastructure. File-backed stores remain bootstrap/development persistence, not final production state.
+File-backed stores remain bootstrap/development persistence, not final production state.
 
 Do not merge to `main` yet: the operator merge rule requires a functioning constrained real-infrastructure execution test first.
 
+The next separated milestone is independent worker egress enforcement: a compromised worker must not be able to use its VM/network position to reach arbitrary infrastructure even though the Control Plane already resolves only approved literal SSH targets.
+
 ## Next implementation steps
 
-1. Finalize `0.1.0-dev.8` version/build-info and versioned acceptance CI.
-2. Add independent worker VM egress enforcement for registered target IPs/ports plus required Control Plane endpoints.
-3. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity where feasible.
-4. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
-5. Build a disposable constrained target profile and run the first real PVE end-to-end test using non-destructive commands.
-6. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
-7. Build operator UI after backend security flows/data model stabilize.
+1. Add independent worker VM egress enforcement for registered target IPs/ports plus required Control Plane endpoints.
+2. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity where feasible.
+3. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
+4. Build a disposable constrained target profile and run the first real PVE end-to-end test using non-destructive commands.
+5. After successful constrained infrastructure execution, perform the first WIP merge and documentation review.
+6. Build operator UI after backend security flows/data model stabilize.
 
 ## Deployment state
 
