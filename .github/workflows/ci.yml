@@ -32,6 +32,8 @@ jobs:
           if [ -n "$files" ]; then
             echo "The following files need gofmt:"
             printf '%s\n' "$files"
+            echo
+            gofmt -d .
             exit 1
           fi
 
