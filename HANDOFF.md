@@ -1,7 +1,7 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.3`
+Current development version: `0.1.0-dev.3` (`0.1.0-dev.4` in progress)
 Branch: `wip/bootstrap-security-core`
 
 ## Project goal
@@ -18,6 +18,7 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
    - a notably large step is completed even without a version change;
    - extended discussion reaches a new decision about the next step, whether only agreed verbally or already being implemented.
 5. Once a functioning version has been tested, merge the project as WIP.
+6. Whenever a merge is performed, review and update README and/or wiki/project documentation as needed so the merged state remains understandable and usable. If the project is complex enough that documentation organization would otherwise make operation or maintenance difficult, proactively improve that documentation as part of the merge.
 
 ## Decisions locked in
 
@@ -38,6 +39,11 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Planned SSH model: short-lived OpenSSH certificates; no agent forwarding; forwarding/upload/download are separate capabilities.
 - Audit is append-oriented and tamper-evident; raw stdout/stderr retention is configurable because outputs may contain secrets.
 - Emergency controls: revoke individual session and revoke all AI access.
+- Agent execution uses an atomic submit flow rather than a separable `authorize now / execute later` flow.
+- Execution jobs are immutable and bound to grant + request ID + target + argv + expiry.
+- Worker never receives an agent capability and is not public-facing. It claims jobs through a separate internal worker credential over the protected internal channel.
+- Job lifecycle uses `staged -> pending -> claimed -> running -> completed`, with worker access only from `pending` onward.
+- A claimed job still requires an authoritative control-plane `start` gate that revalidates the grant immediately before execution; revocation before `start` prevents execution.
 
 ## Work completed
 
@@ -78,22 +84,36 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Added context/history/notes scoping, note-integrity, Trust-0 parser and history-isolation tests.
 - CI format diagnostics were improved; code acceptance runs pass `gofmt`, `go vet ./...`, and `go test -race ./...` on Go 1.27.1.
 
+### `0.1.0-dev.4` — execution protocol (in progress)
+
+- Replaced the separable command authorization flow with atomic command submission.
+- Added persistent HMAC-protected execution-job state and canonical command binding hashes.
+- Added request-id idempotency and conflict rejection when the same request ID is rebound to different command material.
+- Added staged publication so a job cannot be claimed before approval/audit handling is durably committed.
+- Added one-shot random claim secrets stored only as SHA-256 hashes.
+- Added worker-only claim/start/complete endpoints and replay rejection.
+- Added worker-side binding verification before executor invocation.
+- Added authoritative pre-execution `start` gate with grant revalidation.
+- Pending jobs are canceled on grant revocation; claimed jobs are blocked from starting if the grant is revoked before `start`.
+- Added deterministic job-store clock injection for expiry/revocation tests.
+- Added tests for tampering, idempotency, claim/complete replay, staged publication, revocation races, and crash recovery after `allow_once` consumption.
+- Real SSH execution is still intentionally absent from this milestone until the execution protocol is accepted by CI.
+
 ## Current phase
 
-`0.1.0-dev.3`: capability, approval, audit, Trust-0 context/inventory/runbooks, scoped history, and agent continuity memory are implemented. The system still has **no real infrastructure execution endpoint by design**.
+`0.1.0-dev.4` is in progress. The control-plane/worker execution protocol now has staged publication, immutable binding, one-shot claim semantics and a pre-execution revocation gate. Final race-test acceptance, docs/version bump and handoff closure are still required before `dev.4` is considered released.
 
 File-backed stores are bootstrap/development persistence, not the final production storage architecture.
 
 ## Next implementation steps
 
-1. Design and implement the **Execution Worker job protocol**. An authorization decision must produce a short-lived one-shot job bound to grant + target + argv + policy decision; the agent/gateway must not be able to alter or replay it into a different command.
-2. Keep the worker on a narrow mTLS-only internal interface with no grant/policy administration and no direct public reachability.
-3. Implement isolated SSH CA/Signer protocol and ephemeral per-job SSH identity issuance.
-4. Add remote-side hard limits: dedicated service account, OpenSSH certificate principals/options, no agent/port forwarding by default, and narrow sudo/doas policy.
-5. Move persistent state to PostgreSQL with separate least-privilege service roles before production deployment; design transactional handling for audit/notes/jobs.
-6. Add emergency revoke-all semantics that invalidate pending jobs and stop new signing/execution.
-7. Perform the first constrained PVE test deployment only after the worker/signer boundaries are test-covered.
-8. Build the operator UI after backend security flows and data model are stable enough not to redesign the UI around temporary APIs.
+1. Finish `0.1.0-dev.4` acceptance (`gofmt`, `go vet`, `go test -race`) and close the milestone with version/docs updates.
+2. Implement isolated SSH CA/Signer protocol and ephemeral per-job SSH identity issuance.
+3. Add remote-side hard limits: dedicated service account, OpenSSH certificate principals/options, no agent/port forwarding by default, and narrow sudo/doas policy.
+4. Move persistent state to PostgreSQL with separate least-privilege service roles before production deployment; design transactional handling for audit/notes/jobs.
+5. Add emergency revoke-all semantics that invalidate pending jobs and stop new signing/execution.
+6. Perform the first constrained PVE test deployment only after the worker/signer boundaries are test-covered.
+7. Build the operator UI after backend security flows and data model are stable enough not to redesign the UI around temporary APIs.
 
 ## Deployment state
 
