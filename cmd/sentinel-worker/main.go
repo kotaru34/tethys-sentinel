@@ -39,6 +39,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	authorityPollInterval, err := durationMillisEnv("SENTINEL_WORKER_AUTHORITY_POLL_MS", 250)
+	if err != nil {
+		log.Fatal(err)
+	}
 	dialTimeout, err := durationSecondsEnv("SENTINEL_WORKER_SSH_DIAL_TIMEOUT_SECONDS", 5)
 	if err != nil {
 		log.Fatal(err)
@@ -50,13 +54,14 @@ func main() {
 
 	client := workerclient.New(controlURL, httpClient, workerToken)
 	runner := worker.Runner{
-		Control:  client,
-		Executor: sshexec.Executor{DialTimeout: dialTimeout, OutputLimitBytes: outputLimit},
-		WorkerID: workerID,
+		Control:               client,
+		Executor:              sshexec.Executor{DialTimeout: dialTimeout, OutputLimitBytes: outputLimit},
+		WorkerID:              workerID,
+		AuthorityPollInterval: authorityPollInterval,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Printf("tethys-sentinel worker %s id=%s control=%s", buildinfo.Version, workerID, controlURL)
+	log.Printf("tethys-sentinel worker %s id=%s control=%s authority_poll=%s", buildinfo.Version, workerID, controlURL, authorityPollInterval)
 
 	for ctx.Err() == nil {
 		didWork, err := runner.RunOnce(ctx)
