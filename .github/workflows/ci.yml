@@ -85,6 +85,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
       - name: Install PostgreSQL client
         shell: bash
         run: |
@@ -99,6 +105,8 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d postgres <<'SQL'
           CREATE ROLE sentinel_deploy_ci LOGIN PASSWORD 'sentinel-ci-deploy';
           GRANT sentinel_migrator TO sentinel_deploy_ci;
+          CREATE ROLE sentinel_control_ci LOGIN PASSWORD 'sentinel-ci-control';
+          GRANT sentinel_control TO sentinel_control_ci;
           CREATE DATABASE sentinel_ci OWNER sentinel_owner;
           SQL
 
@@ -113,3 +121,8 @@ jobs:
           PGPASSWORD: sentinel-ci-postgres
         run: |
           psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d sentinel_ci -f db/ci/assertions.sql
+
+      - name: PostgreSQL authority integration tests
+        env:
+          SENTINEL_TEST_POSTGRES_DSN: postgres://sentinel_control_ci:sentinel-ci-control@127.0.0.1:5432/sentinel_ci?sslmode=disable
+        run: go test -race ./internal/postgresrepo -run '^TestIntegration' -count=1
