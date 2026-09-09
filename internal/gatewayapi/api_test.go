@@ -11,6 +11,7 @@ import (
 
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
+	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 	"github.com/kotaru34/tethys-sentinel/internal/risk"
 )
@@ -18,11 +19,14 @@ import (
 type fakeControl struct{ grant domain.Grant }
 
 func (f fakeControl) Introspect(context.Context, [32]byte) (domain.Grant, error) { return f.grant, nil }
-func (f fakeControl) AuthorizeCommand(_ context.Context, _ [32]byte, target string, argv []string, _ string) (internalapi.AuthorizeCommandResponse, error) {
-	return internalapi.AuthorizeCommandResponse{Authorized: false, Decision: "approval_required", ApprovalID: "a1", Risk: risk.Result{Decision: risk.ApprovalRequired, Category: "SERVICE_RESTART"}}, nil
+func (f fakeControl) SubmitCommand(_ context.Context, _ [32]byte, requestID, target string, argv []string, _ string) (internalapi.SubmitCommandResponse, error) {
+	return internalapi.SubmitCommandResponse{
+		Accepted: true, Decision: "accepted", Risk: risk.Result{Decision: risk.Allow, Category: "LOW_RISK"},
+		Job: &internalapi.ExecutionJobReceipt{ID: "job-1", RequestID: requestID, Status: executionjob.Pending, CommandSHA256: strings.Repeat("a", 64), ExpiresAt: time.Now().UTC().Add(time.Minute)},
+	}, nil
 }
 
-func TestBootstrapAndAuthorize(t *testing.T) {
+func TestBootstrapAndSubmit(t *testing.T) {
 	token, _, err := capability.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -48,11 +52,19 @@ func TestBootstrapAndAuthorize(t *testing.T) {
 		t.Fatal("bootstrap missing authoritative trust level")
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/v1/commands/authorize", strings.NewReader(`{"target":"dns01","argv":["systemctl","restart","pdns"]}`))
+	req = httptest.NewRequest(http.MethodPost, "/v1/commands/submit", strings.NewReader(`{"request_id":"req-00000001","target":"dns01","argv":["true"]}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "approval_required") {
-		t.Fatalf("authorize status=%d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"accepted":true`) || !strings.Contains(rr.Body.String(), `"id":"job-1"`) {
+		t.Fatalf("submit status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/commands/authorize", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("legacy authorize endpoint status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
