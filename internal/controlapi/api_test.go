@@ -14,21 +14,32 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
+	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 	"github.com/kotaru34/tethys-sentinel/internal/store"
 )
 
+const testWorkerToken = "worker-secret-worker-secret-worker-secret"
+
 func testAPI(t *testing.T) *API {
 	t.Helper()
-	approvals, err := approval.Open(t.TempDir() + "/approvals.json")
+	dir := t.TempDir()
+	approvals, err := approval.Open(dir + "/approvals.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	auditLog, err := audit.Open(t.TempDir() + "/audit.jsonl")
+	auditLog, err := audit.Open(dir + "/audit.jsonl")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := New(capability.NewService(store.NewMemoryGrantStore()), approvals, auditLog, "admin-secret-admin-secret-admin-secret")
+	jobs, err := executionjob.Open(dir+"/jobs.json", []byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(
+		capability.NewService(store.NewMemoryGrantStore()), approvals, auditLog, jobs,
+		"admin-secret-admin-secret-admin-secret", testWorkerToken,
+	)
 	a.now = func() time.Time { return time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC) }
 	return a
 }
@@ -53,55 +64,174 @@ func TestAdminAuthAndIssue(t *testing.T) {
 	}
 }
 
-func TestRiskyCommandRequiresAndConsumesApproval(t *testing.T) {
+func TestRiskySubmitConsumesApprovalOnlyWhenJobIsEnqueued(t *testing.T) {
 	a := testAPI(t)
 	ctx := context.Background()
 	_, token, err := a.caps.Issue(ctx, testGrant())
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := internalapi.AuthorizeCommandRequest{
+	request := internalapi.SubmitCommandRequest{
 		TokenHash:   encodeTokenHash(token),
+		RequestID:   "req-00000001",
 		Target:      "dns01",
 		Argv:        []string{"systemctl", "restart", "pdns"},
 		AgentReason: "recover resolver",
 	}
 
-	response := authorizeRequest(t, a, request)
-	if response.Decision != "approval_required" || response.ApprovalID == "" || response.Authorized {
-		t.Fatalf("unexpected initial response: %+v", response)
+	status, response := submitRequest(t, a, request)
+	if status != http.StatusOK || response.Decision != "approval_required" || response.ApprovalID == "" || response.Accepted || response.Job != nil {
+		t.Fatalf("unexpected initial response status=%d response=%+v", status, response)
 	}
 	if _, err := a.approvals.Decide(ctx, response.ApprovalID, approval.AllowOnce, "operator"); err != nil {
 		t.Fatal(err)
 	}
 
-	response = authorizeRequest(t, a, request)
-	if !response.Authorized || response.Decision != "allow" {
-		t.Fatalf("approved response: %+v", response)
+	status, response = submitRequest(t, a, request)
+	if status != http.StatusOK || !response.Accepted || response.Decision != "accepted" || response.Job == nil {
+		t.Fatalf("approved response status=%d response=%+v", status, response)
 	}
-	response = authorizeRequest(t, a, request)
-	if response.Decision != "approval_required" || response.Authorized {
-		t.Fatalf("allow-once was reused: %+v", response)
+	jobID := response.Job.ID
+
+	status, response = submitRequest(t, a, request)
+	if status != http.StatusOK || !response.Accepted || response.Job == nil || response.Job.ID != jobID {
+		t.Fatalf("idempotent retry created a new job: status=%d response=%+v", status, response)
+	}
+
+	second := request
+	second.RequestID = "req-00000002"
+	status, response = submitRequest(t, a, second)
+	if status != http.StatusOK || response.Decision != "approval_required" || response.Accepted {
+		t.Fatalf("allow-once leaked into a second request: status=%d response=%+v", status, response)
 	}
 }
 
-func authorizeRequest(t *testing.T, a *API, reqValue internalapi.AuthorizeCommandRequest) internalapi.AuthorizeCommandResponse {
+func TestRequestIDCannotBeReboundToDifferentCommand(t *testing.T) {
+	a := testAPI(t)
+	ctx := context.Background()
+	_, token, err := a.caps.Issue(ctx, testGrant())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := internalapi.SubmitCommandRequest{
+		TokenHash: encodeTokenHash(token), RequestID: "req-00000003", Target: "dns01", Argv: []string{"true"},
+	}
+	status, response := submitRequest(t, a, request)
+	if status != http.StatusOK || !response.Accepted || response.Job == nil {
+		t.Fatalf("initial submit status=%d response=%+v", status, response)
+	}
+	request.Argv = []string{"false"}
+	status, _ = submitRequest(t, a, request)
+	if status != http.StatusConflict {
+		t.Fatalf("request id rebound status=%d", status)
+	}
+}
+
+func TestWorkerCredentialClaimAndCompletionAreOneShot(t *testing.T) {
+	a := testAPI(t)
+	ctx := context.Background()
+	_, token, err := a.caps.Issue(ctx, testGrant())
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, response := submitRequest(t, a, internalapi.SubmitCommandRequest{
+		TokenHash: encodeTokenHash(token), RequestID: "req-00000004", Target: "dns01", Argv: []string{"true"},
+	})
+	if status != http.StatusOK || response.Job == nil {
+		t.Fatalf("submit status=%d response=%+v", status, response)
+	}
+	jobID := response.Job.ID
+
+	claimBody := `{"worker_id":"worker-a"}`
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/claim", strings.NewReader(claimBody))
+	rr := httptest.NewRecorder()
+	a.InternalHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("claim without worker auth status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/claim", strings.NewReader(claimBody))
+	req.Header.Set("Authorization", "Bearer "+testWorkerToken)
+	rr = httptest.NewRecorder()
+	a.InternalHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("claim status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var claim internalapi.ClaimExecutionJobResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &claim); err != nil {
+		t.Fatal(err)
+	}
+	if claim.Job.ID != jobID || claim.Job.Status != executionjob.Claimed || claim.ClaimToken == "" || !executionjob.VerifyBinding(claim.Job) {
+		t.Fatalf("invalid claim: %+v", claim)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/claim", strings.NewReader(claimBody))
+	req.Header.Set("Authorization", "Bearer "+testWorkerToken)
+	rr = httptest.NewRecorder()
+	a.InternalHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("claimed job replayed status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	badComplete := `{"worker_id":"worker-a","claim_token":"jcl_wrong","result":{"success":true,"exit_code":0}}`
+	req = httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/"+jobID+"/complete", strings.NewReader(badComplete))
+	req.Header.Set("Authorization", "Bearer "+testWorkerToken)
+	rr = httptest.NewRecorder()
+	a.InternalHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("bad completion status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	completeValue := internalapi.CompleteExecutionJobRequest{
+		WorkerID: "worker-a", ClaimToken: claim.ClaimToken, Result: executionjob.Result{Success: true, ExitCode: 0},
+	}
+	completeBody, err := json.Marshal(completeValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/"+jobID+"/complete", strings.NewReader(string(completeBody)))
+	req.Header.Set("Authorization", "Bearer "+testWorkerToken)
+	rr = httptest.NewRecorder()
+	a.InternalHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"status":"succeeded"`) {
+		t.Fatalf("complete status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/internal/v1/execution/jobs/"+jobID+"/complete", strings.NewReader(string(completeBody)))
+	req.Header.Set("Authorization", "Bearer "+testWorkerToken)
+	rr = httptest.NewRecorder()
+	a.InternalHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("completion replay status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLegacyAuthorizeEndpointIsNotExposed(t *testing.T) {
+	a := testAPI(t)
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/commands/authorize", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	a.InternalHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("legacy authorize endpoint status=%d", rr.Code)
+	}
+}
+
+func submitRequest(t *testing.T, a *API, reqValue internalapi.SubmitCommandRequest) (int, internalapi.SubmitCommandResponse) {
 	t.Helper()
 	body, err := json.Marshal(reqValue)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/internal/v1/commands/authorize", strings.NewReader(string(body)))
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/commands/submit", strings.NewReader(string(body)))
 	rr := httptest.NewRecorder()
 	a.InternalHandler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("authorize status=%d body=%s", rr.Code, rr.Body.String())
+	var response internalapi.SubmitCommandResponse
+	if rr.Code == http.StatusOK {
+		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
 	}
-	var response internalapi.AuthorizeCommandResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	return response
+	return rr.Code, response
 }
 
 func testGrant() domain.Grant {
