@@ -1,6 +1,6 @@
 # API surface (development)
 
-This document describes the intentionally small API surface for `0.1.0-dev.7`. It is not yet a stable public contract.
+This document describes the intentionally small API surface for `0.1.0-dev.8`. It is not yet a stable public contract.
 
 ## Trust semantics
 
@@ -22,6 +22,8 @@ Relevant execution permissions are independent:
 An operator approval cannot substitute for either permission. Powerful classes require both `exec=true` and `shell=true`.
 
 Current powerful classes include `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, and `REMOTE_EXEC`. See `docs/EXECUTION_POLICY.md`.
+
+`dev.8` additionally routes known high-impact administrator mutations into semantic categories such as service/network/package/storage/container/orchestrator/hypervisor control while allowing known inspection-only forms to remain ordinary `exec`. See `docs/OPERATIONAL_RISK.md`.
 
 ## AI Gateway
 
@@ -98,6 +100,14 @@ Possible protocol decisions include:
 
 An accepted response contains a receipt such as job ID, request ID, status, command binding SHA-256 and expiry. It never contains worker claim secrets, SSH private keys, SSH endpoints, host pins, or signer authority.
 
+## Operational risk routing
+
+Known inspection-only administrator forms can remain `accepted` without an approval when the grant has ordinary `exec` authority. Examples include `systemctl status`, `ip route show`, `nft list ruleset`, `iptables -nvL`, `pfctl -vvsr`, package queries, ZFS/RAID status, and PVE status/API reads.
+
+Known mutation forms return `approval_required`, for example service lifecycle changes, route/firewall changes, package installation/removal/upgrades, storage topology/raw writes, kernel/process changes, container/orchestrator mutations, and hypervisor state/configuration changes.
+
+Sensitive ambiguous forms are handled conservatively rather than assumed read-only. The classifier does not replace Unix permissions or sudo/doas policy and is not a proof that an unclassified command is safe.
+
 ## Approval semantics
 
 Development admin decisions are:
@@ -108,7 +118,9 @@ Development admin decisions are:
 
 `allow_session` is not universally available.
 
-For stable semantic categories, session approval remains scoped by grant + logical target + risk category + concrete scope key.
+For stable semantic categories, session approval remains scoped by grant + logical target + risk category + concrete scope key. Service scopes include executable/action/resource so one service approval cannot authorize another unit.
+
+Many broader dev.8 administrator mutations use exact full-argv scope. Session reuse therefore applies only to the same grant/target/category/scope, not to an entire risk category.
 
 For the following powerful categories, only `allow_once` is legal:
 
@@ -172,24 +184,11 @@ Before calling the isolated Signer, the Control Plane requires all of the follow
 - powerful execution has `grant.permissions.shell=true`;
 - logical target resolves through protected operator-owned SSH inventory.
 
-A policy change after queueing therefore invalidates an old job rather than grandfathering old authority.
+A policy change after queueing therefore invalidates an old job rather than grandfathering old authority. This applies equally to dev.8 semantic reclassification: a job queued as `DEFAULT` cannot retain that old classification after a newly deployed risk rule recognizes it as an administrator mutation.
 
 Only after those checks does the Control Plane send job/grant/target/binding identity, ephemeral public key, and the job expiry upper bound to the Signer.
 
-A successful response contains the running job, short-lived certificate metadata, and the operator-resolved target:
-
-```json
-{
-  "job": { "...": "immutable running job" },
-  "certificate": { "...": "short-lived OpenSSH certificate metadata" },
-  "target": {
-    "name": "dns01",
-    "address": "10.169.0.53:22",
-    "user": "sentinel-ai",
-    "host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..."
-  }
-}
-```
+A successful response contains the running job, short-lived certificate metadata, and the operator-resolved target.
 
 Target transport data is resolved by the Control Plane, never echoed from agent/worker input. Registry addresses are concrete literal IPs plus port, and host keys are exact raw pins.
 
@@ -240,5 +239,6 @@ See also:
 
 - `docs/EXECUTION_PROTOCOL.md`
 - `docs/EXECUTION_POLICY.md`
+- `docs/OPERATIONAL_RISK.md`
 - `docs/SSH_CA.md`
 - `docs/SSH_EXECUTION.md`
