@@ -8,16 +8,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/credentialapi"
-	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/signerclient"
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 )
 
-func credentialHandlerFromEnv(caps *capability.Service, jobs *executionjob.Store, auditLog *audit.Log, workerToken string) (http.Handler, error) {
+func credentialHandlerFromEnv(caps *capability.Service, jobs credentialapi.JobStore, auditStore credentialapi.AuditStore, workerToken string) (http.Handler, error) {
 	targets, err := sshtarget.Open(env("SENTINEL_SSH_TARGETS_FILE", "/etc/tethys-sentinel/ssh-targets.json"))
 	if err != nil {
 		return nil, err
@@ -58,7 +56,7 @@ func credentialHandlerFromEnv(caps *capability.Service, jobs *executionjob.Store
 	if err != nil {
 		return nil, err
 	}
-	api, err := credentialapi.New(caps, jobs, auditLog, client, targets, workerToken)
+	api, err := credentialapi.New(caps, jobs, auditStore, client, targets, workerToken)
 	if err != nil {
 		return nil, err
 	}
