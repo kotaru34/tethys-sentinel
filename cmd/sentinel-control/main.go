@@ -13,18 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kotaru34/tethys-sentinel/internal/approval"
-	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/buildinfo"
-	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/contextstore"
 	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
-	"github.com/kotaru34/tethys-sentinel/internal/emergency"
 	"github.com/kotaru34/tethys-sentinel/internal/emergencyapi"
-	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
-	"github.com/kotaru34/tethys-sentinel/internal/notes"
 	"github.com/kotaru34/tethys-sentinel/internal/resourceapi"
-	"github.com/kotaru34/tethys-sentinel/internal/store"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 )
 
@@ -37,49 +30,25 @@ func main() {
 	if len(workerToken) < 32 {
 		log.Fatal("SENTINEL_WORKER_TOKEN must be at least 32 characters")
 	}
-	jobAuthKey, err := readSecretFile(env("SENTINEL_JOB_AUTH_KEY_FILE", "/etc/tethys-sentinel/job-auth.key"))
-	if err != nil {
-		log.Fatalf("read execution job auth key: %v", err)
-	}
-	if len(jobAuthKey) < 32 {
-		log.Fatal("execution job auth key must be at least 32 bytes")
-	}
 
-	statePath := env("SENTINEL_GRANT_STORE", "/var/lib/tethys-sentinel/grants.json")
-	grantStore, err := store.NewFileGrantStore(statePath)
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	persistence, err := openPersistence(startupCtx)
+	startupCancel()
 	if err != nil {
-		log.Fatalf("open grant store: %v", err)
+		log.Fatalf("open persistence backend: %v", err)
 	}
-	approvalStore, err := approval.Open(env("SENTINEL_APPROVAL_STORE", "/var/lib/tethys-sentinel/approvals.json"))
-	if err != nil {
-		log.Fatalf("open approval store: %v", err)
-	}
-	auditLog, err := audit.Open(env("SENTINEL_AUDIT_LOG", "/var/lib/tethys-sentinel/audit.jsonl"))
-	if err != nil {
-		log.Fatalf("open/verify audit log: %v", err)
-	}
-	jobStore, err := executionjob.Open(env("SENTINEL_JOB_STORE", "/var/lib/tethys-sentinel/execution-jobs.json"), jobAuthKey)
-	if err != nil {
-		log.Fatalf("open/verify execution job store: %v", err)
-	}
-	emergencyStore, err := emergency.Open(env("SENTINEL_EMERGENCY_STATE", "/var/lib/tethys-sentinel/emergency.json"))
-	if err != nil {
-		log.Fatalf("open emergency authority state: %v", err)
-	}
+	defer persistence.close()
+
 	contextStore, err := contextstore.New(env("SENTINEL_CONTEXT_FILE", "/etc/tethys-sentinel/context.json"))
 	if err != nil {
 		log.Fatalf("open authoritative context: %v", err)
 	}
-	noteStore, err := notes.Open(env("SENTINEL_NOTES_STORE", "/var/lib/tethys-sentinel/notes.jsonl"))
-	if err != nil {
-		log.Fatalf("open notes store: %v", err)
-	}
 
-	caps := capability.NewServiceWithEmergency(grantStore, emergencyStore)
-	api := controlapi.New(caps, approvalStore, auditLog, jobStore, adminToken, workerToken)
-	emergencyAPI := emergencyapi.New(emergencyStore, caps, jobStore, auditLog, adminToken, workerToken)
-	resources := resourceapi.New(caps, contextStore, auditLog, noteStore).Handler()
-	credentials, err := credentialHandlerFromEnv(caps, jobStore, auditLog, workerToken)
+	caps := persistence.caps
+	api := controlapi.New(caps, persistence.approvals, persistence.audit, persistence.jobs, adminToken, workerToken)
+	emergencyAPI := emergencyapi.NewWithController(persistence.emergency, caps, adminToken, workerToken)
+	resources := resourceapi.New(caps, contextStore, persistence.audit, persistence.notes).Handler()
+	credentials, err := credentialHandlerFromEnv(caps, persistence.jobs, persistence.audit, workerToken)
 	if err != nil {
 		log.Fatalf("configure SSH signer client: %v", err)
 	}
