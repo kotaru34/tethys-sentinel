@@ -24,26 +24,38 @@ func New(baseURL string, httpClient *http.Client) *Client {
 }
 
 func (c *Client) Introspect(ctx context.Context, hash [32]byte) (domain.Grant, error) {
-	body, err := json.Marshal(internalapi.IntrospectRequest{TokenHash: hex.EncodeToString(hash[:])})
-	if err != nil {
+	var response internalapi.IntrospectResponse
+	if err := c.post(ctx, "/internal/v1/introspect", internalapi.IntrospectRequest{TokenHash: hex.EncodeToString(hash[:])}, &response); err != nil {
 		return domain.Grant{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/v1/introspect", bytes.NewReader(body))
+	return response.Grant, nil
+}
+
+func (c *Client) AuthorizeCommand(ctx context.Context, hash [32]byte, target string, argv []string, agentReason string) (internalapi.AuthorizeCommandResponse, error) {
+	var response internalapi.AuthorizeCommandResponse
+	err := c.post(ctx, "/internal/v1/commands/authorize", internalapi.AuthorizeCommandRequest{
+		TokenHash: hex.EncodeToString(hash[:]), Target: target, Argv: argv, AgentReason: agentReason,
+	}, &response)
+	return response, err
+}
+
+func (c *Client) post(ctx context.Context, path string, bodyValue, responseValue any) error {
+	body, err := json.Marshal(bodyValue)
 	if err != nil {
-		return domain.Grant{}, err
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return domain.Grant{}, fmt.Errorf("control-plane introspection: %w", err)
+		return fmt.Errorf("control-plane request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return domain.Grant{}, errors.New("capability rejected by control plane")
+		return errors.New("request rejected by control plane")
 	}
-	var decoded internalapi.IntrospectResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return domain.Grant{}, err
-	}
-	return decoded.Grant, nil
+	return json.NewDecoder(resp.Body).Decode(responseValue)
 }
