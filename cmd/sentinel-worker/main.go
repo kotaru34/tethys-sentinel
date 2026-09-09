@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"log"
 	"net"
@@ -51,7 +50,7 @@ func main() {
 
 	client := workerclient.New(controlURL, httpClient, workerToken)
 	runner := worker.Runner{
-		Control: client,
+		Control:  client,
 		Executor: sshexec.Executor{DialTimeout: dialTimeout, OutputLimitBytes: outputLimit},
 		WorkerID: workerID,
 	}
@@ -154,5 +153,3 @@ func env(key, fallback string) string {
 	}
 	return fallback
 }
-
-var _ = tls.VersionTLS13
