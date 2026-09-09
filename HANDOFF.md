@@ -1,7 +1,7 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.1`
+Current development version: `0.1.0-dev.2`
 Branch: `wip/bootstrap-security-core`
 
 ## Project goal
@@ -50,23 +50,28 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Gateway sends only capability hashes to the internal introspection API.
 - Internal control-plane connection supports TLS 1.3 mutual TLS; plaintext requires an explicit loopback-only development flag.
 - Public gateway requires TLS 1.3; plaintext requires an explicit loopback-only development flag.
-- Gateway Trust-0 `/v1/bootstrap` and scoped `/v1/commands/evaluate` implemented and tested.
-- Local `go test ./...` and `go vet ./...` pass on the implementation (source remains compatible with the local Go toolchain; CI targets Go 1.27.1).
+- Gateway Trust-0 `/v1/bootstrap` implemented and tested.
+- Authoritative `/v1/commands/authorize` flow implemented: the control plane re-checks capability, target and exec scope and recomputes command risk itself.
+- Persistent approval requests implemented with `deny`, `allow_once`, and narrow `allow_session`; pending identical requests are deduplicated.
+- Risk scope keys were tightened so session approvals for destructive commands are tied to the concrete operation/resource rather than a broad command category.
+- Append-only JSONL audit chain implemented with sequence numbers, previous-hash chaining, SHA-256 verification on startup, fsync, and tamper-detection tests.
+- Authorizations fail closed if the audit log cannot record an authorization decision.
+- JSON API decoding now rejects trailing/multiple JSON values and unknown fields.
+- Local `go test -race ./...` and `go vet ./...` pass on the implementation (source remains compatible with the local Go toolchain; CI targets Go 1.27.1).
 
 ## Current phase
 
-`0.1.0-dev.1`: prove capability and process trust boundaries end-to-end before enabling any SSH execution. No real infrastructure action endpoint exists yet by design.
+`0.1.0-dev.2`: capability, authoritative command authorization, approval, and tamper-evident audit foundations are implemented. No real infrastructure action endpoint exists yet by design.
 
 ## Next implementation steps
 
-1. Commit `0.1.0-dev.1` and validate CI.
-2. Add approval objects and append-only tamper-evident audit events.
-3. Add agent history/notes with explicit per-grant read/write scope.
-4. Add inventory and authoritative runbook/context delivery.
-5. Implement execution worker job protocol.
-6. Implement isolated SSH certificate signer and remote hard-limit policy.
-7. Only then enable real SSH execution and perform a constrained test deployment.
-8. Build operator UI after backend security flows stabilize.
+1. Obtain a clean GitHub CI run for `0.1.0-dev.2`.
+2. Add inventory, authoritative runbooks/context delivery, and agent history/notes with explicit per-grant scope.
+3. Replace bootstrap file stores with PostgreSQL and separate least-privilege service roles before production deployment.
+4. Implement execution worker job protocol so an authorization and executable job cannot be separated/replayed by the agent.
+5. Implement isolated SSH certificate signer and remote hard-limit policy.
+6. Only then enable real SSH execution and perform a constrained test deployment.
+7. Build the operator UI once backend security flows and data model are stable.
 
 ## Deployment state
 
