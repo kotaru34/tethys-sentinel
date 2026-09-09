@@ -112,6 +112,7 @@ func contains(args []string, sequence ...string) bool {
 				ok = false
 				break
 			}
+		}
 		if ok {
 			return true
 		}
