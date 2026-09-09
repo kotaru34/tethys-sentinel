@@ -78,24 +78,30 @@ This is intentionally not the authoritative security gate. A compromised Gateway
 
 ### Execution policy boundary
 
-`0.1.0-dev.7` makes `exec` and `shell` distinct authorization dimensions.
+`0.1.0-dev.7` made `exec` and `shell` distinct authorization dimensions.
 
 - `exec` authorizes ordinary structured argv operations within the logical target scope.
 - `shell` additionally authorizes powerful execution classes capable of carrying arbitrary code, broadening privilege, or creating a lateral/remote execution path.
 
-Current shell-required classes:
+Current shell-required classes are `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, and `REMOTE_EXEC`.
 
-- `ARBITRARY_CODE`
-- `PRIVILEGE_LAUNCHER`
-- `REMOTE_EXEC`
-
-Examples include shells/interpreters, generic command launchers, `sudo`/`nsenter`-style privilege or namespace tools, SSH/Ansible/network pivots, Kubernetes exec/port-forward operations, container run/exec operations, and known shell-escape carriers such as `find -exec`.
-
-Powerful classes use a canonical SHA-256 over complete argv including executable path as their approval scope. Even then they are **allow-once only**. Identical argv does not prove identical behavior when a command references mutable scripts, container images, remote hosts, configuration, or other external state.
-
-Legacy persisted `allow_session` decisions for powerful categories are ignored after upgrade.
+Powerful classes use a canonical SHA-256 over complete argv including executable path and are **allow-once only**. Identical argv does not prove identical behavior when mutable scripts, images, remote state or configuration are referenced. Legacy persisted `allow_session` decisions for powerful categories are ignored.
 
 See `docs/EXECUTION_POLICY.md`.
+
+### Semantic operational-risk layer
+
+`0.1.0-dev.8` adds a separate classifier stage for high-impact administrator state mutation.
+
+It covers service/system manager changes, networking/firewall state, packages, storage/raw writes, kernel/process/log controls, container/orchestrator state, and hypervisor/jail operations across the Linux/BSD/PVE environments Sentinel is intended to administer.
+
+The design intentionally does not classify every ordinary file write. Actual filesystem/root authority remains a target Unix/sudo/doas concern.
+
+Where syntax has a reliable inspection path, reads stay autonomous. Examples include service status, route/interface inspection, firewall listing, package queries, ZFS/RAID status, and PVE status/API reads. Mutation forms require approval. Ambiguous forms of sensitive admin tools fail conservatively.
+
+Stable operations may use semantic scope. For example, service scope binds executable + action + concrete unit/resource. Broader mutations normally use exact full-argv scope. Powerful workload-start/exec/remote forms are elevated back into the dev.7 powerful classes rather than receiving a weaker operational approval path.
+
+See `docs/OPERATIONAL_RISK.md`.
 
 ### Execution Worker
 
@@ -133,7 +139,7 @@ For a running job, Control Plane:
 7. resolves the protected logical SSH target;
 8. only then calls the isolated Signer.
 
-A queued job therefore does not freeze an old policy decision. If policy changes, stale execution fails closed rather than retaining grandfathered authority.
+A queued job therefore does not freeze an old policy decision. This applies to both dev.7 powerful classifications and dev.8 operational classifications: newly hardened policy invalidates stale queued authority before credentials are issued.
 
 ### SSH Signer
 
@@ -143,33 +149,13 @@ Normal operation requires dedicated bearer credential plus mutual TLS. Plaintext
 
 Signer request contains only validated job/grant/target/binding identity, ephemeral Ed25519 public key and an upper validity bound.
 
-Signer-owned policy controls:
-
-- OpenSSH user certificate type;
-- Ed25519 CA/worker key requirement;
-- principal;
-- exact worker source-address binding (`/32` or `/128`);
-- fixed generated `force-command`;
-- empty PTY/agent/port/X11 forwarding extensions;
-- short TTL capped by job expiry.
-
-Caller cannot choose those fields.
+Signer-owned policy controls OpenSSH user-certificate type, Ed25519 key requirements, principal, exact worker source-address binding, fixed generated `force-command`, empty PTY/agent/port/X11 forwarding extensions, and short TTL capped by job expiry. Caller cannot choose those fields.
 
 ### Target execution boundary
 
 The signer-generated critical `force-command` invokes `tethys-sentinel-exec` with signer-controlled job ID and command binding. Agent argv travels separately in a versioned base64url JSON envelope through `SSH_ORIGINAL_COMMAND`.
 
-The wrapper:
-
-- loads root/operator-owned local target ID;
-- verifies envelope job ID against force-command job ID;
-- verifies envelope target against local target ID;
-- recomputes and constant-time compares command binding;
-- resolves executable through fixed safe path or clean absolute path;
-- never reconstructs argv through a shell;
-- supplies reduced deterministic environment;
-- consumes an at-most-once marker before process start;
-- directly executes argv.
+The wrapper loads the root/operator-owned local target ID, verifies job/target/binding, resolves executable through a fixed safe path or clean absolute path, supplies a reduced deterministic environment, consumes an at-most-once marker, and directly executes argv without shell reconstruction.
 
 Replay markers are written by the narrow root-only `tethys-sentinel-consume` helper into private root-owned state. The infrastructure process itself remains unprivileged unless separately allowed by narrow target sudo/doas policy.
 
@@ -177,52 +163,19 @@ Target `sshd`/account policy must independently disable PTY, forwarding, passwor
 
 ## Capability model
 
-A grant includes at minimum:
-
-- opaque capability token; only hash persisted
-- session/grant ID
-- agent identity and purpose
-- logical target set
-- expiry/revocation state
-- `exec`, `shell`, `upload`, `download`
-- history/notes permissions and history scope
+A grant includes at minimum opaque capability token/hash, session/grant identity, agent/purpose, logical target set, expiry/revocation state, `exec`, `shell`, upload/download, and scoped history/notes permissions.
 
 A capability never contains infrastructure SSH private keys, SSH endpoint, host key, or authority to mutate itself.
 
 ## Authoritative context
 
-Gateway exposes a read-only bundle generated by Control Plane. Every document carries provenance and SHA-256 content hash.
-
-Current Trust-0 virtual paths:
-
-- `/sentinel/POLICY.md`
-- `/sentinel/INSTRUCTIONS.md`
-- `/sentinel/INFRASTRUCTURE.json`
-- `/sentinel/TOOLS.json`
-- scoped `/sentinel/RUNBOOKS/*.md`
-
-Trust levels:
-
-- **TRUST_0** — authoritative policy/capability/inventory/runbook/operator material.
-- **TRUST_1** — reserved for future operator advisory material that is not authority unless promoted.
-- **TRUST_2** — audit/history/agent continuity data; explicitly non-authoritative.
-- **TRUST_3 / untrusted external data** — web/files/logs/output/user-generated content.
-
-Prompt provenance is behavioral hardening, never the actual authorization boundary.
+Gateway exposes a read-only bundle generated by Control Plane. Trust-0 policy/capability/inventory/runbook/operator material is authoritative; history/agent notes remain `TRUST_2`; files/logs/web/output remain non-authoritative data. Prompt provenance is behavioral hardening, never the actual authorization boundary.
 
 ## Risk approvals
 
-Sensitive operations can require:
+Sensitive operations can require deny, allow-once, or allow-for-session with narrow scope.
 
-- deny
-- allow once
-- allow for session with narrow stable scope
-
-`allow_session` is valid only where the category defines a sufficiently stable reusable operation/resource. An approval for `systemctl restart pdns` on one target must not become authority to restart another service or host.
-
-Powerful execution classes are not session-reusable; only `allow_once` is accepted.
-
-Approval state, capability scope and policy are independent. Human approval cannot grant missing `exec` or `shell` permission.
+`allow_session` is valid only where the category defines a sufficiently stable reusable operation/resource. Powerful execution classes are never session-reusable. Approval state, capability scope and policy are independent; human approval cannot grant missing `exec` or `shell` permission.
 
 ## Execution-job protocol
 
@@ -233,18 +186,7 @@ staged -> pending -> claimed -> running -> succeeded/failed
                   \-> canceled/expired where applicable
 ```
 
-Properties:
-
-- staged is durable but unclaimable;
-- pending is claimable once;
-- claim secret is random; plaintext not persisted;
-- bootstrap job records are HMAC-protected;
-- target/argv have canonical binding;
-- request ID provides idempotency/rebinding protection;
-- start revalidates grant;
-- certificate gate revalidates job, current policy, capability and target;
-- target consumes local one-shot marker before process start;
-- completion is one-shot terminal state.
+Staged jobs are durable but unclaimable; pending jobs are claimable once; claim secret plaintext is not persisted; job records are HMAC-protected; target/argv are canonically bound; request IDs prevent rebinding; start revalidates grants; certificate issuance revalidates current policy/capability/target; target execution consumes a local one-shot marker; completion is terminal and one-shot.
 
 ## Persistent state
 
@@ -254,7 +196,7 @@ Production state is planned for PostgreSQL with separate least-privilege roles f
 
 1. Trust/provenance instructions.
 2. Capability target and permission scope (`exec`/`shell`).
-3. Current Control Plane risk policy.
+3. Current Control Plane powerful + operational risk policy.
 4. Human approval with category-specific reuse rules.
 5. Immutable staged jobs + HMAC/request replay protection.
 6. Authoritative start/revocation gate.
