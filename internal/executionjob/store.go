@@ -21,6 +21,7 @@ import (
 type Status string
 
 const (
+	Staged    Status = "staged"
 	Pending   Status = "pending"
 	Claimed   Status = "claimed"
 	Running   Status = "running"
@@ -168,7 +169,7 @@ func (s *Store) Enqueue(_ context.Context, in EnqueueInput) (Job, bool, error) {
 	job := Job{
 		ID: id, RequestID: in.RequestID, GrantID: in.GrantID, Agent: in.Agent, Target: in.Target,
 		Argv: append([]string(nil), in.Argv...), CommandSHA256: commandHash, ApprovalID: in.ApprovalID,
-		RiskCategory: in.RiskCategory, ScopeKey: in.ScopeKey, CreatedAt: s.now(), ExpiresAt: in.ExpiresAt.UTC(), Status: Pending,
+		RiskCategory: in.RiskCategory, ScopeKey: in.ScopeKey, CreatedAt: s.now(), ExpiresAt: in.ExpiresAt.UTC(), Status: Staged,
 	}
 	rec := record{Job: job}
 	rec.IntegrityMAC, err = s.recordMAC(rec)
@@ -181,6 +182,34 @@ func (s *Store) Enqueue(_ context.Context, in EnqueueInput) (Job, bool, error) {
 		return Job{}, false, err
 	}
 	return copyJob(job), true, nil
+}
+
+func (s *Store) Publish(_ context.Context, id string) (Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[id]
+	if !ok || rec.Job.Status != Staged {
+		return Job{}, ErrNotPending
+	}
+	if err := s.verifyRecord(rec); err != nil {
+		return Job{}, err
+	}
+	old := copyRecord(rec)
+	if !s.now().Before(rec.Job.ExpiresAt) {
+		rec.Job.Status = Expired
+	} else {
+		rec.Job.Status = Pending
+	}
+	rec.IntegrityMAC, _ = s.recordMAC(rec)
+	s.records[id] = rec
+	if err := s.persistLocked(); err != nil {
+		s.records[id] = old
+		return Job{}, err
+	}
+	if rec.Job.Status == Expired {
+		return Job{}, ErrExpired
+	}
+	return copyJob(rec.Job), nil
 }
 
 func (s *Store) Claim(_ context.Context) (Claim, error) {
@@ -350,7 +379,7 @@ func (s *Store) CancelPending(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[id]
-	if !ok || rec.Job.Status != Pending {
+	if !ok || (rec.Job.Status != Staged && rec.Job.Status != Pending) {
 		return ErrNotPending
 	}
 	if err := s.verifyRecord(rec); err != nil {
@@ -373,7 +402,7 @@ func (s *Store) CancelPendingByGrant(_ context.Context, grantID string) (int, er
 	changed := make(map[string]record)
 	count := 0
 	for id, rec := range s.records {
-		if rec.Job.GrantID != grantID || rec.Job.Status != Pending {
+		if rec.Job.GrantID != grantID || (rec.Job.Status != Staged && rec.Job.Status != Pending) {
 			continue
 		}
 		if err := s.verifyRecord(rec); err != nil {
