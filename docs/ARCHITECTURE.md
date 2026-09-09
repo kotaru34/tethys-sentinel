@@ -3,49 +3,61 @@
 ## Trust-boundary overview
 
 ```text
-                         Operator
-                            |
-                    Admin UI / API
-                            |
-                    +-------v-------+
-                    | Control Plane |
-                    | grants/policy |
-                    | approvals     |
-                    | Trust-0 ctx   |
-                    | job issuance  |
-                    | cert gate     |
-                    +---+-------+---+
-                        |       |
-          internal mTLS |       | dedicated mTLS + signer credential
-                        |       |
-              +---------+       +--------------+
-              |                                |
-       +------v------+                  +------v------+
-       | AI Gateway |                  | SSH Signer  |
-       | public API |                  | CA boundary |
-       +-------------+                  +-------------+
-                        |
-                        | worker-only internal API
-                        |
-                 +------v------+
-                 | Execution   |
-                 | Worker      |
-                 | ephemeral   |
-                 | SSH key/job |
-                 +------+------+ 
-                        |
-                       SSH (next milestone)
-                        |
-                 Infrastructure
+                              Operator
+                                 |
+                         Admin UI / API
+                                 |
+                    +------------v------------+
+                    |      Control Plane      |
+                    | grants / policy         |
+                    | approvals / Trust-0     |
+                    | immutable job issuance  |
+                    | SSH target resolution   |
+                    | certificate gate        |
+                    +------+-------------+----+
+                           |             |
+             internal mTLS |             | dedicated mTLS + signer credential
+                           |             |
+                  +--------v--+       +--v-----------+
+                  | AI Gateway|       | SSH Signer   |
+                  | public API|       | CA boundary  |
+                  +-----------+       +--------------+
+                           |
+                           | worker-only internal API
+                           v
+                    +------+-------+
+                    | Execution    |
+                    | Worker       |
+                    | ephemeral key|
+                    | pinned SSH   |
+                    +------+-------+
+                           |
+                           | SSH to resolved literal IP
+                           | exact pinned host key
+                           v
+                    +------+----------------+
+                    | Target sshd           |
+                    | trusted Sentinel CA   |
+                    | dedicated account     |
+                    +------+----------------+
+                           |
+                           | certificate critical force-command
+                           v
+                    +------+----------------+
+                    | tethys-sentinel-exec  |
+                    | verify binding/target |
+                    | one-shot replay gate  |
+                    | direct exec(argv)     |
+                    +-----------------------+
 ```
 
-The bootstrap implementation uses restricted local files for grants, approvals, audit, notes, authoritative context and execution jobs so security boundaries can be tested before introducing database complexity. Persistent state is planned to move to PostgreSQL with separate least-privilege roles before production deployment. The gateway must never have database privileges that let it create or broaden grants/policies.
+The bootstrap implementation still uses restricted local files for grants, approvals, audit, notes, authoritative context and execution jobs so security boundaries can be tested before introducing database complexity. Persistent state is planned to move to PostgreSQL with separate least-privilege roles before production deployment. The gateway must never have database privileges that let it create or broaden grants/policies.
 
 ## Components
 
 ### Control Plane
 
-Human/operator authority. Owns grant creation, revocation, policy decisions, approvals, authoritative context/inventory, history filtering, execution-job issuance, SSH-certificate eligibility decisions, and emergency controls. It is not directly exposed to the AI-facing public interface.
+Human/operator authority. Owns grant creation, revocation, policy decisions, approvals, authoritative context/inventory, history filtering, execution-job issuance, SSH target resolution, SSH-certificate eligibility decisions, and emergency controls. It is not directly exposed to the AI-facing public interface.
 
 The current authoritative context source is a local JSON file selected with `SENTINEL_CONTEXT_FILE`. Production deployment must make this file root/operator-owned and read-only to the Sentinel service account or replace it with an equivalently protected control-plane store. No AI-facing API can modify it.
 
@@ -53,9 +65,11 @@ The Control Plane is the only component allowed to publish executable jobs. It r
 
 For SSH identity issuance, the Control Plane is also the only Signer client. It accepts a worker public key only for an already-running job with a valid claim secret, re-verifies the command binding and grant, and passes only job-derived constraints plus the public key to the Signer.
 
+For transport resolution, the Control Plane loads `SENTINEL_SSH_TARGETS_FILE` (default `/etc/tethys-sentinel/ssh-targets.json`). The job contains only a logical target ID. The server-side registry maps that ID to a literal IP/port, Unix user and exact pinned SSH host key. Agent-supplied addresses never become worker destinations.
+
 ### AI Gateway
 
-Validates capability format and exposes only agent operations: bootstrap/context, permitted history, notes, and atomic command submission. It forwards the capability hash plus request material to the Control Plane. It cannot issue a worker claim, broaden a grant, approve an operation, mutate Trust-0 state, request SSH certificates, or reach SSH CA secrets.
+Validates capability format and exposes only agent operations: bootstrap/context, permitted history, notes, and atomic command submission. It forwards the capability hash plus request material to the Control Plane. It cannot issue a worker claim, broaden a grant, approve an operation, mutate Trust-0 state, request SSH certificates, resolve arbitrary SSH targets, or reach SSH CA secrets.
 
 The public agent flow deliberately does not expose a separate `authorize now / execute later` primitive.
 
@@ -70,13 +84,17 @@ The worker:
 3. calls the authoritative Control Plane `start` gate using the one-shot claim secret;
 4. generates a new Ed25519 keypair in process memory for that job;
 5. submits only the ephemeral public key to the Control Plane certificate endpoint;
-6. verifies that the returned SSH certificate belongs to the generated keypair and does not outlive the job;
-7. invokes an executor only through the job-bound credential path;
-8. completes the job once with result metadata.
+6. receives the short-lived certificate plus operator-resolved SSH target specification;
+7. verifies the certificate belongs to the generated keypair and does not outlive the job;
+8. verifies the resolved logical target still equals the immutable job target;
+9. dials only the resolved literal target IP/port;
+10. verifies the SSH server against the exact pinned host public key;
+11. sends a deterministic job-bound command envelope through one SSH session;
+12. completes the job once with result metadata/output digest.
 
 A claim by itself is not execution authority. The `start` gate revalidates the original grant immediately before execution, and certificate issuance performs another grant check before any SSH credential is returned.
 
-`0.1.0-dev.5` implements the worker credential preparation path but intentionally does not yet provide the real SSH dial/executor.
+The worker execution context is capped by `job.expires_at`, so an established SSH session is actively closed when the job expires. TCP dial and SSH handshake have their own bounded deadlines. Output accounting is bounded and overflow actively terminates the SSH client.
 
 ### SSH Signer
 
@@ -101,12 +119,35 @@ Current certificate constraints:
 - Ed25519 CA and worker key;
 - one configured principal;
 - exact worker source-address binding (`/32` or `/128`);
-- signer-generated `force-command` pointing to a configured root-owned wrapper path plus validated job/binding arguments;
+- signer-generated `force-command` pointing to a configured wrapper path plus validated job/binding arguments;
 - no certificate extensions, therefore no PTY, agent forwarding, port forwarding or X11 forwarding grants;
 - short signer TTL capped by job expiry;
 - CA private-key file rejected if group/other permissions are present.
 
-See `docs/SSH_CA.md` for deployment and certificate details.
+See `docs/SSH_CA.md` for certificate details.
+
+### Target execution boundary
+
+`0.1.0-dev.6` adds the target-side hard boundary.
+
+The certificate critical `force-command` invokes `tethys-sentinel-exec` with only signer-controlled job ID and command-binding arguments. The agent command is carried separately as a versioned base64url JSON envelope in `SSH_ORIGINAL_COMMAND`.
+
+The wrapper:
+
+- reads a root/operator-owned local target ID;
+- verifies envelope job ID equals the force-command job ID;
+- verifies envelope target equals the local host target ID;
+- recomputes and constant-time compares the canonical command binding;
+- resolves an executable through a fixed path or clean absolute path;
+- never reconstructs argv through a shell;
+- supplies a reduced deterministic environment;
+- consumes an at-most-once execution marker before starting the process.
+
+Replay markers are created by the narrow root-only `tethys-sentinel-consume` helper under root-owned private state directories. The unprivileged remote account invokes only this helper through a noninteractive privilege rule; the requested infrastructure command itself remains unprivileged unless separately granted a narrow sudo/doas capability.
+
+The target `sshd` and Unix account must independently disable PTY, forwarding, password/keyboard-interactive authentication, ordinary authorized-key escape paths, tunneling and environment injection.
+
+See `docs/SSH_EXECUTION.md` for target requirements and transport details.
 
 ### PostgreSQL / persistent state
 
@@ -122,14 +163,14 @@ A grant contains at minimum:
 - session/grant ID
 - agent identity label
 - purpose
-- allowed targets
+- allowed logical targets
 - expiry
 - `exec`, `shell`, `upload`, `download`
 - `history_read`, `notes_read`, `notes_write`
 - history scope
 - revocation state
 
-A capability never contains an SSH private key and cannot mutate its own scope.
+A capability never contains an SSH private key, SSH endpoint, host key, or authority to mutate its own scope.
 
 ## Agent authoritative context
 
@@ -172,6 +213,8 @@ An approval for `systemctl restart pdns` on `dns01` must not imply permission to
 
 Execution publication is coupled to approval state. One-shot approval consumption and staged-job recovery are designed so retries/crashes cannot silently create a second job or reuse a consumed approval for a different command.
 
+The current classifier is not considered sufficient protection for interpreters, shell launchers and other arbitrary-code carriers; that is the next policy hardening milestone before production trust.
+
 ## Execution-job protocol
 
 The job lifecycle is:
@@ -191,9 +234,10 @@ Important properties:
 - `request_id` provides idempotency and prevents rebinding;
 - `start` revalidates the original grant immediately before execution;
 - SSH certificate issuance revalidates running-job state, claim secret, binding, expiry and grant again;
+- remote target execution consumes a local one-shot marker before process start;
 - completion is one-shot and terminal.
 
-See `docs/EXECUTION_PROTOCOL.md` for the detailed state machine and crash/replay semantics.
+See `docs/EXECUTION_PROTOCOL.md` for the detailed state machine and `docs/SSH_EXECUTION.md` for transport/target semantics.
 
 ## Defense in depth
 
@@ -201,13 +245,16 @@ See `docs/EXECUTION_PROTOCOL.md` for the detailed state machine and crash/replay
 2. Capability scope.
 3. Control-plane policy engine.
 4. Approval engine.
-5. Immutable staged execution jobs, HMAC integrity and replay protection.
+5. Immutable staged execution jobs, HMAC integrity and request replay protection.
 6. Authoritative pre-execution start/revocation gate.
 7. Independent pre-certificate grant/binding/job-state gate.
 8. Isolated SSH CA and signer-owned certificate constraints.
 9. Ephemeral per-job worker private keys.
-10. Remote Unix account permissions and root-owned forced-command wrapper (next milestone).
-11. sudo/doas policy.
-12. Network segmentation, host-key pinning and service isolation.
+10. Operator-owned literal-IP target registry and exact SSH host-key pinning.
+11. Job-expiry, handshake and output execution bounds.
+12. Root/operator-owned remote forced-command wrapper with local target/binding verification.
+13. Root-protected target-side at-most-once replay marker.
+14. Remote Unix account permissions and narrow sudo/doas policy.
+15. Independent VM/network segmentation and worker egress filtering.
 
 No single layer is considered sufficient.
