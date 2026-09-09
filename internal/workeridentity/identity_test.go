@@ -101,13 +101,12 @@ func signerService(t *testing.T, now time.Time) *sshsigner.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := sshsigner.New(ca, sshsigner.Policy{
+	service, err := sshsigner.NewWithClock(ca, sshsigner.Policy{
 		Principal: "sentinel-ai", WrapperPath: "/usr/local/libexec/tethys-sentinel-exec",
 		SourceAddresses: []string{"10.169.0.50"}, CertificateTTL: 20 * time.Second, Backdate: 2 * time.Second,
-	})
+	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.SetClockForTest(func() time.Time { return now })
 	return service
 }
