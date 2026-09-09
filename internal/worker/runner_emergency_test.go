@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 )
@@ -33,5 +32,3 @@ func TestRunnerCompletesRunningJobWhenSSHAccessIsDenied(t *testing.T) {
 		t.Fatalf("issuance failure recorded as success: %+v", control.completed[0])
 	}
 }
-
-var _ = executionjob.Result{}
