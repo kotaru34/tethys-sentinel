@@ -14,9 +14,9 @@ import (
 const TargetIDPath = "/etc/tethys-sentinel/target-id"
 
 type Request struct {
-	JobID          string
-	Binding        string
-	LocalTarget    string
+	JobID           string
+	Binding         string
+	LocalTarget     string
 	OriginalCommand string
 }
 
@@ -24,8 +24,8 @@ func Verify(req Request) ([]string, error) {
 	req.JobID = strings.TrimSpace(req.JobID)
 	req.Binding = strings.ToLower(strings.TrimSpace(req.Binding))
 	req.LocalTarget = strings.TrimSpace(req.LocalTarget)
-	if req.JobID == "" || req.LocalTarget == "" {
-		return nil, errors.New("job id and local target are required")
+	if !safeID(req.JobID) || !safeID(req.LocalTarget) {
+		return nil, errors.New("job id and local target must use safe identifier characters")
 	}
 	wantBinding, err := decodeBinding(req.Binding)
 	if err != nil {
@@ -70,7 +70,7 @@ func LoadTargetID(path string) (string, error) {
 		return "", fmt.Errorf("read target id: %w", err)
 	}
 	target := strings.TrimSpace(string(data))
-	if target == "" || len(target) > 128 || strings.ContainsAny(target, " \t\r\n/\\") {
+	if !safeID(target) {
 		return "", errors.New("target id is invalid")
 	}
 	return target, nil
@@ -85,4 +85,17 @@ func decodeBinding(value string) ([]byte, error) {
 		return nil, errors.New("binding must be a SHA-256 hex digest")
 	}
 	return decoded, nil
+}
+
+func safeID(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("._:-", r) {
+			continue
+		}
+		return false
+	}
+	return true
 }
