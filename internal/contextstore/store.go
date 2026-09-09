@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -105,6 +106,13 @@ func (s *Store) load() (Config, string, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
 		return Config{}, "", fmt.Errorf("decode authoritative context: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return Config{}, "", errors.New("authoritative context must contain exactly one JSON value")
+		}
+		return Config{}, "", fmt.Errorf("decode trailing authoritative context data: %w", err)
 	}
 	if strings.TrimSpace(cfg.Policy) == "" || strings.TrimSpace(cfg.Instructions) == "" {
 		return Config{}, "", errors.New("authoritative context requires policy and instructions")
