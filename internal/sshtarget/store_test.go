@@ -28,6 +28,26 @@ func TestStaticTargetStorePinsCanonicalHostKey(t *testing.T) {
 	}
 }
 
+func TestTargetStoreListIsSortedIndependentSnapshot(t *testing.T) {
+	key := testHostKey(t)
+	store, err := NewStatic([]Spec{
+		{Name: "zeta", Address: "10.169.0.54:22", User: "sentinel-ai", HostKey: key},
+		{Name: "alpha", Address: "10.169.0.53:22", User: "sentinel-ai", HostKey: key},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := store.List()
+	if len(list) != 2 || list[0].Name != "alpha" || list[1].Name != "zeta" {
+		t.Fatalf("unexpected target snapshot order: %+v", list)
+	}
+	list[0].Name = "mutated"
+	spec, err := store.Resolve("alpha")
+	if err != nil || spec.Name != "alpha" {
+		t.Fatalf("caller mutation changed store: spec=%+v err=%v", spec, err)
+	}
+}
+
 func TestTargetStoreRejectsUnknownFieldsAndWritableConfig(t *testing.T) {
 	path := t.TempDir() + "/targets.json"
 	content := `{"targets":[{"name":"dns01","address":"10.169.0.53:22","user":"sentinel-ai","host_key":"` + testHostKey(t) + `","surprise":true}]}`
