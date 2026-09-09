@@ -215,10 +215,15 @@ func isArbitraryCodeCarrier(cmd string) bool {
 		"lua", "luajit", "tclsh", "wish", "awk", "gawk", "mawk", "nawk",
 		"java", "jshell", "dotnet", "pwsh", "powershell",
 		"env", "xargs", "make", "gmake", "cmake", "ninja",
-		"busybox", "toybox", "vim", "vi", "nvim", "emacs":
+		"busybox", "toybox", "vim", "vi", "nvim", "emacs", "ed", "ex",
+		"timeout", "nice", "nohup", "stdbuf", "setsid", "flock", "watch",
+		"taskset", "ionice", "chrt", "fakeroot", "start-stop-daemon",
+		"script", "expect", "parallel", "screen", "tmux",
+		"gdb", "lldb", "strace", "ltrace", "valgrind",
+		"sed", "psql", "mysql", "sqlite3", "lftp":
 		return true
 	}
-	return pythonLike(cmd) || strings.HasPrefix(cmd, "pypy") || strings.HasPrefix(cmd, "ld-linux")
+	return pythonLike(cmd) || strings.HasPrefix(cmd, "pypy") || strings.HasPrefix(cmd, "ld-linux") || cmd == "ld.so"
 }
 
 func pythonLike(cmd string) bool {
