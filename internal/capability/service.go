@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	ErrExpired           = errors.New("capability expired")
-	ErrRevoked           = errors.New("capability revoked")
-	ErrGlobalRevoked     = errors.New("global AI access revoked")
+	ErrExpired            = errors.New("capability expired")
+	ErrRevoked            = errors.New("capability revoked")
+	ErrGlobalRevoked      = errors.New("global AI access revoked")
 	ErrBackendUnavailable = errors.New("capability backend unavailable")
 )
 
