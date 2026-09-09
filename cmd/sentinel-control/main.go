@@ -19,6 +19,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/contextstore"
 	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
+	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/notes"
 	"github.com/kotaru34/tethys-sentinel/internal/resourceapi"
 	"github.com/kotaru34/tethys-sentinel/internal/store"
@@ -30,6 +31,18 @@ func main() {
 	if len(adminToken) < 32 {
 		log.Fatal("SENTINEL_ADMIN_TOKEN must be at least 32 characters")
 	}
+	workerToken := os.Getenv("SENTINEL_WORKER_TOKEN")
+	if len(workerToken) < 32 {
+		log.Fatal("SENTINEL_WORKER_TOKEN must be at least 32 characters")
+	}
+	jobAuthKey, err := readSecretFile(env("SENTINEL_JOB_AUTH_KEY_FILE", "/etc/tethys-sentinel/job-auth.key"))
+	if err != nil {
+		log.Fatalf("read execution job auth key: %v", err)
+	}
+	if len(jobAuthKey) < 32 {
+		log.Fatal("execution job auth key must be at least 32 bytes")
+	}
+
 	statePath := env("SENTINEL_GRANT_STORE", "/var/lib/tethys-sentinel/grants.json")
 	grantStore, err := store.NewFileGrantStore(statePath)
 	if err != nil {
@@ -43,6 +56,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("open/verify audit log: %v", err)
 	}
+	jobStore, err := executionjob.Open(env("SENTINEL_JOB_STORE", "/var/lib/tethys-sentinel/execution-jobs.json"), jobAuthKey)
+	if err != nil {
+		log.Fatalf("open/verify execution job store: %v", err)
+	}
 	contextStore, err := contextstore.New(env("SENTINEL_CONTEXT_FILE", "/etc/tethys-sentinel/context.json"))
 	if err != nil {
 		log.Fatalf("open authoritative context: %v", err)
@@ -53,7 +70,7 @@ func main() {
 	}
 
 	caps := capability.NewService(grantStore)
-	api := controlapi.New(caps, approvalStore, auditLog, adminToken)
+	api := controlapi.New(caps, approvalStore, auditLog, jobStore, adminToken, workerToken)
 	resources := resourceapi.New(caps, contextStore, auditLog, noteStore).Handler()
 	internalMux := http.NewServeMux()
 	internalMux.Handle("/internal/v1/context", resources)
@@ -145,6 +162,14 @@ func loopbackAddr(addr string) bool {
 	}
 	ip := net.ParseIP(strings.Trim(host, "[]"))
 	return ip != nil && ip.IsLoopback()
+}
+
+func readSecretFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(strings.TrimSpace(string(data))), nil
 }
 
 func env(key, fallback string) string {
