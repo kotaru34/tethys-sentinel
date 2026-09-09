@@ -1,0 +1,25 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+
+# Runtime/local state
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+
+# Keys and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+.DS_Store

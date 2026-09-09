@@ -1,7 +1,22 @@
 # Tethys Sentinel
 
-Security-first AI infrastructure access broker.
+Security-first AI infrastructure access broker for granting AI agents narrow, temporary, auditable access to infrastructure without exposing infrastructure SSH private keys.
 
-Tethys Sentinel mediates narrowly scoped, temporary, auditable access between AI agents and infrastructure. Agents never receive infrastructure SSH private keys; authority is granted through short-lived capabilities and enforced by the broker, approval engine, SSH identity layer, and remote host permissions.
+## Core principles
 
-> Status: early development. Do not expose to untrusted networks yet.
+- Opaque, short-lived capability tokens; only token hashes are stored.
+- Human-controlled grants scoped by target, permission, purpose, and expiry.
+- Authoritative read-only agent context with explicit trust levels.
+- Risky operations require policy approval even when a session is otherwise authorized.
+- Control plane, AI gateway, execution worker, and SSH signer are separate security boundaries.
+- Defense in depth: broker policy, approvals, SSH certificates, remote account permissions, and sudo policy.
+- Append-oriented, tamper-evident audit trail and optional agent history/notes.
+- Emergency session revocation and global AI-access kill switch.
+
+## Status
+
+`0.1.0-dev.0` — security architecture and core capability/risk engine are under active development on `wip/bootstrap-security-core`.
+
+**Do not expose this project to untrusted networks yet.** No release is considered deployable until it has been tested and merged as WIP according to the project workflow.
+
+See `docs/ARCHITECTURE.md`, `docs/THREAT_MODEL.md`, and `HANDOFF.md`.
