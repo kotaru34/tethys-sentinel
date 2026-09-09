@@ -70,16 +70,19 @@ func TestTargetStoreRejectsUnknownFieldsAndWritableConfig(t *testing.T) {
 	}
 }
 
-func TestTargetStoreRejectsMalformedOrDNSAddress(t *testing.T) {
+func TestTargetStoreRejectsMalformedOrNonGlobalAddress(t *testing.T) {
 	key := testHostKey(t)
-	if _, err := NewStatic([]Spec{{Name: "dns01", Address: "10.169.0.53", User: "sentinel-ai", HostKey: key}}); err == nil {
-		t.Fatal("endpoint without port accepted")
-	}
-	if _, err := NewStatic([]Spec{{Name: "dns01", Address: "dns01.internal:22", User: "sentinel-ai", HostKey: key}}); err == nil {
-		t.Fatal("DNS target endpoint accepted")
-	}
-	if _, err := NewStatic([]Spec{{Name: "dns01", Address: "0.0.0.0:22", User: "sentinel-ai", HostKey: key}}); err == nil {
-		t.Fatal("unspecified target endpoint accepted")
+	for _, address := range []string{
+		"10.169.0.53",
+		"dns01.internal:22",
+		"0.0.0.0:22",
+		"127.0.0.1:22",
+		"[::1]:22",
+		"[fe80::53]:22",
+	} {
+		if _, err := NewStatic([]Spec{{Name: "dns01", Address: address, User: "sentinel-ai", HostKey: key}}); err == nil {
+			t.Fatalf("unsafe SSH target endpoint accepted: %s", address)
+		}
 	}
 	if _, err := NewStatic([]Spec{{Name: "dns01", Address: "10.169.0.53:22", User: "-root", HostKey: key}}); err == nil {
 		t.Fatal("unsafe user accepted")
