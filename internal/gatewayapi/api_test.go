@@ -21,7 +21,9 @@ type fakeControl struct {
 	submits int
 }
 
-func (f *fakeControl) Introspect(context.Context, [32]byte) (domain.Grant, error) { return f.grant, nil }
+func (f *fakeControl) Introspect(context.Context, [32]byte) (domain.Grant, error) {
+	return f.grant, nil
+}
 func (f *fakeControl) SubmitCommand(_ context.Context, _ [32]byte, requestID, target string, argv []string, _ string) (internalapi.SubmitCommandResponse, error) {
 	f.submits++
 	return internalapi.SubmitCommandResponse{
