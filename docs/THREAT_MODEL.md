@@ -126,15 +126,47 @@ After an SSH certificate has already been accepted, OpenSSH cannot retroactively
 
 ### Worker compromise
 
-Worker compromise must not become policy/grant/CA compromise. Worker receives immutable jobs and dedicated worker credential only; it cannot broaden grants, approve requests, mutate Trust-0 or call Signer directly.
+Worker compromise must not become policy/grant/CA compromise or arbitrary network reachability. Worker receives immutable jobs and dedicated worker credential only; it cannot broaden grants, approve requests, mutate Trust-0 or call Signer directly.
 
-It generates per-job Ed25519 keys in memory and receives target transport only from Control Plane. Production deployment must independently restrict worker VM egress.
+It generates per-job Ed25519 keys in memory and receives target transport only from Control Plane. `dev.9` adds an independent external worker egress boundary so a compromised worker process or guest cannot simply ignore application-level target resolution and dial arbitrary infrastructure.
+
+The production hard boundary is outside the guest. For Proxmox VE this means VM-interface firewall enforcement owned by the operator/hypervisor. Guest-local nftables may be defense in depth but cannot be the sole boundary because guest root/RCE may rewrite it.
+
+### Worker egress confused deputy
+
+A worker or agent must not gain a privileged mechanism for widening its own external firewall.
+
+`sentinel-egress-policy` is intentionally render/verify-only. It accepts protected target inventory plus a literal Control Plane endpoint and produces deterministic policy; it does not apply PVE configuration and must not be exposed through the AI/MCP surface. Worker identities must have no credentials or filesystem/API path that can modify `/etc/pve`, VM NIC firewall flags or equivalent external network policy.
+
+Normal runtime egress is limited to the literal-IP Control Plane HTTPS endpoint and global-unicast literal target SSH IP:port endpoints. DNS, generic LAN access, broad RFC1918 ranges, package mirrors and arbitrary Internet/HTTPS are not implicit runtime permissions.
+
+### Firewall policy drift or inactive enforcement
+
+A correct generated policy file is not evidence that traffic is actually filtered.
+
+The operator-side verifier checks byte-for-byte policy drift, Proxmox Datacenter firewall activation and `firewall=1` on the selected worker VM NIC. The generated VM policy itself uses `enable: 1` and `policy_out: DROP` with explicit destination/port allows only.
+
+These configuration checks are still not sufficient by themselves. Real acceptance requires packet-level tests from inside the worker VM proving that Control Plane and registered SSH endpoints succeed while unrelated LAN/Internet/DNS/unlisted ports fail.
+
+### Stale egress after target-set change
+
+Application inventory and external firewall are separate authority layers and can become temporarily inconsistent.
+
+A newly added target that has reached Control Plane inventory but not external egress policy should fail closed at the network layer. Target removal should preferably narrow external egress first where practical; Control Plane removal independently blocks new normal jobs.
+
+The generated policy includes a canonical SHA-256 over Control Plane + target destination set, and `-check` is intended for operator/Ansible reconciliation to detect drift without granting reconciliation authority to the worker.
+
+### Established connection survives firewall shrink
+
+Removing an allow rule is not treated as guaranteed immediate termination of an already-established stateful TCP flow.
+
+Therefore dev.9 egress enforcement is a containment boundary, not the global kill switch. Short SSH certificate TTL, job expiry, execution deadlines and target one-shot replay remain required. The separate global-revoke milestone must stop new signing/execution and actively terminate worker activity/connections where feasible.
 
 ### Arbitrary SSH destination / SSRF pivot
 
 Agent controls only a logical target in its grant. It cannot provide hostname, IP, port, Unix user or host key.
 
-Control Plane target registry accepts concrete literal IPv4/IPv6 + port and rejects DNS/unspecified/malformed endpoints. This makes destination deterministic for firewall enforcement.
+Control Plane target registry accepts global-unicast literal IPv4/IPv6 + port and rejects DNS, unspecified, multicast, loopback/link-local and malformed endpoints. This makes destination deterministic for external firewall enforcement.
 
 ### SSH host impersonation
 
@@ -228,7 +260,12 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 - SSH certificate requires running, unexpired, binding-valid, current-policy-valid job and active grant.
 - Signer caller cannot broaden principal/force-command/source/extensions/TTL.
 - Certificate does not outlive job and grants no PTY/agent/port/X11 forwarding.
-- Worker target is literal IP from operator-owned inventory and host key is exactly pinned.
+- Worker target is global-unicast literal IP from operator-owned inventory and host key is exactly pinned.
+- Worker runtime egress is externally deny-by-default and limited to Control Plane HTTPS plus registered target SSH endpoints.
+- Worker/AI identities cannot apply, widen or reconcile the external PVE egress policy.
+- Generated egress policy drift and PVE Datacenter/NIC activation are operator-verifiable and fail closed on mismatch.
+- Packet-level worker-VM egress behavior must be tested before treating dev.9 as infrastructure-accepted.
+- Firewall shrink is not assumed to terminate already-established flows; revocation controls remain independent.
 - Wrapper directly executes verified argv, verifies local target identity, and consumes root-protected replay marker.
 - Worker execution is bounded by job expiry and output limit.
 - A functioning release is not production-deployable until tested on intended isolated infrastructure.
