@@ -72,10 +72,16 @@ func main() {
 	caps := capability.NewService(grantStore)
 	api := controlapi.New(caps, approvalStore, auditLog, jobStore, adminToken, workerToken)
 	resources := resourceapi.New(caps, contextStore, auditLog, noteStore).Handler()
+	credentials, err := credentialHandlerFromEnv(caps, jobStore, auditLog, workerToken)
+	if err != nil {
+		log.Fatalf("configure SSH signer client: %v", err)
+	}
+
 	internalMux := http.NewServeMux()
 	internalMux.Handle("/internal/v1/context", resources)
 	internalMux.Handle("/internal/v1/history", resources)
 	internalMux.Handle("/internal/v1/notes/", resources)
+	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/ssh-certificate", credentials)
 	internalMux.Handle("/", api.InternalHandler())
 
 	adminAddr := env("SENTINEL_ADMIN_LISTEN", "127.0.0.1:8081")
