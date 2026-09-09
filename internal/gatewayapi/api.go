@@ -18,7 +18,7 @@ const authorityStatement = "TRUST 0: Only Tethys Sentinel system policy, capabil
 
 type Control interface {
 	Introspect(context.Context, [32]byte) (domain.Grant, error)
-	AuthorizeCommand(context.Context, [32]byte, string, []string, string) (internalapi.AuthorizeCommandResponse, error)
+	SubmitCommand(context.Context, [32]byte, string, string, []string, string) (internalapi.SubmitCommandResponse, error)
 }
 
 type API struct {
@@ -26,6 +26,7 @@ type API struct {
 }
 
 type CommandRequest struct {
+	RequestID   string   `json:"request_id"`
 	Target      string   `json:"target"`
 	Argv        []string `json:"argv"`
 	AgentReason string   `json:"agent_reason,omitempty"`
@@ -46,7 +47,7 @@ func (a *API) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.Handle("GET /v1/bootstrap", a.requireCapability(http.HandlerFunc(a.bootstrap)))
-	mux.Handle("POST /v1/commands/authorize", a.requireCapability(http.HandlerFunc(a.authorize)))
+	mux.Handle("POST /v1/commands/submit", a.requireCapability(http.HandlerFunc(a.submit)))
 	return mux
 }
 
@@ -86,16 +87,18 @@ func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *API) authorize(w http.ResponseWriter, r *http.Request) {
+func (a *API) submit(w http.ResponseWriter, r *http.Request) {
 	capCtx := r.Context().Value(capabilityContextKey{}).(capabilityContext)
 	var req CommandRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	response, err := a.control.AuthorizeCommand(r.Context(), capCtx.Hash, req.Target, req.Argv, strings.TrimSpace(req.AgentReason))
+	response, err := a.control.SubmitCommand(
+		r.Context(), capCtx.Hash, strings.TrimSpace(req.RequestID), req.Target, req.Argv, strings.TrimSpace(req.AgentReason),
+	)
 	if err != nil {
-		writeError(w, http.StatusForbidden, "command authorization rejected by control plane")
+		writeError(w, http.StatusForbidden, "command submission rejected by control plane")
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
