@@ -36,7 +36,7 @@ func TestClientUsesDedicatedSignerAPIContract(t *testing.T) {
 	response, err := client.Sign(context.Background(), sshsigner.Request{
 		JobID: "job-1", GrantID: "grant-1", Target: "dns01",
 		CommandSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		PublicKey: "ssh-ed25519 AAAA", NotAfter: notAfter,
+		PublicKey:     "ssh-ed25519 AAAA", NotAfter: notAfter,
 	})
 	if err != nil {
 		t.Fatal(err)
