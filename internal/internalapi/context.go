@@ -19,7 +19,9 @@ type HistoryRequest struct {
 }
 
 type HistoryResponse struct {
-	Events []audit.Event `json:"events"`
+	TrustLevel    string        `json:"trust_level"`
+	Authoritative bool          `json:"authoritative"`
+	Events        []audit.Event `json:"events"`
 }
 
 type NotesListRequest struct {
@@ -28,7 +30,9 @@ type NotesListRequest struct {
 }
 
 type NotesListResponse struct {
-	Notes []domain.AgentNote `json:"notes"`
+	TrustLevel    string             `json:"trust_level"`
+	Authoritative bool               `json:"authoritative"`
+	Notes         []domain.AgentNote `json:"notes"`
 }
 
 type NoteWriteRequest struct {
