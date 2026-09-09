@@ -114,12 +114,18 @@ func validate(raw Spec) (Spec, error) {
 	}
 	host, portText, err := net.SplitHostPort(spec.Address)
 	if err != nil || strings.TrimSpace(host) == "" {
-		return Spec{}, fmt.Errorf("SSH target %q address must be host:port", spec.Name)
+		return Spec{}, fmt.Errorf("SSH target %q address must be literal-ip:port", spec.Name)
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil || ip.IsUnspecified() || ip.IsMulticast() {
+		return Spec{}, fmt.Errorf("SSH target %q address must use a concrete literal IP", spec.Name)
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
 		return Spec{}, fmt.Errorf("SSH target %q has invalid port", spec.Name)
 	}
+	spec.Address = net.JoinHostPort(ip.String(), strconv.Itoa(port))
+
 	key, _, options, rest, err := ssh.ParseAuthorizedKey([]byte(spec.HostKey + "\n"))
 	if err != nil {
 		return Spec{}, fmt.Errorf("SSH target %q host key: %w", spec.Name, err)
