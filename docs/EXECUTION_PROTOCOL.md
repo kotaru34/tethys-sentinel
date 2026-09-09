@@ -1,21 +1,21 @@
 # Execution Protocol
 
-This document defines the security-sensitive command execution protocol introduced in `0.1.0-dev.4`.
-
-It intentionally stops before real SSH execution. The purpose of this milestone is to make authorization, approval, queueing, worker claim, revocation and replay behavior explicit and testable before adding SSH credentials.
+This document defines the security-sensitive command execution protocol introduced in `0.1.0-dev.4` and extended through real SSH execution in `0.1.0-dev.6`.
 
 ## Security goal
 
-An AI agent must never be able to authorize one command and later cause a different command to execute by changing target or argv, replaying an old request, reusing an approval, or racing a grant revocation.
+An AI agent must never be able to authorize one command and later cause a different command to execute by changing target or argv, replaying an old request, reusing an approval, racing grant revocation, substituting an SSH destination, or reusing the same job credential repeatedly on a target.
 
 The AI Gateway never sends an executable job directly to a worker. Only the Control Plane can create and publish execution jobs.
 
 ## Actors
 
-- **Agent**: holds the opaque capability token and submits a requested command.
+- **Agent**: holds the opaque capability token and submits a requested command using a logical target ID plus argv.
 - **AI Gateway**: public-facing transport. It forwards only the capability hash plus request data to the Control Plane.
-- **Control Plane**: authoritative grant/policy/approval owner and execution-job issuer.
+- **Control Plane**: authoritative grant/policy/approval owner, execution-job issuer, target resolver and SSH-certificate eligibility gate.
 - **Execution Worker**: private internal consumer. It cannot issue or broaden grants and never receives the agent capability.
+- **SSH Signer**: isolated CA boundary that signs only constrained per-job certificates.
+- **Target wrapper**: verifies the signer-bound job/binding against the separately transported immutable command envelope and local target identity.
 - **Operator**: approves or denies sensitive requests and can revoke grants.
 
 ## Immutable command binding
@@ -25,12 +25,12 @@ Every execution job is bound to:
 - grant ID;
 - agent identity label;
 - caller-supplied `request_id`;
-- target;
+- logical target;
 - argv;
 - expiry;
 - applicable approval/risk metadata.
 
-A canonical SHA-256 command binding is stored with the job. The worker recomputes and verifies this binding before any executor is invoked.
+A canonical SHA-256 command binding is stored with the job. The worker verifies this binding before execution, the Signer embeds it into the certificate force-command, and the remote wrapper recomputes it from the command envelope before process start.
 
 Changing the same request ID to different command material is rejected as a conflict.
 
@@ -66,9 +66,11 @@ agent submit
     v
   running
     |
-    +-------> succeeded
-    |
-    +-------> failed
+    | ephemeral key + certificate/target gate
+    | pinned SSH + target replay consume
+    | direct remote exec(argv)
+    v
+  succeeded / failed
 ```
 
 Additional terminal states include `canceled` and `expired`.
@@ -91,11 +93,44 @@ Claiming does not grant permission to execute yet.
 
 The worker presents its worker credential, job ID and claim secret to the Control Plane `start` endpoint. The Control Plane revalidates the original grant immediately before changing the job to `running`.
 
-Only after a successful start response may the worker invoke the executor.
+A successful `start` still does not by itself provide SSH credentials.
+
+### SSH credential and target gate
+
+For a running job the worker generates a fresh Ed25519 keypair and sends only the public key to the Control Plane.
+
+The Control Plane re-checks:
+
+- running state;
+- claim secret;
+- job expiry;
+- command binding;
+- original grant activity;
+- existence of the logical target in operator-owned SSH target inventory.
+
+The Control Plane then asks the isolated Signer for a short-lived certificate and returns that certificate together with the protected target specification.
+
+The worker verifies the certificate/private-key binding and target/job match before attempting SSH.
+
+### remote execution
+
+The worker connects only to the Control-Plane-resolved literal target IP/port and verifies one exact pinned host key.
+
+The requested command is transported as a deterministic `sentinel-exec-v1` base64url JSON envelope rather than shell-quoted text.
+
+The certificate force-command invokes `tethys-sentinel-exec --job <id> --binding <sha256>`. The wrapper verifies:
+
+- force-command job ID equals envelope job ID;
+- envelope logical target equals the host's local target ID;
+- recomputed canonical binding equals the signer-bound binding.
+
+Only then is the job consumed through target replay state and the verified argv launched directly.
 
 ### completion
 
-Completion requires the same worker path and one-shot claim secret. A completed job cannot be completed again, and the stored claim-token hash is cleared.
+Completion requires the same worker path and claim secret. A completed job cannot be completed again, and the stored claim-token hash is cleared.
+
+The current result contains status/error metadata and output digest accounting, not raw stdout/stderr.
 
 ## Approval semantics
 
@@ -111,17 +146,26 @@ The command is staged before one-shot approval consumption and published only af
 
 If the process crashes after `allow_once` has been durably consumed but before publication, retrying the same `request_id` recovers and publishes the already-staged matching job rather than requesting a second approval or creating another job.
 
+Interpreter/shell arbitrary-code carriers require another policy-hardening pass before production trust; exact transport binding does not make opaque code safe to classify.
+
 ## Revocation behavior
 
 Grant revocation is authoritative at multiple points:
 
 1. new agent submissions fail because the grant no longer authenticates;
 2. unclaimed pending/staged jobs for the grant are canceled;
-3. a job already claimed by a worker still cannot execute unless the subsequent `start` gate revalidates the grant successfully.
+3. a job already claimed by a worker still cannot execute unless the subsequent `start` gate revalidates the grant successfully;
+4. a running job cannot obtain a new SSH certificate if the grant is revoked before certificate issuance.
 
-Therefore revocation between claim and start prevents executor invocation.
+After a certificate has been issued, OpenSSH provides no server-side instant revocation primitive for that already-issued certificate. `dev.6` limits the remaining window by:
 
-Once a job has passed the `start` gate and is already running, termination semantics will be strengthened when the real remote executor is added. The current protocol guarantees the pre-execution boundary.
+- short certificate lifetime;
+- source-address restriction;
+- certificate validity capped by job expiry;
+- worker execution context capped by job expiry;
+- target-side at-most-once replay consumption.
+
+A later global emergency-control milestone will add coordinated active worker/session termination semantics.
 
 ## Job-store integrity
 
@@ -142,29 +186,46 @@ The worker credential does not grant:
 - policy changes;
 - approvals;
 - Trust-0 mutation;
-- SSH CA access.
+- SSH CA access;
+- arbitrary SSH target creation.
 
 The worker never receives the plaintext agent capability.
 
 ## Replay protections
 
-The protocol rejects:
+The protocol rejects or prevents:
 
 - second claim of the same job;
 - start with the wrong claim secret;
 - repeated start after transition to running;
+- certificate issuance with an invalid/expired running claim;
 - completion with the wrong claim secret;
 - repeated completion after terminal state;
-- rebinding an existing `request_id` to different target/argv.
+- rebinding an existing `request_id` to different target/argv;
+- target execution with a mismatched local target ID;
+- target execution with a different command binding;
+- a second target-side consume of the same job ID.
 
-## Current non-goals
+The target replay semantic is deliberately at-most-once: once the root-protected marker is consumed, a process-start failure does not automatically reopen the job for remote replay.
 
-`0.1.0-dev.4` does **not** yet:
+## Connection and process bounds
 
-- connect to SSH servers;
-- issue SSH certificates;
-- persist stdout/stderr;
-- guarantee forced termination of a command that was already running when a later revocation occurs;
-- replace bootstrap file stores with production database transactions.
+- TCP dial timeout is bounded.
+- SSH handshake has an explicit deadline even if the outer context has none.
+- The execution context cannot outlive the job expiry.
+- Stdout/stderr accounting is bounded per stream.
+- Output overflow actively closes the SSH transport.
+- Raw stdout/stderr is not persisted by the current worker.
 
-Those are subsequent security milestones and must not be inferred from the existence of the worker protocol.
+## Current non-goals / remaining work
+
+`0.1.0-dev.6` still does **not** provide:
+
+- production PostgreSQL persistence;
+- independent network egress enforcement of the target registry;
+- complete emergency revoke-all/active-session shutdown semantics;
+- a final policy model for interpreters/shells/arbitrary-code carriers;
+- a production operator UI;
+- formal guarantees that every remote descendant process on every supported OS is killed immediately on transport loss.
+
+See `docs/SSH_EXECUTION.md` for the target transport/wrapper boundary and `docs/THREAT_MODEL.md` for the remaining security assumptions.
