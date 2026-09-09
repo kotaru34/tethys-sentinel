@@ -1,6 +1,7 @@
 package resourceapi
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,21 +12,33 @@ import (
 
 	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
-	"github.com/kotaru34/tethys-sentinel/internal/contextstore"
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
-	"github.com/kotaru34/tethys-sentinel/internal/notes"
 )
+
+type ContextProvider interface {
+	Bundle(domain.Grant) (domain.ContextBundle, error)
+}
+
+type AuditStore interface {
+	Append(context.Context, audit.Input) (audit.Event, error)
+	ReadVerifiedContext(context.Context, int) ([]audit.Event, error)
+}
+
+type NoteStore interface {
+	Append(context.Context, domain.Grant, string, string) (domain.AgentNote, error)
+	List(context.Context, domain.Grant, int) ([]domain.AgentNote, error)
+}
 
 type API struct {
 	caps    *capability.Service
-	context *contextstore.Store
-	audit   *audit.Log
-	notes   *notes.Store
+	context ContextProvider
+	audit   AuditStore
+	notes   NoteStore
 }
 
-func New(caps *capability.Service, contextStore *contextstore.Store, auditLog *audit.Log, noteStore *notes.Store) *API {
-	return &API{caps: caps, context: contextStore, audit: auditLog, notes: noteStore}
+func New(caps *capability.Service, contextStore ContextProvider, auditStore AuditStore, noteStore NoteStore) *API {
+	return &API{caps: caps, context: contextStore, audit: auditStore, notes: noteStore}
 }
 
 func (a *API) Handler() http.Handler {
@@ -75,7 +88,7 @@ func (a *API) history(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	events, err := a.audit.ReadVerified(5000)
+	events, err := a.audit.ReadVerifiedContext(r.Context(), 5000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "verified history unavailable")
 		return
