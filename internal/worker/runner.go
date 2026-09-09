@@ -66,7 +66,8 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 	if r.Now != nil {
 		now = r.Now().UTC()
 	}
-	if !now.Before(started.ExpiresAt) {
+	remaining := started.ExpiresAt.Sub(now)
+	if remaining <= 0 {
 		result := executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "job_expired_before_execution"}
 		if _, completeErr := r.Control.Complete(ctx, workerID, claim, result); completeErr != nil {
 			return true, completeErr
@@ -94,7 +95,7 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 	if interval <= 0 {
 		interval = defaultAuthorityPollInterval
 	}
-	execCtx, execCancel := context.WithDeadline(ctx, started.ExpiresAt)
+	execCtx, execCancel := context.WithTimeout(ctx, remaining)
 	defer execCancel()
 	if err := r.checkAuthority(execCtx, workerID, claim, interval); err != nil {
 		return true, r.completeLocalFailure(ctx, workerID, claim, "execution_authority_denied", err)
