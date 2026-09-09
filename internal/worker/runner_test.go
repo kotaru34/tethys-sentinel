@@ -12,6 +12,9 @@ import (
 type fakeControl struct {
 	claim     executionjob.Claim
 	claimErr  error
+	startErr  error
+	started   *executionjob.Job
+	starts    int
 	completed []executionjob.Result
 }
 
@@ -19,9 +22,28 @@ func (f *fakeControl) Claim(context.Context, string) (executionjob.Claim, error)
 	return f.claim, f.claimErr
 }
 
+func (f *fakeControl) Start(context.Context, string, executionjob.Claim) (executionjob.Job, error) {
+	f.starts++
+	if f.startErr != nil {
+		return executionjob.Job{}, f.startErr
+	}
+	if f.started != nil {
+		return *f.started, nil
+	}
+	job := f.claim.Job
+	job.Status = executionjob.Running
+	return job, nil
+}
+
 func (f *fakeControl) Complete(_ context.Context, _ string, _ executionjob.Claim, result executionjob.Result) (executionjob.Job, error) {
 	f.completed = append(f.completed, result)
-	return f.claim.Job, nil
+	job := f.claim.Job
+	if result.Success {
+		job.Status = executionjob.Succeeded
+	} else {
+		job.Status = executionjob.Failed
+	}
+	return job, nil
 }
 
 type fakeExecutor struct {
@@ -35,7 +57,7 @@ func (f *fakeExecutor) Execute(_ context.Context, _ string, _ []string) (executi
 	return f.result, f.err
 }
 
-func TestRunnerExecutesOnlyBoundClaimedJobOnce(t *testing.T) {
+func TestRunnerExecutesOnlyAfterBoundStart(t *testing.T) {
 	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC)
 	job := executionjob.Job{
 		ID: "job-1", RequestID: "req-00000001", GrantID: "grant-1", Agent: "agent-a", Target: "dns01",
@@ -50,12 +72,12 @@ func TestRunnerExecutesOnlyBoundClaimedJobOnce(t *testing.T) {
 	if err != nil || !didWork {
 		t.Fatalf("run didWork=%v err=%v", didWork, err)
 	}
-	if executor.calls != 1 || len(control.completed) != 1 || !control.completed[0].Success {
-		t.Fatalf("executor calls=%d completions=%+v", executor.calls, control.completed)
+	if control.starts != 1 || executor.calls != 1 || len(control.completed) != 1 || !control.completed[0].Success {
+		t.Fatalf("starts=%d executor calls=%d completions=%+v", control.starts, executor.calls, control.completed)
 	}
 }
 
-func TestRunnerRefusesTamperedBinding(t *testing.T) {
+func TestRunnerRefusesTamperedClaimBindingBeforeStart(t *testing.T) {
 	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC)
 	job := executionjob.Job{
 		ID: "job-1", RequestID: "req-00000001", GrantID: "grant-1", Agent: "agent-a", Target: "dns01",
@@ -68,12 +90,35 @@ func TestRunnerRefusesTamperedBinding(t *testing.T) {
 	if _, err := runner.RunOnce(context.Background()); err == nil {
 		t.Fatal("tampered command binding was accepted")
 	}
-	if executor.calls != 0 || len(control.completed) != 0 {
-		t.Fatalf("tampered job reached executor or completion: calls=%d completions=%d", executor.calls, len(control.completed))
+	if control.starts != 0 || executor.calls != 0 || len(control.completed) != 0 {
+		t.Fatalf("tampered job progressed: starts=%d calls=%d completions=%d", control.starts, executor.calls, len(control.completed))
 	}
 }
 
-func TestRunnerDoesNotExecuteExpiredClaim(t *testing.T) {
+func TestRunnerRefusesMutationBetweenClaimAndStart(t *testing.T) {
+	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC)
+	job := executionjob.Job{
+		ID: "job-1", RequestID: "req-00000001", GrantID: "grant-1", Agent: "agent-a", Target: "dns01",
+		Argv: []string{"true"}, ExpiresAt: now.Add(time.Minute), Status: executionjob.Claimed,
+	}
+	job.CommandSHA256 = bindingForTest(t, job)
+	mutated := job
+	mutated.Status = executionjob.Running
+	mutated.Target = "pve01"
+	mutated.CommandSHA256 = bindingForTest(t, mutated)
+	control := &fakeControl{claim: executionjob.Claim{Job: job, ClaimToken: "jcl_test"}, started: &mutated}
+	executor := &fakeExecutor{}
+	runner := Runner{Control: control, Executor: executor, WorkerID: "worker-a", Now: func() time.Time { return now }}
+
+	if _, err := runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("mutated started job was accepted")
+	}
+	if executor.calls != 0 || len(control.completed) != 0 {
+		t.Fatalf("mutated start reached executor or completion: calls=%d completions=%d", executor.calls, len(control.completed))
+	}
+}
+
+func TestRunnerDoesNotExecuteExpiredStartedJob(t *testing.T) {
 	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC)
 	job := executionjob.Job{
 		ID: "job-1", RequestID: "req-00000001", GrantID: "grant-1", Agent: "agent-a", Target: "dns01",
@@ -116,9 +161,6 @@ func TestRunnerPropagatesExecutorFailureAfterCompletion(t *testing.T) {
 
 func bindingForTest(t *testing.T, job executionjob.Job) string {
 	t.Helper()
-	job.CommandSHA256 = ""
-	// The store owns the canonical binding algorithm. Create a short-lived store and
-	// enqueue the same immutable fields so the test cannot silently diverge from it.
 	store, err := executionjob.Open(t.TempDir()+"/jobs.json", []byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
