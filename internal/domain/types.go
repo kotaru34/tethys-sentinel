@@ -20,16 +20,17 @@ type HistoryScope struct {
 }
 
 type Grant struct {
-	ID          string       `json:"id"`
-	TokenHash   [32]byte     `json:"-"`
-	Purpose     string       `json:"purpose"`
-	Agent       string       `json:"agent"`
-	Targets     []string     `json:"targets"`
-	Permissions Permissions  `json:"permissions"`
-	History     HistoryScope `json:"history"`
-	IssuedAt    time.Time    `json:"issued_at"`
-	ExpiresAt   time.Time    `json:"expires_at"`
-	RevokedAt   *time.Time   `json:"revoked_at,omitempty"`
+	ID            string       `json:"id"`
+	TokenHash     [32]byte     `json:"-"`
+	Purpose       string       `json:"purpose"`
+	Agent         string       `json:"agent"`
+	Targets       []string     `json:"targets"`
+	Permissions   Permissions  `json:"permissions"`
+	History       HistoryScope `json:"history"`
+	SecurityEpoch uint64       `json:"security_epoch"`
+	IssuedAt      time.Time    `json:"issued_at"`
+	ExpiresAt     time.Time    `json:"expires_at"`
+	RevokedAt     *time.Time   `json:"revoked_at,omitempty"`
 }
 
 type AuthoritativeContext struct {
