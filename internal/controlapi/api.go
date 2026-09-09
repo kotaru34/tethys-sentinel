@@ -377,10 +377,10 @@ func (a *API) completeExecutionJob(w http.ResponseWriter, r *http.Request) {
 
 func acceptedResponse(job executionjob.Job, riskResult risk.Result) internalapi.SubmitCommandResponse {
 	return internalapi.SubmitCommandResponse{
-		Accepted: true,
-		Decision: "accepted",
+		Accepted:   true,
+		Decision:   "accepted",
 		ApprovalID: job.ApprovalID,
-		Risk: riskResult,
+		Risk:       riskResult,
 		Job: &internalapi.ExecutionJobReceipt{
 			ID: job.ID, RequestID: job.RequestID, Status: job.Status, CommandSHA256: job.CommandSHA256, ExpiresAt: job.ExpiresAt,
 		},
