@@ -1,6 +1,7 @@
 package emergencyapi
 
 import (
+	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,8 +16,7 @@ func TestGuardWorkerEnabledSuppressesClaimsWhileDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := &API{state: state}
-	api.workerTokenSHA = tokenHash(testWorkerToken)
+	api := &API{state: state, workerTokenSHA: sha256.Sum256([]byte(testWorkerToken))}
 
 	called := 0
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -43,8 +43,4 @@ func TestGuardWorkerEnabledSuppressesClaimsWhileDisabled(t *testing.T) {
 	if rr.Code != http.StatusNoContent || called != 1 {
 		t.Fatalf("disabled guard status=%d called=%d", rr.Code, called)
 	}
-}
-
-func tokenHash(token string) [32]byte {
-	return sha256Sum([]byte(token))
 }
