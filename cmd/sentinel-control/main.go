@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kotaru34/tethys-sentinel/internal/approval"
+	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/buildinfo"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
@@ -30,7 +32,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("open grant store: %v", err)
 	}
-	api := controlapi.New(capability.NewService(grantStore), adminToken)
+	approvalStore, err := approval.Open(env("SENTINEL_APPROVAL_STORE", "/var/lib/tethys-sentinel/approvals.json"))
+	if err != nil {
+		log.Fatalf("open approval store: %v", err)
+	}
+	auditLog, err := audit.Open(env("SENTINEL_AUDIT_LOG", "/var/lib/tethys-sentinel/audit.jsonl"))
+	if err != nil {
+		log.Fatalf("open/verify audit log: %v", err)
+	}
+	api := controlapi.New(capability.NewService(grantStore), approvalStore, auditLog, adminToken)
 
 	adminAddr := env("SENTINEL_ADMIN_LISTEN", "127.0.0.1:8081")
 	if !loopbackAddr(adminAddr) {
