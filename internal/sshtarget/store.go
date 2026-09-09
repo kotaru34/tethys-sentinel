@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,6 +100,24 @@ func (s *Store) Resolve(name string) (Spec, error) {
 		return Spec{}, fmt.Errorf("SSH target %q is not configured", name)
 	}
 	return spec, nil
+}
+
+// List returns a deterministic snapshot of the protected target inventory.
+// The returned slice is independent of the store and sorted by logical name.
+func (s *Store) List() []Spec {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	specs := make([]Spec, 0, len(s.byName))
+	for _, spec := range s.byName {
+		specs = append(specs, spec)
+	}
+	s.mu.RUnlock()
+	sort.Slice(specs, func(i, j int) bool {
+		return specs[i].Name < specs[j].Name
+	})
+	return specs
 }
 
 func validate(raw Spec) (Spec, error) {
