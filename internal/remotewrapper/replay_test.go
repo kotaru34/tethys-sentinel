@@ -10,7 +10,8 @@ import (
 )
 
 func TestConsumeExecutionAllowsExactlyOneConcurrentConsumer(t *testing.T) {
-	dir := t.TempDir() + "/executed"
+	parent := secureTempParent(t)
+	dir := parent + "/executed"
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,8 @@ func TestConsumeExecutionAllowsExactlyOneConcurrentConsumer(t *testing.T) {
 }
 
 func TestConsumeExecutionRejectsUnsafeStateDirectory(t *testing.T) {
-	dir := t.TempDir() + "/executed"
+	parent := secureTempParent(t)
+	dir := parent + "/executed"
 	if err := os.Mkdir(dir, 0o777); err != nil {
 		t.Fatal(err)
 	}
@@ -51,4 +53,13 @@ func TestConsumeExecutionRejectsUnsafeStateDirectory(t *testing.T) {
 	if err := ConsumeExecution(dir, "job-00000002", binding, time.Now()); err == nil {
 		t.Fatal("world-writable replay state directory accepted")
 	}
+}
+
+func secureTempParent(t *testing.T) string {
+	t.Helper()
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return parent
 }
