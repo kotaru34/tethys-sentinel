@@ -18,14 +18,16 @@ import (
 )
 
 type fakeControl struct {
-	claim     executionjob.Claim
-	claimErr  error
-	startErr  error
-	started   *executionjob.Job
-	issue     func(string) (sshsigner.Response, sshtarget.Spec, error)
-	starts    int
-	issues    int
-	completed []executionjob.Result
+	claim           executionjob.Claim
+	claimErr        error
+	startErr        error
+	started         *executionjob.Job
+	issue           func(string) (sshsigner.Response, sshtarget.Spec, error)
+	authority       func(int) error
+	starts          int
+	issues          int
+	authorityChecks int
+	completed       []executionjob.Result
 }
 
 func (f *fakeControl) Claim(context.Context, string) (executionjob.Claim, error) {
@@ -53,6 +55,14 @@ func (f *fakeControl) IssueSSHAccess(_ context.Context, _ string, _ executionjob
 	return f.issue(publicKey)
 }
 
+func (f *fakeControl) CheckAuthority(_ context.Context, _ string, _ executionjob.Claim) error {
+	f.authorityChecks++
+	if f.authority != nil {
+		return f.authority(f.authorityChecks)
+	}
+	return nil
+}
+
 func (f *fakeControl) Complete(_ context.Context, _ string, _ executionjob.Claim, result executionjob.Result) (executionjob.Job, error) {
 	f.completed = append(f.completed, result)
 	job := f.claim.Job
@@ -78,6 +88,19 @@ func (f *fakeExecutor) Execute(_ context.Context, job executionjob.Job, credenti
 	return f.result, f.err
 }
 
+type blockingExecutor struct {
+	calls int
+}
+
+func (f *blockingExecutor) Execute(ctx context.Context, job executionjob.Job, credential workeridentity.Credential, target sshtarget.Spec) (executionjob.Result, error) {
+	f.calls++
+	if job.Status != executionjob.Running || credential.Signer == nil || credential.Certificate == nil || target.Name != job.Target {
+		return executionjob.Result{}, errors.New("runner supplied invalid SSH execution material")
+	}
+	<-ctx.Done()
+	return executionjob.Result{Success: false, ExitCode: -1}, ctx.Err()
+}
+
 func TestRunnerExecutesOnlyAfterStartAndSSHCredential(t *testing.T) {
 	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC)
 	job := testClaimedJob(t, now, []string{"true"})
@@ -89,8 +112,8 @@ func TestRunnerExecutesOnlyAfterStartAndSSHCredential(t *testing.T) {
 	if err != nil || !didWork {
 		t.Fatalf("run didWork=%v err=%v", didWork, err)
 	}
-	if control.starts != 1 || control.issues != 1 || executor.calls != 1 || len(control.completed) != 1 || !control.completed[0].Success {
-		t.Fatalf("starts=%d issues=%d executor calls=%d completions=%+v", control.starts, control.issues, executor.calls, control.completed)
+	if control.starts != 1 || control.issues != 1 || control.authorityChecks < 1 || executor.calls != 1 || len(control.completed) != 1 || !control.completed[0].Success {
+		t.Fatalf("starts=%d issues=%d authority=%d executor calls=%d completions=%+v", control.starts, control.issues, control.authorityChecks, executor.calls, control.completed)
 	}
 }
 
@@ -167,6 +190,47 @@ func TestRunnerRejectsResolvedTargetMismatchBeforeExecutor(t *testing.T) {
 	}
 	if executor.calls != 0 || len(control.completed) != 1 || control.completed[0].ErrorKind != "ssh_target_mismatch" {
 		t.Fatalf("target mismatch calls=%d completions=%+v", executor.calls, control.completed)
+	}
+}
+
+func TestRunnerDeniesExecutionWhenInitialAuthorityCheckFails(t *testing.T) {
+	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC)
+	job := testClaimedJob(t, now, []string{"true"})
+	control := controlWithSSH(t, job, now)
+	control.authority = func(int) error { return errors.New("global AI access disabled") }
+	executor := &fakeExecutor{}
+	runner := Runner{Control: control, Executor: executor, WorkerID: "worker-a", Now: func() time.Time { return now }, AuthorityPollInterval: 20 * time.Millisecond}
+
+	didWork, err := runner.RunOnce(context.Background())
+	if !didWork || err == nil {
+		t.Fatalf("authority denial didWork=%v err=%v", didWork, err)
+	}
+	if executor.calls != 0 || len(control.completed) != 1 || control.completed[0].ErrorKind != "execution_authority_denied" {
+		t.Fatalf("authority denial calls=%d completions=%+v", executor.calls, control.completed)
+	}
+}
+
+func TestRunnerCancelsActiveExecutorWhenAuthorityIsLost(t *testing.T) {
+	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC)
+	job := testClaimedJob(t, now, []string{"sleep", "60"})
+	control := controlWithSSH(t, job, now)
+	control.authority = func(check int) error {
+		if check >= 2 {
+			return errors.New("global revoke-all")
+		}
+		return nil
+	}
+	executor := &blockingExecutor{}
+	runner := Runner{Control: control, Executor: executor, WorkerID: "worker-a", Now: func() time.Time { return now }, AuthorityPollInterval: 20 * time.Millisecond}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	didWork, err := runner.RunOnce(ctx)
+	if !didWork || err == nil {
+		t.Fatalf("active authority loss didWork=%v err=%v", didWork, err)
+	}
+	if executor.calls != 1 || control.authorityChecks < 2 || len(control.completed) != 1 || control.completed[0].ErrorKind != "execution_authority_lost" {
+		t.Fatalf("active authority loss calls=%d checks=%d completions=%+v", executor.calls, control.authorityChecks, control.completed)
 	}
 }
 
