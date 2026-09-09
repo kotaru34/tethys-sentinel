@@ -14,6 +14,7 @@ var ErrNotFound = errors.New("not found")
 type GrantStore interface {
 	CreateGrant(context.Context, domain.Grant) error
 	GrantByTokenHash(context.Context, [32]byte) (domain.Grant, error)
+	GrantByID(context.Context, string) (domain.Grant, error)
 	RevokeGrant(context.Context, string, time.Time) error
 }
 
@@ -49,6 +50,16 @@ func (s *MemoryGrantStore) GrantByTokenHash(_ context.Context, hash [32]byte) (d
 		return domain.Grant{}, ErrNotFound
 	}
 	return grant, nil
+}
+
+func (s *MemoryGrantStore) GrantByID(_ context.Context, id string) (domain.Grant, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	hash, ok := s.byID[id]
+	if !ok {
+		return domain.Grant{}, ErrNotFound
+	}
+	return s.byHash[hash], nil
 }
 
 func (s *MemoryGrantStore) RevokeGrant(_ context.Context, id string, at time.Time) error {
