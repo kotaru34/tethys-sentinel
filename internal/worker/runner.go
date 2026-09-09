@@ -13,10 +13,13 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/workeridentity"
 )
 
+const defaultAuthorityPollInterval = 250 * time.Millisecond
+
 type Control interface {
 	Claim(context.Context, string) (executionjob.Claim, error)
 	Start(context.Context, string, executionjob.Claim) (executionjob.Job, error)
 	IssueSSHAccess(context.Context, string, executionjob.Claim, string) (sshsigner.Response, sshtarget.Spec, error)
+	CheckAuthority(context.Context, string, executionjob.Claim) error
 	Complete(context.Context, string, executionjob.Claim, executionjob.Result) (executionjob.Job, error)
 }
 
@@ -25,10 +28,11 @@ type Executor interface {
 }
 
 type Runner struct {
-	Control  Control
-	Executor Executor
-	WorkerID string
-	Now      func() time.Time
+	Control               Control
+	Executor              Executor
+	WorkerID              string
+	Now                   func() time.Time
+	AuthorityPollInterval time.Duration
 }
 
 func (r Runner) RunOnce(ctx context.Context) (bool, error) {
@@ -86,10 +90,60 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 		return true, r.completeLocalFailure(ctx, workerID, claim, "ssh_target_mismatch", errors.New("resolved SSH target does not match running job"))
 	}
 
-	execCtx, cancel := context.WithDeadline(ctx, started.ExpiresAt)
-	defer cancel()
+	interval := r.AuthorityPollInterval
+	if interval <= 0 {
+		interval = defaultAuthorityPollInterval
+	}
+	execCtx, execCancel := context.WithDeadline(ctx, started.ExpiresAt)
+	defer execCancel()
+	if err := r.checkAuthority(execCtx, workerID, claim, interval); err != nil {
+		return true, r.completeLocalFailure(ctx, workerID, claim, "execution_authority_denied", err)
+	}
+
+	monitorCtx, stopMonitor := context.WithCancel(execCtx)
+	authorityErrCh := make(chan error, 1)
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-monitorCtx.Done():
+				return
+			case <-ticker.C:
+				if err := r.checkAuthority(monitorCtx, workerID, claim, interval); err != nil {
+					if monitorCtx.Err() != nil {
+						return
+					}
+					select {
+					case authorityErrCh <- err:
+					default:
+					}
+					execCancel()
+					return
+				}
+			}
+		}
+	}()
+
 	result, executeErr := r.Executor.Execute(execCtx, started, credential, target)
-	if executeErr != nil {
+	stopMonitor()
+	<-monitorDone
+
+	var authorityErr error
+	select {
+	case authorityErr = <-authorityErrCh:
+	default:
+	}
+	if authorityErr != nil {
+		result.Success = false
+		if result.ExitCode == 0 {
+			result.ExitCode = -1
+		}
+		result.ErrorKind = "execution_authority_lost"
+		executeErr = authorityErr
+	} else if executeErr != nil {
 		result.Success = false
 		if strings.TrimSpace(result.ErrorKind) == "" {
 			result.ErrorKind = "executor_error"
@@ -99,6 +153,12 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	return true, executeErr
+}
+
+func (r Runner) checkAuthority(parent context.Context, workerID string, claim executionjob.Claim, timeout time.Duration) error {
+	checkCtx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	return r.Control.CheckAuthority(checkCtx, workerID, claim)
 }
 
 func (r Runner) completeLocalFailure(ctx context.Context, workerID string, claim executionjob.Claim, kind string, cause error) error {
