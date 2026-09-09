@@ -17,6 +17,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/buildinfo"
 	"github.com/kotaru34/tethys-sentinel/internal/controlclient"
 	"github.com/kotaru34/tethys-sentinel/internal/gatewayapi"
+	"github.com/kotaru34/tethys-sentinel/internal/gatewayresources"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 )
 
@@ -26,12 +27,19 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	api := gatewayapi.New(controlclient.New(controlURL, controlHTTP))
+	control := controlclient.New(controlURL, controlHTTP)
+	core := gatewayapi.New(control).Handler()
+	resources := gatewayresources.New(control).Handler()
+	mux := http.NewServeMux()
+	mux.Handle("/v1/context", resources)
+	mux.Handle("/v1/history", resources)
+	mux.Handle("/v1/notes", resources)
+	mux.Handle("/", core)
 
 	addr := env("SENTINEL_GATEWAY_LISTEN", ":8443")
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           api.Handler(),
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
