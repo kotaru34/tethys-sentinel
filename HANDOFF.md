@@ -1,7 +1,7 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-09
-Current development version: `0.1.0-dev.7`
+Current development version: `0.1.0-dev.7` (`0.1.0-dev.8` release candidate)
 Branch: `wip/bootstrap-security-core`
 Deployment: not deployed; no merge to `main` yet
 
@@ -34,6 +34,11 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Powerful classes are `allow_once` only. Reusable session approval is forbidden even for identical argv because argv can reference mutable scripts/images/remote state/configuration.
 - Legacy persisted unsafe `allow_session` decisions for powerful classes are ignored after policy upgrade.
 - Powerful approval scope hashes complete argv including executable path; this prevents delimiter/path collisions but is not treated as proof of immutable behavior.
+- High-impact administrator mutations are semantically classified separately from the powerful-execution capability boundary.
+- Known read-only administrator forms remain autonomous where syntax is reliably distinguishable; ambiguous sensitive forms fail conservatively.
+- Operational policy does not become generic file-write policy. Actual file/root authority remains bounded by Unix permissions/ACLs and narrow sudo/doas rules.
+- Stable service operations use semantic executable+action+resource scopes; broader administrator mutations generally use exact full-argv scopes.
+- Workload start/build, namespace/guest/jail exec and equivalent mutable execution paths are elevated into the powerful classes rather than receiving a weaker reusable operational approval.
 - Gateway performs an early `exec`/`shell` consistency filter, but it is not the hard boundary.
 - Immediately before SSH signing, Control Plane reclassifies immutable `job.argv` using current policy, requires category/scope equality with job metadata, re-authenticates the grant, and enforces `shell` again. Stale queued policy fails closed.
 - Worker generates a fresh Ed25519 keypair per job; private key stays in process memory.
@@ -78,33 +83,35 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 
 ### `0.1.0-dev.7` — powerful execution policy
 
-- Added conservative `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER` and `REMOTE_EXEC` classification for known interpreters/shells, generic command carriers, privilege/namespace launchers, SSH/Ansible/network pivots, Kubernetes remote operations, container run/exec, `find -exec`, tar checkpoint exec and related escape patterns.
-- Powerful command approval scope is SHA-256 of canonical complete argv including executable path.
-- Added `exec`/`shell` separation: powerful classes require explicit `shell=true` in addition to `exec=true` and approval.
-- Gateway rejects unreachable powerful submissions early when `shell=false`.
-- Hard certificate gate reclassifies immutable argv with current policy immediately before signing, checks category/scope freshness, re-authenticates grant, and requires `shell` again before signer invocation.
-- Old queued jobs whose risk classification changes fail closed rather than retaining grandfathered authority.
-- `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, and `REMOTE_EXEC` are `allow_once` only; `allow_session` is rejected.
-- Legacy persisted unsafe session approvals are ignored by matching after upgrade.
-- Stable semantic categories such as narrowly scoped service restart can still support constrained session approval.
-- Added regression coverage for full-argv collision/path separation, shell capability enforcement, Gateway prefilter, certificate-time policy freshness, one-shot powerful approval, and legacy unsafe approval invalidation.
-- Added `docs/EXECUTION_POLICY.md`; README/API/architecture/threat model synchronized.
-- Pre-release code gate: commit `b1bbab9243fee12a1bf3e6cbb2b2a0174263e941`, Actions run `34401421958`; all module tidy/gofmt/vet/race tests passed.
+- Added conservative `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER` and `REMOTE_EXEC` routing for interpreters/shells, command carriers, privilege/namespace launchers, remote pivots and equivalent escape paths.
+- Added independent `exec`/`shell` enforcement, allow-once-only powerful approvals, complete-argv scope, legacy unsafe-session invalidation, Gateway prefilter and hard current-policy certificate gate.
+- Pre-release code gate: commit `b1bbab9243fee12a1bf3e6cbb2b2a0174263e941`, Actions run `34401421958`.
 - Versioned acceptance: commit `58318f7a1f0693941dce4d791ea97fac8e3d3519`, Actions run `34401911162`; all module tidy/gofmt/vet/race tests passed.
+
+### `0.1.0-dev.8` — semantic operational-risk policy (release candidate)
+
+- Split operational risk routing into focused service/network/package/storage/system/runtime/escape classifiers rather than expanding one monolithic switch.
+- Added high-impact mutation coverage across systemd/classic service/OpenBSD rcctl/OpenRC/runit/FreeBSD sysrc; Linux/BSD networking; firewall state; apt/dpkg, RPM-family, pacman, XBPS and FreeBSD pkg; mounts/partitions/mdadm/LVM/ZFS/GEOM/raw storage; kernel/process/log state; Docker/Podman/CRI/Kubernetes/Helm; PVE `qm`/`pct`/`pvesh`/HA, libvirt, bhyve and jail controls.
+- Preserved known read-only paths such as service status, route/firewall inspection, package queries, ZFS/RAID status and PVE status/API reads.
+- Added conservative escape coverage for VCS hooks/aliases, compiler/linker/plugin execution, tar/cpio external commands, pager/editor/debugger and additional privilege-launcher surfaces.
+- Workload start/build and guest/jail/namespace execution inherit dev.7 powerful semantics (`shell=true`, complete argv, `allow_once`).
+- Stable service actions use semantic executable+action+resource scope; broader mutations normally use exact argv scope.
+- Firewall regression coverage distinguishes `iptables -nvL` from mutating `-LZ`, and `pfctl -vvsr` from mutating `-vnf`; restore paths are explicitly mutating.
+- Removed a legacy blanket firewall rule that shadowed the new read-vs-mutation classifier.
+- Added `docs/OPERATIONAL_RISK.md`; README/API/execution-policy/architecture/threat-model documentation synchronized.
+- Pre-release code gate: commit `41773a133e59344f56d51a1b08317a974f1f67de`, Actions run `34405504004`; module tidy, gofmt, vet and `go test -race ./...` passed.
 
 ## Current phase
 
-`0.1.0-dev.7` is complete and CI-accepted. It remains a development build and has not been exercised on intended PVE infrastructure.
+`0.1.0-dev.8` code and documentation are complete as a release candidate. Remaining release work is the version/build-info bump and a clean versioned acceptance CI.
 
-File-backed stores remain bootstrap/development persistence, not final production state.
+It remains a development build and has not been exercised on intended PVE infrastructure. File-backed stores remain bootstrap/development persistence, not final production state.
 
 Do not merge to `main` yet: the operator merge rule requires a functioning constrained real-infrastructure execution test first.
 
-The next separated milestone is `0.1.0-dev.8`: semantic operational-risk coverage for high-impact administrative state mutation. This should not devolve into approval for every ordinary file operation; Unix permissions/sudo remain the file-authority boundary. The classifier should focus on administrator primitives with large blast radius and use stable semantic resource scopes where reusable approval is genuinely safe enough.
-
 ## Next implementation steps
 
-1. `0.1.0-dev.8`: cover broader service lifecycle, network/routing/link changes, package state, storage topology/raw writes, kernel controls, container/orchestrator state and hypervisor state.
+1. Finalize `0.1.0-dev.8` version/build-info and versioned acceptance CI.
 2. Add independent worker VM egress enforcement for registered target IPs/ports plus required Control Plane endpoints.
 3. Add global revoke-all semantics that block new signing/execution and actively terminate worker activity where feasible.
 4. Move grants/approvals/jobs/audit/notes to PostgreSQL with separate least-privilege roles and transactional semantics.
