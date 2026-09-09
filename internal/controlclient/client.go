@@ -31,10 +31,10 @@ func (c *Client) Introspect(ctx context.Context, hash [32]byte) (domain.Grant, e
 	return response.Grant, nil
 }
 
-func (c *Client) AuthorizeCommand(ctx context.Context, hash [32]byte, target string, argv []string, agentReason string) (internalapi.AuthorizeCommandResponse, error) {
-	var response internalapi.AuthorizeCommandResponse
-	err := c.post(ctx, "/internal/v1/commands/authorize", internalapi.AuthorizeCommandRequest{
-		TokenHash: encodeHash(hash), Target: target, Argv: argv, AgentReason: agentReason,
+func (c *Client) SubmitCommand(ctx context.Context, hash [32]byte, requestID, target string, argv []string, agentReason string) (internalapi.SubmitCommandResponse, error) {
+	var response internalapi.SubmitCommandResponse
+	err := c.post(ctx, "/internal/v1/commands/submit", internalapi.SubmitCommandRequest{
+		TokenHash: encodeHash(hash), RequestID: requestID, Target: target, Argv: argv, AgentReason: agentReason,
 	}, &response)
 	return response, err
 }
