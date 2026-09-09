@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,10 +21,8 @@ import (
 const maxBodyBytes = 8 << 10
 
 type API struct {
-	state          *emergency.Store
+	controller     Controller
 	caps           *capability.Service
-	jobs           *executionjob.Store
-	audit          *audit.Log
 	adminTokenSHA  [32]byte
 	workerTokenSHA [32]byte
 	now            func() time.Time
@@ -43,11 +40,13 @@ type StateResponse struct {
 }
 
 func New(state *emergency.Store, caps *capability.Service, jobs *executionjob.Store, auditLog *audit.Log, adminToken, workerToken string) *API {
+	return NewWithController(&legacyController{state: state, jobs: jobs, audit: auditLog}, caps, adminToken, workerToken)
+}
+
+func NewWithController(controller Controller, caps *capability.Service, adminToken, workerToken string) *API {
 	return &API{
-		state:          state,
+		controller:     controller,
 		caps:           caps,
-		jobs:           jobs,
-		audit:          auditLog,
 		adminTokenSHA:  sha256.Sum256([]byte(adminToken)),
 		workerTokenSHA: sha256.Sum256([]byte(workerToken)),
 		now:            func() time.Time { return time.Now().UTC() },
@@ -68,8 +67,13 @@ func (a *API) InternalHandler() http.Handler {
 	return a.requireToken(mux, a.workerTokenSHA)
 }
 
-func (a *API) getState(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, responseState(a.state.Snapshot()))
+func (a *API) getState(w http.ResponseWriter, r *http.Request) {
+	state, err := a.controller.State(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "emergency authority state unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, responseState(state))
 }
 
 func (a *API) revokeAll(w http.ResponseWriter, r *http.Request) {
@@ -78,32 +82,9 @@ func (a *API) revokeAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	now := a.now()
-	state, stateErr := a.state.RevokeAll(req.Reason, now)
-	canceled, cancelErr := a.jobs.CancelNotRunningAll(r.Context(), "global_revoke_all")
-	metadata := map[string]string{
-		"epoch":                     strconv.FormatUint(state.Epoch, 10),
-		"canceled_not_running_jobs": strconv.Itoa(canceled),
-	}
-	if stateErr != nil {
-		metadata["state_error"] = stateErr.Error()
-	}
-	if cancelErr != nil {
-		metadata["job_cancellation_error"] = "true"
-	}
-	_, auditErr := a.audit.Append(r.Context(), audit.Input{
-		Kind: "emergency.revoke_all", Actor: "operator", Reason: strings.TrimSpace(req.Reason), Metadata: metadata,
-	})
-	if stateErr != nil {
-		writeError(w, http.StatusInternalServerError, "AI access disabled but authority epoch update reported an error")
-		return
-	}
-	if cancelErr != nil {
-		writeError(w, http.StatusInternalServerError, "AI access disabled but queued job cancellation failed")
-		return
-	}
-	if auditErr != nil {
-		writeError(w, http.StatusInternalServerError, "AI access disabled but audit append failed")
+	state, err := a.controller.RevokeAll(r.Context(), req.Reason, a.now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "global revoke-all reported an error; treat AI authority as unavailable until state is verified")
 		return
 	}
 	writeJSON(w, http.StatusOK, responseState(state))
@@ -115,45 +96,18 @@ func (a *API) enable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	before := a.state.Snapshot()
+	before, err := a.controller.State(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "AI access remains disabled because authority state is unavailable")
+		return
+	}
 	if !before.Disabled {
 		writeError(w, http.StatusConflict, "global AI access is already enabled")
 		return
 	}
-	now := a.now()
-	if _, err := a.audit.Append(r.Context(), audit.Input{
-		Kind: "emergency.enable_requested", Actor: "operator", Reason: strings.TrimSpace(req.Reason),
-		Metadata: map[string]string{"epoch": strconv.FormatUint(before.Epoch, 10)},
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "AI access remains disabled because enable audit precondition failed")
-		return
-	}
-
-	state, err := a.state.Enable(req.Reason, now)
+	state, err := a.controller.Enable(r.Context(), req.Reason, a.now())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to enable global AI access")
-		return
-	}
-	if _, err := a.audit.Append(r.Context(), audit.Input{
-		Kind: "emergency.enabled", Actor: "operator", Reason: strings.TrimSpace(req.Reason),
-		Metadata: map[string]string{"epoch": strconv.FormatUint(state.Epoch, 10)},
-	}); err != nil {
-		fallback, revokeErr := a.state.RevokeAll("automatic fail-closed after emergency enable audit failure", a.now())
-		canceled, cancelErr := a.jobs.CancelNotRunningAll(r.Context(), "global_revoke_all")
-		metadata := map[string]string{
-			"epoch":                     strconv.FormatUint(fallback.Epoch, 10),
-			"canceled_not_running_jobs": strconv.Itoa(canceled),
-		}
-		if revokeErr != nil {
-			metadata["fallback_revoke_error"] = revokeErr.Error()
-		}
-		if cancelErr != nil {
-			metadata["job_cancellation_error"] = "true"
-		}
-		_, _ = a.audit.Append(r.Context(), audit.Input{
-			Kind: "emergency.enable_failed_closed", Actor: "system", Reason: "post-enable audit append failed", Metadata: metadata,
-		})
-		writeError(w, http.StatusInternalServerError, "enable audit failed; AI access was disabled again fail-closed")
+		writeError(w, http.StatusInternalServerError, "failed to enable global AI access; treat authority as disabled until state is verified")
 		return
 	}
 	writeJSON(w, http.StatusOK, responseState(state))
@@ -170,14 +124,20 @@ func (a *API) checkAuthority(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := a.state.Snapshot()
+	state, err := a.controller.State(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusOK, internalapi.CheckExecutionAuthorityResponse{
+			Allowed: false, Reason: "authority_state_unavailable",
+		})
+		return
+	}
 	if state.Disabled {
 		writeJSON(w, http.StatusOK, internalapi.CheckExecutionAuthorityResponse{
 			Allowed: false, Epoch: state.Epoch, Reason: "global_ai_access_disabled",
 		})
 		return
 	}
-	job, err := a.jobs.ValidateRunningClaim(r.Context(), r.PathValue("id"), req.ClaimToken)
+	job, err := a.controller.ValidateRunningClaim(r.Context(), r.PathValue("id"), req.ClaimToken)
 	if err != nil {
 		writeJSON(w, http.StatusOK, internalapi.CheckExecutionAuthorityResponse{
 			Allowed: false, Epoch: state.Epoch, Reason: authorityReason(err),
@@ -186,13 +146,23 @@ func (a *API) checkAuthority(w http.ResponseWriter, r *http.Request) {
 	}
 	grant, err := a.caps.AuthenticateID(r.Context(), job.GrantID, a.now())
 	if err != nil {
+		latest, stateErr := a.controller.State(r.Context())
+		if stateErr == nil {
+			state = latest
+		}
 		writeJSON(w, http.StatusOK, internalapi.CheckExecutionAuthorityResponse{
-			Allowed: false, Epoch: a.state.Snapshot().Epoch, Reason: "grant_not_authorized",
+			Allowed: false, Epoch: state.Epoch, Reason: "grant_not_authorized",
 		})
 		return
 	}
-	state = a.state.Snapshot()
-	if err := a.state.ValidateEpoch(grant.SecurityEpoch); err != nil {
+	state, err = a.controller.State(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusOK, internalapi.CheckExecutionAuthorityResponse{
+			Allowed: false, Reason: "authority_state_unavailable",
+		})
+		return
+	}
+	if state.Disabled || grant.SecurityEpoch != state.Epoch {
 		writeJSON(w, http.StatusOK, internalapi.CheckExecutionAuthorityResponse{
 			Allowed: false, Epoch: state.Epoch, Reason: "global_authority_changed",
 		})
