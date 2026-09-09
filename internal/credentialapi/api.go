@@ -27,23 +27,23 @@ type Signer interface {
 
 type API struct {
 	caps           *capability.Service
-	jobs           *executionjob.Store
-	audit          *audit.Log
+	jobs           JobStore
+	audit          AuditStore
 	signer         Signer
 	targets        sshtarget.Resolver
 	workerTokenSHA [32]byte
 	now            func() time.Time
 }
 
-func New(caps *capability.Service, jobs *executionjob.Store, auditLog *audit.Log, signer Signer, targets sshtarget.Resolver, workerToken string) (*API, error) {
-	if caps == nil || jobs == nil || auditLog == nil || signer == nil || targets == nil {
+func New(caps *capability.Service, jobs JobStore, auditStore AuditStore, signer Signer, targets sshtarget.Resolver, workerToken string) (*API, error) {
+	if caps == nil || jobs == nil || auditStore == nil || signer == nil || targets == nil {
 		return nil, errors.New("capability, job, audit, signer and SSH target dependencies are required")
 	}
 	if len(workerToken) < 32 {
 		return nil, errors.New("worker token must be at least 32 characters")
 	}
 	return &API{
-		caps: caps, jobs: jobs, audit: auditLog, signer: signer, targets: targets,
+		caps: caps, jobs: jobs, audit: auditStore, signer: signer, targets: targets,
 		workerTokenSHA: sha256.Sum256([]byte(workerToken)),
 		now:            func() time.Time { return time.Now().UTC() },
 	}, nil
