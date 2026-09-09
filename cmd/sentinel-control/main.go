@@ -83,6 +83,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure SSH signer client: %v", err)
 	}
+	controlInternal := api.InternalHandler()
 
 	internalMux := http.NewServeMux()
 	internalMux.Handle("/internal/v1/context", resources)
@@ -90,7 +91,8 @@ func main() {
 	internalMux.Handle("/internal/v1/notes/", resources)
 	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/ssh-certificate", credentials)
 	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/authority", emergencyAPI.InternalHandler())
-	internalMux.Handle("/", api.InternalHandler())
+	internalMux.Handle("POST /internal/v1/execution/jobs/claim", emergencyAPI.GuardWorkerEnabled(controlInternal))
+	internalMux.Handle("/", controlInternal)
 
 	adminAddr := env("SENTINEL_ADMIN_LISTEN", "127.0.0.1:8081")
 	if !loopbackAddr(adminAddr) {
