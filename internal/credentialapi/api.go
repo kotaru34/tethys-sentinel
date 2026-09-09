@@ -105,14 +105,14 @@ func (a *API) issueCertificate(w http.ResponseWriter, r *http.Request) {
 		Kind: "ssh.certificate_issued", Actor: req.WorkerID, GrantID: job.GrantID, Target: job.Target, Argv: job.Argv,
 		Decision: "allow", Category: job.RiskCategory, ScopeKey: job.ScopeKey, ApprovalID: job.ApprovalID,
 		Metadata: map[string]string{
-			"job_id": job.ID,
-			"request_id": job.RequestID,
-			"command_sha256": job.CommandSHA256,
-			"serial": strconv.FormatUint(certificate.Serial, 10),
-			"ca_fingerprint": certificate.CAFingerprint,
+			"job_id":                  job.ID,
+			"request_id":              job.RequestID,
+			"command_sha256":          job.CommandSHA256,
+			"serial":                  strconv.FormatUint(certificate.Serial, 10),
+			"ca_fingerprint":          certificate.CAFingerprint,
 			"certificate_fingerprint": certificate.CertificateFingerprint,
-			"public_key_fingerprint": certificate.PublicKeyFingerprint,
-			"valid_before": certificate.ValidBefore.Format(time.RFC3339Nano),
+			"public_key_fingerprint":  certificate.PublicKeyFingerprint,
+			"valid_before":            certificate.ValidBefore.Format(time.RFC3339Nano),
 		},
 	}); err != nil {
 		_, _ = a.jobs.RejectClaim(r.Context(), job.ID, req.ClaimToken, "audit_failure_after_ssh_certificate")
