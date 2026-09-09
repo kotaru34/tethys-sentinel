@@ -11,6 +11,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/kotaru34/tethys-sentinel/internal/risk"
 )
 
 type Status string
@@ -28,21 +30,22 @@ const (
 )
 
 type Request struct {
-	ID            string     `json:"id"`
-	GrantID       string     `json:"grant_id"`
-	Agent         string     `json:"agent"`
-	Target        string     `json:"target"`
-	Argv          []string   `json:"argv"`
-	Category      string     `json:"category"`
-	RiskLevel     string     `json:"risk_level"`
-	ScopeKey      string     `json:"scope_key"`
-	RiskReason    string     `json:"risk_reason"`
-	AgentReason   string     `json:"agent_reason,omitempty"`
-	Status        Status     `json:"status"`
-	Decision      Decision   `json:"decision,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	DecidedAt     *time.Time `json:"decided_at,omitempty"`
-	DecisionActor string     `json:"decision_actor,omitempty"`
+	ID                     string     `json:"id"`
+	GrantID                string     `json:"grant_id"`
+	Agent                  string     `json:"agent"`
+	Target                 string     `json:"target"`
+	Argv                   []string   `json:"argv"`
+	Category               string     `json:"category"`
+	RiskLevel              string     `json:"risk_level"`
+	ScopeKey               string     `json:"scope_key"`
+	RiskReason             string     `json:"risk_reason"`
+	AgentReason            string     `json:"agent_reason,omitempty"`
+	SessionApprovalAllowed bool       `json:"session_approval_allowed"`
+	Status                 Status     `json:"status"`
+	Decision               Decision   `json:"decision,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
+	DecidedAt              *time.Time `json:"decided_at,omitempty"`
+	DecisionActor          string     `json:"decision_actor,omitempty"`
 }
 
 type Store struct {
@@ -69,6 +72,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	for _, req := range requests {
+		req.SessionApprovalAllowed = risk.SessionApprovalAllowedCategory(req.Category)
 		s.requests[req.ID] = req
 	}
 	return s, nil
@@ -87,6 +91,7 @@ func (s *Store) Request(_ context.Context, req Request) (Request, bool, error) {
 		return Request{}, false, err
 	}
 	req.ID = id
+	req.SessionApprovalAllowed = risk.SessionApprovalAllowedCategory(req.Category)
 	req.Status = Pending
 	req.Decision = ""
 	req.CreatedAt = s.now()
@@ -111,8 +116,12 @@ func (s *Store) Decide(_ context.Context, id string, decision Decision, actor st
 	if req.Status != Pending {
 		return Request{}, errors.New("approval is no longer pending")
 	}
+	if decision == AllowSession && !risk.SessionApprovalAllowedCategory(req.Category) {
+		return Request{}, errors.New("session approval is not allowed for this risk category; use allow_once")
+	}
 	old := req
 	now := s.now()
+	req.SessionApprovalAllowed = risk.SessionApprovalAllowedCategory(req.Category)
 	req.Status = Decided
 	req.Decision = decision
 	req.DecidedAt = &now
