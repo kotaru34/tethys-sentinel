@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -27,11 +28,11 @@ func (s *AuditStore) Append(ctx context.Context, in audit.Input) (audit.Event, e
 		return audit.Event{}, err
 	}
 	defer tx.Rollback(ctx)
-	var now pgxTimestamp
+	var now time.Time
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return audit.Event{}, err
 	}
-	event, err := s.repo.appendAuditTx(ctx, tx, now.Time, in)
+	event, err := s.repo.appendAuditTx(ctx, tx, now, in)
 	if err != nil {
 		return audit.Event{}, err
 	}
@@ -136,7 +137,3 @@ func (s *AuditStore) ReadVerified(ctx context.Context, limit int) ([]audit.Event
 	}
 	return out, nil
 }
-
-// pgxTimestamp keeps the database timestamp query explicit without introducing
-// application-clock authority into persistent security transitions.
-type pgxTimestamp struct{ Time pgtypeTimestamptz }
