@@ -8,6 +8,7 @@ import "strings"
 // target Unix permissions and sudo/doas remain the file-authority boundary.
 func classifyOperational(executable, cmd string, args, argv []string) (Result, bool) {
 	classifiers := []func(string, string, []string, []string) (Result, bool){
+		classifyEscape,
 		classifyService,
 		classifyNetwork,
 		classifyPackage,
