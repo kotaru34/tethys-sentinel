@@ -13,10 +13,16 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/credentialapi"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/signerclient"
+	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 )
 
 func credentialHandlerFromEnv(caps *capability.Service, jobs *executionjob.Store, auditLog *audit.Log, workerToken string) (http.Handler, error) {
+	targets, err := sshtarget.Open(env("SENTINEL_SSH_TARGETS_FILE", "/etc/tethys-sentinel/ssh-targets.json"))
+	if err != nil {
+		return nil, err
+	}
+
 	rawURL := env("SENTINEL_SIGNER_URL", "https://127.0.0.1:9443")
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -52,7 +58,7 @@ func credentialHandlerFromEnv(caps *capability.Service, jobs *executionjob.Store
 	if err != nil {
 		return nil, err
 	}
-	api, err := credentialapi.New(caps, jobs, auditLog, client, workerToken)
+	api, err := credentialapi.New(caps, jobs, auditLog, client, targets, workerToken)
 	if err != nil {
 		return nil, err
 	}
