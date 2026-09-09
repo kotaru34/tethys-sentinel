@@ -25,6 +25,7 @@ func TestSignerProducesTightlyConstrainedUserCertificate(t *testing.T) {
 	response, err := service.Sign(Request{
 		JobID: "job-00000001", GrantID: "grant-00000001", Target: "dns01",
 		CommandSHA256: strings.Repeat("a", 64), PublicKey: string(ssh.MarshalAuthorizedKey(publicKey)),
+		NotAfter: time.Date(2026, 9, 9, 18, 0, 30, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +69,7 @@ func TestSignerProducesTightlyConstrainedUserCertificate(t *testing.T) {
 	if !response.ValidAfter.Equal(time.Date(2026, 9, 9, 17, 59, 55, 0, time.UTC)) {
 		t.Fatalf("valid_after=%s", response.ValidAfter)
 	}
-	if !response.ValidBefore.Equal(time.Date(2026, 9, 9, 18, 0, 45, 0, time.UTC)) {
+	if !response.ValidBefore.Equal(time.Date(2026, 9, 9, 18, 0, 30, 0, time.UTC)) {
 		t.Fatalf("valid_before=%s", response.ValidBefore)
 	}
 }
@@ -86,6 +87,7 @@ func TestSignerRejectsNonEd25519EphemeralKey(t *testing.T) {
 	_, err = service.Sign(Request{
 		JobID: "job-00000002", GrantID: "grant-00000001", Target: "dns01",
 		CommandSHA256: strings.Repeat("b", 64), PublicKey: string(ssh.MarshalAuthorizedKey(publicKey)),
+		NotAfter: time.Date(2026, 9, 9, 18, 0, 30, 0, time.UTC),
 	})
 	if err == nil || !strings.Contains(err.Error(), "must use Ed25519") {
 		t.Fatalf("non-Ed25519 key result: %v", err)
@@ -113,6 +115,7 @@ func TestSignerRejectsShellUnsafeIdentifiersAndWrapper(t *testing.T) {
 	_, err = service.Sign(Request{
 		JobID: "job;reboot", GrantID: "grant-00000001", Target: "dns01",
 		CommandSHA256: strings.Repeat("c", 64), PublicKey: string(ssh.MarshalAuthorizedKey(publicKey)),
+		NotAfter: time.Date(2026, 9, 9, 18, 0, 30, 0, time.UTC),
 	})
 	if err == nil {
 		t.Fatal("shell-unsafe job id accepted")
@@ -126,6 +129,26 @@ func TestSignerRequiresExactSourceAddresses(t *testing.T) {
 		SourceAddresses: []string{"10.169.0.0/24"}, CertificateTTL: 45 * time.Second, Backdate: 5 * time.Second,
 	}); err == nil {
 		t.Fatal("CIDR accepted where exact source IP is required")
+	}
+}
+
+func TestSignerRejectsExpiredUpperBound(t *testing.T) {
+	service, _ := testService(t)
+	workerPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := ssh.NewPublicKey(workerPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Sign(Request{
+		JobID: "job-00000003", GrantID: "grant-00000001", Target: "dns01",
+		CommandSHA256: strings.Repeat("d", 64), PublicKey: string(ssh.MarshalAuthorizedKey(publicKey)),
+		NotAfter: time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC),
+	})
+	if err == nil || !strings.Contains(err.Error(), "must be in the future") {
+		t.Fatalf("expired not_after result: %v", err)
 	}
 }
 
