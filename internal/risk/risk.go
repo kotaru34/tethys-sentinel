@@ -61,8 +61,6 @@ func Classify(argv []string) Result {
 		return approval(High, "FILESYSTEM_DELETE", exactScope(argv), "file deletion")
 	case "passwd", "useradd", "userdel", "usermod", "groupadd", "groupdel", "chpasswd":
 		return approval(High, "IDENTITY", exactScope(argv), "identity or authentication change")
-	case "nft", "iptables", "ip6tables", "pfctl":
-		return approval(High, "NETWORK_CONTROL", exactScope(argv), "firewall policy change")
 	case "systemctl":
 		if hasOptionPrefix(args, "--host", "-H", "--machine", "-M") {
 			return approval(High, "REMOTE_EXEC", exactScope(argv), "systemctl remote/machine transport can cross the local target boundary")
