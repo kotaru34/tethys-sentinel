@@ -48,6 +48,26 @@ func (c *Client) Claim(ctx context.Context, workerID string) (executionjob.Claim
 	return executionjob.Claim{Job: out.Job, ClaimToken: out.ClaimToken}, nil
 }
 
+func (c *Client) Start(ctx context.Context, workerID string, claim executionjob.Claim) (executionjob.Job, error) {
+	body, err := json.Marshal(internalapi.StartExecutionJobRequest{WorkerID: workerID, ClaimToken: claim.ClaimToken})
+	if err != nil {
+		return executionjob.Job{}, err
+	}
+	resp, err := c.post(ctx, "/internal/v1/execution/jobs/"+claim.Job.ID+"/start", body)
+	if err != nil {
+		return executionjob.Job{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return executionjob.Job{}, fmt.Errorf("execution job start rejected with status %d", resp.StatusCode)
+	}
+	var out internalapi.StartExecutionJobResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return executionjob.Job{}, err
+	}
+	return out.Job, nil
+}
+
 func (c *Client) Complete(ctx context.Context, workerID string, claim executionjob.Claim, result executionjob.Result) (executionjob.Job, error) {
 	body, err := json.Marshal(internalapi.CompleteExecutionJobRequest{
 		WorkerID: workerID, ClaimToken: claim.ClaimToken, Result: result,
