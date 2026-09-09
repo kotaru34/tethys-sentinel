@@ -133,11 +133,14 @@ func testAPI(t *testing.T, now time.Time) (*API, *emergency.Store, *capability.S
 		t.Fatal(err)
 	}
 	caps := capability.NewServiceWithEmergency(store.NewMemoryGrantStore(), state)
-	jobs, err := executionjob.Open(filepath.Join(dir, "jobs.json"), []byte("0123456789abcdef0123456789abcdef"))
+	jobs, err := executionjob.OpenWithClock(
+		filepath.Join(dir, "jobs.json"),
+		[]byte("0123456789abcdef0123456789abcdef"),
+		func() time.Time { return now },
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs.SetClockForTesting(func() time.Time { return now })
 	auditLog, err := audit.Open(filepath.Join(dir, "audit.jsonl"))
 	if err != nil {
 		t.Fatal(err)
