@@ -29,7 +29,7 @@ type Result struct {
 }
 
 func Classify(argv []string) Result {
-	if len(argv) == 0 {
+	if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
 		return Result{Decision: Deny, Level: Critical, Category: "INVALID", Reason: "empty command"}
 	}
 
@@ -40,21 +40,21 @@ func Classify(argv []string) Result {
 	case "reboot", "shutdown", "poweroff", "halt":
 		return approval(High, "POWER", cmd, "host power-state change")
 	case "mkfs", "mkfs.ext4", "mkfs.xfs", "wipefs", "shred":
-		return approval(Critical, "FILESYSTEM_DESTRUCTIVE", cmd, "destructive storage operation")
+		return approval(Critical, "FILESYSTEM_DESTRUCTIVE", exactScope(cmd, args), "destructive storage operation")
 	case "zpool":
 		if firstArg(args) == "destroy" {
-			return approval(Critical, "STORAGE_DESTRUCTIVE", "zpool:destroy", "zpool destruction")
+			return approval(Critical, "STORAGE_DESTRUCTIVE", resourceScope("zpool:destroy", args[1:]), "zpool destruction")
 		}
 	case "zfs":
 		if firstArg(args) == "destroy" {
-			return approval(Critical, "STORAGE_DESTRUCTIVE", "zfs:destroy", "ZFS dataset destruction")
+			return approval(Critical, "STORAGE_DESTRUCTIVE", resourceScope("zfs:destroy", args[1:]), "ZFS dataset destruction")
 		}
 	case "rm":
-		return approval(High, "FILESYSTEM_DELETE", "rm", "file deletion")
+		return approval(High, "FILESYSTEM_DELETE", exactScope(cmd, args), "file deletion")
 	case "passwd", "useradd", "userdel", "usermod", "groupadd", "groupdel", "chpasswd":
-		return approval(High, "IDENTITY", cmd, "identity or authentication change")
+		return approval(High, "IDENTITY", exactScope(cmd, args), "identity or authentication change")
 	case "nft", "iptables", "ip6tables", "pfctl":
-		return approval(High, "NETWORK_CONTROL", cmd, "firewall policy change")
+		return approval(High, "NETWORK_CONTROL", exactScope(cmd, args), "firewall policy change")
 	case "systemctl":
 		action, unit := systemctlAction(args)
 		switch action {
@@ -65,11 +65,11 @@ func Classify(argv []string) Result {
 		}
 	case "docker", "podman":
 		if contains(args, "system", "prune") || contains(args, "volume", "prune") {
-			return approval(Critical, "CONTAINER_DESTRUCTIVE", cmd+":prune", "destructive container cleanup")
+			return approval(Critical, "CONTAINER_DESTRUCTIVE", exactScope(cmd, args), "destructive container cleanup")
 		}
 	case "kubectl":
 		if firstArg(args) == "delete" {
-			return approval(High, "ORCHESTRATOR_DESTRUCTIVE", "kubectl:delete", "Kubernetes resource deletion")
+			return approval(High, "ORCHESTRATOR_DESTRUCTIVE", exactScope(cmd, args), "Kubernetes resource deletion")
 		}
 	}
 
@@ -85,6 +85,19 @@ func firstArg(args []string) string {
 		return ""
 	}
 	return args[0]
+}
+
+func resourceScope(prefix string, args []string) string {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return prefix + ":" + arg
+		}
+	}
+	return prefix + ":*"
+}
+
+func exactScope(cmd string, args []string) string {
+	return cmd + ":" + strings.Join(args, "\x1f")
 }
 
 func systemctlAction(args []string) (string, string) {
