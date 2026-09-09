@@ -49,6 +49,15 @@ type ClaimExecutionJobResponse struct {
 	ClaimToken string           `json:"claim_token"`
 }
 
+type StartExecutionJobRequest struct {
+	WorkerID   string `json:"worker_id"`
+	ClaimToken string `json:"claim_token"`
+}
+
+type StartExecutionJobResponse struct {
+	Job executionjob.Job `json:"job"`
+}
+
 type CompleteExecutionJobRequest struct {
 	WorkerID   string              `json:"worker_id"`
 	ClaimToken string              `json:"claim_token"`
