@@ -139,7 +139,7 @@ func parseControl(raw string) (Destination, error) {
 	}
 	ip, err := netip.ParseAddr(u.Hostname())
 	if err != nil || !concreteIP(ip) {
-		return Destination{}, errors.New("control URL host must be a concrete literal IP; use TLS server_name separately")
+		return Destination{}, errors.New("control URL host must be a global-unicast literal IP; use TLS server_name separately")
 	}
 	port := uint16(443)
 	if rawPort := u.Port(); rawPort != "" {
@@ -159,7 +159,7 @@ func parseLiteralEndpoint(raw string) (netip.Addr, uint16, error) {
 	}
 	ip, err := netip.ParseAddr(strings.TrimSpace(host))
 	if err != nil || !concreteIP(ip) {
-		return netip.Addr{}, 0, errors.New("endpoint must use a concrete literal IP")
+		return netip.Addr{}, 0, errors.New("endpoint must use a global-unicast literal IP")
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
@@ -171,7 +171,7 @@ func parseLiteralEndpoint(raw string) (netip.Addr, uint16, error) {
 func parseLiteralDestination(destination Destination) (netip.Addr, uint16, error) {
 	ip, err := netip.ParseAddr(strings.TrimSpace(destination.IP))
 	if err != nil || !concreteIP(ip) {
-		return netip.Addr{}, 0, errors.New("destination IP must be concrete and literal")
+		return netip.Addr{}, 0, errors.New("destination IP must be global-unicast and literal")
 	}
 	if destination.Port == 0 {
 		return netip.Addr{}, 0, errors.New("destination port must be non-zero")
@@ -185,7 +185,7 @@ func parseLiteralDestination(destination Destination) (netip.Addr, uint16, error
 }
 
 func concreteIP(ip netip.Addr) bool {
-	return ip.IsValid() && !ip.IsUnspecified() && !ip.IsMulticast()
+	return ip.IsValid() && ip.IsGlobalUnicast()
 }
 
 func safeLabel(value string) bool {
