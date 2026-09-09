@@ -1,6 +1,6 @@
 # API surface (development)
 
-This document describes the intentionally small API surface for `0.1.0-dev.5`. It is not yet a stable public contract.
+This document describes the intentionally small API surface for `0.1.0-dev.6`. It is not yet a stable public contract.
 
 ## Trust semantics
 
@@ -14,7 +14,7 @@ The security boundary is enforced by the control plane. These labels and instruc
 
 ## AI Gateway
 
-The gateway accepts opaque capability bearer tokens. It has no grant-management, policy-management, inventory-write, audit-control, worker-control, SSH-certificate, or CA endpoints.
+The gateway accepts opaque capability bearer tokens. It has no grant-management, policy-management, inventory-write, audit-control, worker-control, SSH-certificate, SSH-target-resolution, or CA endpoints.
 
 ### `GET /v1/bootstrap`
 
@@ -57,7 +57,7 @@ Requires `notes_write`. Notes must name a target in the current grant scope and 
 
 ### `POST /v1/commands/submit`
 
-Atomically requests authorization and, if allowed, creation of an immutable execution job. This endpoint replaced the earlier development-only `commands/authorize` flow so an agent cannot authorize one command and later substitute another before execution.
+Atomically requests authorization and, if allowed, creation of an immutable execution job. This endpoint prevents an agent from authorizing one command and later substituting another before execution.
 
 ```json
 {
@@ -68,6 +68,8 @@ Atomically requests authorization and, if allowed, creation of an immutable exec
 }
 ```
 
+`target` is a logical Sentinel target ID, never an SSH hostname/IP supplied by the agent.
+
 `request_id` is required for idempotency. Within a grant, retrying the same request ID with the same target/argv returns the same job; rebinding it to different command material is rejected.
 
 Possible successful protocol decisions include:
@@ -76,7 +78,7 @@ Possible successful protocol decisions include:
 - `approval_required` — no executable job is published yet; response contains a narrow approval ID;
 - `deny` — policy/operator decision denies the operation.
 
-An accepted response includes a receipt such as job ID, request ID, status, command binding SHA-256 and expiry. The agent does not receive a worker claim secret, ephemeral SSH key, SSH certificate, or direct worker/signer access.
+An accepted response includes a receipt such as job ID, request ID, status, command binding SHA-256 and expiry. The agent does not receive a worker claim secret, ephemeral SSH key, SSH certificate, SSH endpoint, pinned host key, or direct worker/signer access.
 
 The Control Plane independently recomputes target/permission/risk state; it never trusts a risk label supplied by the gateway or agent.
 
@@ -97,7 +99,7 @@ Approval decisions:
 
 `allow_session` is matched against grant + target + risk category + narrow scope key; it is never a blanket dangerous-command bypass.
 
-Revocation cancels unclaimed execution jobs for the grant. A job already claimed still must pass the later worker `start` gate, which revalidates the grant immediately before execution is permitted. In `dev.5`, a running job must also pass another grant check immediately before SSH-certificate issuance.
+Revocation cancels unclaimed execution jobs for the grant. A job already claimed still must pass the later worker `start` gate, which revalidates the grant immediately before execution is permitted. A running job must also pass another grant check immediately before SSH-certificate issuance.
 
 ## Internal gateway-to-control API
 
@@ -136,9 +138,27 @@ The Control Plane accepts a certificate request only when all of the following r
 - claim secret is valid;
 - job has not expired;
 - immutable command binding still verifies;
-- original grant is still active.
+- original grant is still active;
+- the logical job target exists in protected operator-owned SSH target inventory.
 
 Only then does the Control Plane call the isolated SSH Signer. It passes job/grant/target/binding identity, the worker-generated public key, and the job expiry as an upper validity bound. The worker cannot choose the SSH principal, force-command, source-address restrictions, certificate extensions, or signer TTL.
+
+A successful response contains:
+
+```json
+{
+  "job": { "...": "immutable running job" },
+  "certificate": { "...": "short-lived OpenSSH certificate metadata" },
+  "target": {
+    "name": "dns01",
+    "address": "10.169.0.53:22",
+    "user": "sentinel-ai",
+    "host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..."
+  }
+}
+```
+
+The target object is resolved by the Control Plane, not echoed from worker/agent input. Registry addresses are restricted to concrete literal IPs plus port and host keys are raw exact pins.
 
 Successful issuance is audited with certificate serial and fingerprints. If the audit append fails after signing, the job is canceled and the certificate is withheld from the worker.
 
@@ -146,9 +166,9 @@ Successful issuance is audited with certificate serial and fingerprints. If the 
 
 Requires the same claim secret and records terminal execution result metadata. Completion is one-shot; replay after terminal state is rejected.
 
-Raw stdout/stderr is not persisted in `dev.5`; result metadata may include exit status and output SHA-256.
+Raw stdout/stderr is not persisted in `dev.6`; result metadata includes exit status/error kind and an aggregate SHA-256 accounting digest.
 
-See `docs/EXECUTION_PROTOCOL.md` for lifecycle/replay/revocation semantics and `docs/SSH_CA.md` for certificate constraints.
+See `docs/EXECUTION_PROTOCOL.md` for lifecycle/replay/revocation semantics, `docs/SSH_CA.md` for certificate constraints, and `docs/SSH_EXECUTION.md` for target/transport semantics.
 
 ## SSH Signer API
 
@@ -176,3 +196,16 @@ The Signer currently enforces:
 - short certificate TTL, capped by the Control-Plane supplied job expiry.
 
 The Signer request has no caller-controlled fields for principal, arbitrary force-command, source-address list, extensions, or TTL.
+
+## SSH target registry (Control Plane configuration)
+
+This is not an agent API. The Control Plane loads an operator-owned file from `SENTINEL_SSH_TARGETS_FILE` (default `/etc/tethys-sentinel/ssh-targets.json`).
+
+Each record contains only:
+
+- logical `name`;
+- literal-IP `address` with port;
+- Unix `user`;
+- exact raw `host_key` pin.
+
+Unknown fields, malformed endpoints, DNS destinations, unspecified addresses, duplicate logical names and group/other-writable configuration are rejected.
