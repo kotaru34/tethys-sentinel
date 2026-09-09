@@ -24,7 +24,39 @@ Opaque capability tokens are bearer secrets by default. Mitigations: high entrop
 
 ### Gateway compromise
 
-A remote-code-execution bug in the AI-facing gateway must not become grant-issuance or CA-key compromise. The gateway is separated from the control-plane/admin interface and signer, cannot expand capabilities, and sends only capability hashes to internal APIs. The control plane re-authenticates and re-enforces permissions/targets for authoritative operations and resource reads.
+A remote-code-execution bug in the AI-facing gateway must not become grant-issuance, worker-control, or CA-key compromise. The gateway is separated from the control-plane/admin interface and signer, cannot expand capabilities, and sends only capability hashes to internal APIs. The control plane re-authenticates and re-enforces permissions/targets for authoritative operations and resource reads.
+
+### Authorize/execute substitution (TOCTOU)
+
+A separable `authorize this command` then `execute this command later` flow allows an attacker to race or substitute target/argv between the two decisions. Sentinel therefore uses atomic command submission: the Control Plane authorizes and creates one immutable job bound to grant + request ID + target + argv.
+
+The AI never receives a mutable executable envelope or a worker claim secret.
+
+### Execution request replay or rebinding
+
+An agent/network retry or adversary may try to reuse a request ID for another command or replay a previously accepted operation. Per-grant request IDs are idempotent for identical command material and conflict on rebinding. Worker claim/start/complete state transitions are one-shot.
+
+### Execution-job store tampering
+
+An attacker with write access to the bootstrap job file may attempt to change target, argv, status, approval metadata or expiry. Records are HMAC-SHA-256 protected using a Control-Plane-only integrity key. Invalid records fail closed.
+
+This does not protect against an attacker who has fully compromised the Control Plane and stolen the HMAC key; that is outside the guarantee of the bootstrap file store. Production persistence will move to a stronger transactional architecture.
+
+### Approval/queue crash window
+
+A crash after consuming `allow_once` but before making the job claimable could otherwise either lose the authorized action or invite a second approval/job on retry. Sentinel stages the immutable job before approval consumption, keeps staged jobs unclaimable, and recovers the matching staged job using the same request ID after restart/retry.
+
+### Revocation race
+
+A grant may be revoked after a job was queued or even after a worker claimed it. Revocation cancels unclaimed jobs, while claimed jobs still require an authoritative `start` call that revalidates the original grant immediately before executor invocation. A revoked/expired grant therefore cannot start a not-yet-running command.
+
+Termination of a command that is already running at the moment of revocation is a future executor-level requirement and is not claimed by `0.1.0-dev.4`.
+
+### Worker compromise
+
+The worker is assumed potentially compromisable independently of the Control Plane. It receives only immutable jobs and a dedicated worker credential; it cannot create/broaden grants, approve commands, mutate Trust-0 context or reach the future SSH CA directly through public APIs.
+
+The worker also verifies the canonical command binding locally before executor invocation. Future deployment must additionally isolate the worker at the VM/network level and restrict its egress to authorized execution/signing paths.
 
 ### Policy/classifier bypass
 
@@ -48,7 +80,7 @@ Each note has a SHA-256 content hash and the note store validates records when o
 
 ### Secret leakage into history
 
-Command output may include credentials or private data. Metadata is auditable; raw stdout/stderr storage will be configurable, encrypted when persisted, retention-limited, and subject to redaction where practical. The current milestone does not store execution output because real execution is not yet implemented.
+Command output may include credentials or private data. Metadata is auditable; raw stdout/stderr storage will be configurable, encrypted when persisted, retention-limited, and subject to redaction where practical. `0.1.0-dev.4` does not persist raw execution output.
 
 ### Persistence after expiry
 
@@ -59,19 +91,25 @@ A compromised agent should not convert a short grant into permanent infrastructu
 - AI-facing API cannot create or widen grants.
 - AI-facing API cannot modify system policy or authoritative instructions.
 - AI-facing API cannot disable or delete audit records.
+- AI-facing API cannot directly claim, start or complete worker jobs.
 - Trust-2 history/notes cannot become authority by content alone.
 - Context/history/notes are filtered against the control-plane view of the current grant.
 - Raw infrastructure private SSH keys are never returned to an agent.
 - Grant lookup stores a one-way token hash, never the plaintext capability.
 - Expired/revoked grants fail closed.
 - Empty/malformed execution requests fail closed.
+- A request ID cannot be rebound to different target/argv within a grant.
+- Staged jobs are not claimable.
+- Claimed jobs are not executable until the Control Plane start gate revalidates the grant.
+- Worker claim/start/complete credentials are one-shot with respect to job state.
 - Dangerous-action approval is scoped, not a blanket bypass.
 - Signer is not directly reachable through the public AI API.
 - A functioning release is not considered deployable until tested.
 
-## Out of scope for the first milestone
+## Out of scope for the first milestones
 
 - defending a fully compromised hypervisor
 - protecting against a malicious operator with full host/root access
 - formal verification
 - arbitrary shell being made intrinsically safe by parsing alone
+- guaranteeing interruption of an already-running remote command before the executor milestone implements process/session cancellation
