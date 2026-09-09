@@ -15,7 +15,10 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 )
 
-var ErrNoJob = errors.New("no execution job available")
+var (
+	ErrNoJob           = errors.New("no execution job available")
+	ErrAuthorityDenied = errors.New("execution authority denied")
+)
 
 type Client struct {
 	baseURL string
@@ -98,6 +101,33 @@ func (c *Client) IssueSSHAccess(ctx context.Context, workerID string, claim exec
 func (c *Client) IssueSSHCertificate(ctx context.Context, workerID string, claim executionjob.Claim, publicKey string) (sshsigner.Response, error) {
 	certificate, _, err := c.IssueSSHAccess(ctx, workerID, claim, publicKey)
 	return certificate, err
+}
+
+func (c *Client) CheckAuthority(ctx context.Context, workerID string, claim executionjob.Claim) error {
+	body, err := json.Marshal(internalapi.CheckExecutionAuthorityRequest{WorkerID: workerID, ClaimToken: claim.ClaimToken})
+	if err != nil {
+		return err
+	}
+	resp, err := c.post(ctx, "/internal/v1/execution/jobs/"+claim.Job.ID+"/authority", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("execution authority check rejected with status %d", resp.StatusCode)
+	}
+	var out internalapi.CheckExecutionAuthorityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return err
+	}
+	if !out.Allowed {
+		reason := strings.TrimSpace(out.Reason)
+		if reason == "" {
+			reason = "unspecified"
+		}
+		return fmt.Errorf("%w: %s", ErrAuthorityDenied, reason)
+	}
+	return nil
 }
 
 func (c *Client) Complete(ctx context.Context, workerID string, claim executionjob.Claim, result executionjob.Result) (executionjob.Job, error) {
