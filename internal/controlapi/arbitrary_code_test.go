@@ -11,7 +11,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 )
 
-func TestArbitraryCodeSessionApprovalIsExactArgvOnly(t *testing.T) {
+func TestArbitraryCodeRequiresAllowOncePerRequest(t *testing.T) {
 	a := testAPI(t)
 	ctx := context.Background()
 	_, token, err := a.caps.Issue(ctx, domain.Grant{
@@ -34,20 +34,23 @@ func TestArbitraryCodeSessionApprovalIsExactArgvOnly(t *testing.T) {
 	if response.Risk.Category != "ARBITRARY_CODE" {
 		t.Fatalf("shell category=%s", response.Risk.Category)
 	}
-	if _, err := a.approvals.Decide(ctx, response.ApprovalID, approval.AllowSession, "operator"); err != nil {
+	if _, err := a.approvals.Decide(ctx, response.ApprovalID, approval.AllowSession, "operator"); err == nil {
+		t.Fatal("arbitrary-code session approval was accepted")
+	}
+	if _, err := a.approvals.Decide(ctx, response.ApprovalID, approval.AllowOnce, "operator"); err != nil {
 		t.Fatal(err)
 	}
 
 	status, response = submitRequest(t, a, first)
 	if status != http.StatusOK || !response.Accepted || response.Decision != "accepted" {
-		t.Fatalf("approved shell retry status=%d response=%+v", status, response)
+		t.Fatalf("allow-once shell retry status=%d response=%+v", status, response)
 	}
 
 	same := first
 	same.RequestID = "req-shell-0002"
 	status, response = submitRequest(t, a, same)
-	if status != http.StatusOK || !response.Accepted || response.Decision != "accepted" {
-		t.Fatalf("identical session-approved argv status=%d response=%+v", status, response)
+	if status != http.StatusOK || response.Decision != "approval_required" || response.Accepted || response.ApprovalID == "" {
+		t.Fatalf("second identical argv reused allow-once status=%d response=%+v", status, response)
 	}
 
 	differentCode := first
