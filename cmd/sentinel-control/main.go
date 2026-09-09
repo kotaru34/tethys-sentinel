@@ -17,7 +17,10 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/buildinfo"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
+	"github.com/kotaru34/tethys-sentinel/internal/contextstore"
 	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
+	"github.com/kotaru34/tethys-sentinel/internal/notes"
+	"github.com/kotaru34/tethys-sentinel/internal/resourceapi"
 	"github.com/kotaru34/tethys-sentinel/internal/store"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 )
@@ -40,7 +43,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("open/verify audit log: %v", err)
 	}
-	api := controlapi.New(capability.NewService(grantStore), approvalStore, auditLog, adminToken)
+	contextStore, err := contextstore.New(env("SENTINEL_CONTEXT_FILE", "/etc/tethys-sentinel/context.json"))
+	if err != nil {
+		log.Fatalf("open authoritative context: %v", err)
+	}
+	noteStore, err := notes.Open(env("SENTINEL_NOTES_STORE", "/var/lib/tethys-sentinel/notes.jsonl"))
+	if err != nil {
+		log.Fatalf("open notes store: %v", err)
+	}
+
+	caps := capability.NewService(grantStore)
+	api := controlapi.New(caps, approvalStore, auditLog, adminToken)
+	resources := resourceapi.New(caps, contextStore, auditLog, noteStore).Handler()
+	internalMux := http.NewServeMux()
+	internalMux.Handle("/internal/v1/context", resources)
+	internalMux.Handle("/internal/v1/history", resources)
+	internalMux.Handle("/internal/v1/notes/", resources)
+	internalMux.Handle("/", api.InternalHandler())
 
 	adminAddr := env("SENTINEL_ADMIN_LISTEN", "127.0.0.1:8081")
 	if !loopbackAddr(adminAddr) {
@@ -49,7 +68,7 @@ func main() {
 	adminServer := hardenedServer(adminAddr, api.AdminHandler())
 
 	internalAddr := env("SENTINEL_INTERNAL_LISTEN", "127.0.0.1:9091")
-	internalServer := hardenedServer(internalAddr, api.InternalHandler())
+	internalServer := hardenedServer(internalAddr, internalMux)
 	devInsecure := os.Getenv("SENTINEL_DEV_INSECURE_INTERNAL") == "1"
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
