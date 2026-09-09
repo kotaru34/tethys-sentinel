@@ -1,6 +1,6 @@
 # SSH CA / Signer boundary
 
-This document defines the SSH credential boundary introduced for the `0.1.0-dev.5` milestone.
+This document defines the SSH credential boundary introduced in `0.1.0-dev.5` and consumed by the real executor added in `0.1.0-dev.6`.
 
 The signer is intentionally separate from the AI Gateway, Execution Worker and Control Plane. It owns the OpenSSH user CA private key and exposes one narrow operation: sign an ephemeral Ed25519 public key under fixed signer policy.
 
@@ -13,7 +13,8 @@ The signer is intentionally separate from the AI Gateway, Execution Worker and C
 - The request cannot choose arbitrary principals, certificate extensions, force commands or validity duration.
 - The certificate cannot outlive the execution job.
 - The certificate is usable only from configured exact worker source IP addresses.
-- The certificate grants no PTY, agent forwarding or port forwarding extensions.
+- The certificate grants no PTY, agent forwarding, port forwarding or X11-forwarding extensions.
+- The certificate force-command binds the target execution to one validated job ID and command binding.
 
 ## Certificate shape
 
@@ -49,6 +50,7 @@ Control Plane credential gate
     | verifies running job + claim secret
     | verifies immutable command binding
     | revalidates original grant
+    | resolves operator-owned SSH target
     | sets not_after = job.expires_at
     v
 SSH Signer (mTLS + dedicated signer token)
@@ -59,6 +61,10 @@ short-lived OpenSSH user certificate
     |
     v
 Control Plane -> Worker
+    |
+    | certificate + literal-IP target + Unix user + exact host-key pin
+    v
+pinned-key SSH executor
 ```
 
 The worker's ephemeral private key is generated in process memory and is not serialized by the worker-identity helper.
@@ -71,7 +77,7 @@ Binary:
 sentinel-signer
 ```
 
-The signer runs as its own service identity and should ultimately run in a separate security boundary/VM from the public gateway and worker.
+The signer runs as its own service identity and should run in a separate security boundary/VM from the public gateway and worker.
 
 Required configuration:
 
@@ -115,6 +121,14 @@ SENTINEL_SIGNER_SERVER_NAME
 
 The agent capability and worker bearer credential are never forwarded to the signer.
 
+The Control Plane separately loads operator-owned SSH target inventory from:
+
+```text
+SENTINEL_SSH_TARGETS_FILE
+```
+
+The Signer does not resolve addresses or host keys; separation is deliberate. The Signer controls certificate authority and certificate shape, while the Control Plane controls whether a job is eligible and which registered target the worker may dial.
+
 ## Worker credential request
 
 The worker-facing Control Plane endpoint is:
@@ -129,20 +143,26 @@ It requires the dedicated worker credential plus:
 - one-shot execution-job claim secret;
 - ephemeral Ed25519 public key.
 
-The Control Plane requires the job to already be `running`, verifies its command binding, and revalidates the original grant again immediately before requesting a certificate.
+The Control Plane requires the job to already be `running`, verifies its command binding, revalidates the original grant, and resolves the job's logical target through the protected target registry immediately before requesting a certificate.
 
 Revocation after `start` but before certificate issuance therefore prevents credential issuance and cancels the running job record before an SSH connection has been made.
 
-## Remaining target-side work
+The successful response gives the worker the certificate and the resolved target specification. No target address supplied by the agent is accepted.
 
-The certificate alone is not the full remote security boundary. Before real SSH execution is enabled, the target host must also have:
+## Relationship to the target execution boundary
 
-- the Sentinel user CA installed as a trusted user CA;
-- a dedicated Unix service account / authorized principal policy;
-- the root-owned `tethys-sentinel-exec` forced-command wrapper;
-- forwarding and PTY disabled independently in `sshd_config`/account policy;
-- wrapper-side validation of job/binding and a deterministic encoding for `SSH_ORIGINAL_COMMAND`;
-- narrow sudo/doas policy where elevated operations are needed;
-- pinned or CA-verified SSH host identity on the worker side.
+The certificate is only one layer. `0.1.0-dev.6` adds the corresponding worker/target enforcement:
 
-Those items belong to the real SSH executor/target-wrapper milestone and are deliberately not claimed by `dev.5`.
+- exact pinned SSH host-key verification;
+- literal-IP target registry;
+- dedicated target Unix account;
+- root/operator-owned `tethys-sentinel-exec` wrapper;
+- deterministic job-bound `SSH_ORIGINAL_COMMAND` envelope;
+- local target-ID and canonical binding verification;
+- direct argv execution without shell reconstruction;
+- root-protected one-shot replay consumption;
+- job-expiry and output execution bounds.
+
+The certificate's critical `force-command` and the remote wrapper's binding checks are intentionally redundant. The signer proves what command wrapper must run; the wrapper proves the separately transported exact job envelope still matches that signer decision and this host.
+
+See `docs/SSH_EXECUTION.md` for the full real execution and target-host requirements.
