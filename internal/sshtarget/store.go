@@ -136,8 +136,8 @@ func validate(raw Spec) (Spec, error) {
 		return Spec{}, fmt.Errorf("SSH target %q address must be literal-ip:port", spec.Name)
 	}
 	ip := net.ParseIP(strings.TrimSpace(host))
-	if ip == nil || ip.IsUnspecified() || ip.IsMulticast() {
-		return Spec{}, fmt.Errorf("SSH target %q address must use a concrete literal IP", spec.Name)
+	if ip == nil || !ip.IsGlobalUnicast() {
+		return Spec{}, fmt.Errorf("SSH target %q address must use a global-unicast literal IP", spec.Name)
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
