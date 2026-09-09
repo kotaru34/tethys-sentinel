@@ -25,15 +25,21 @@
                            |
                            | worker-only internal API
                            v
-                    +------+-------+
+                +----------+-----------+
+                | External worker      |
+                | network boundary     |
+                | Control + SSH only   |
+                +----------+-----------+
+                           |
+                    +------v-------+
                     | Execution    |
                     | Worker       |
                     | ephemeral key|
                     | pinned SSH   |
                     +------+-------+
                            |
-                           | SSH to resolved literal IP
-                           | exact pinned host key
+                           | SSH to externally allowed,
+                           | operator-resolved literal IP
                            v
                     +------+----------------+
                     | Target sshd           |
@@ -63,7 +69,7 @@ Only the Control Plane can publish executable jobs and call the SSH Signer. It r
 
 The current authoritative context source is selected with `SENTINEL_CONTEXT_FILE`. Production deployment must make it operator-owned/read-only to runtime identities or replace it with equivalently protected persistent state.
 
-Transport resolution comes from `SENTINEL_SSH_TARGETS_FILE` (default `/etc/tethys-sentinel/ssh-targets.json`). Jobs contain only logical target IDs. The registry maps them to literal IP/port, Unix user, and exact pinned SSH host key. Agent-supplied transport values are never accepted.
+Transport resolution comes from `SENTINEL_SSH_TARGETS_FILE` (default `/etc/tethys-sentinel/ssh-targets.json`). Jobs contain only logical target IDs. The registry maps them to global-unicast literal IP/port, Unix user, and exact pinned SSH host key. Agent-supplied transport values are never accepted.
 
 ### AI Gateway
 
@@ -99,9 +105,41 @@ The design intentionally does not classify every ordinary file write. Actual fil
 
 Where syntax has a reliable inspection path, reads stay autonomous. Examples include service status, route/interface inspection, firewall listing, package queries, ZFS/RAID status, and PVE status/API reads. Mutation forms require approval. Ambiguous forms of sensitive admin tools fail conservatively.
 
-Stable operations may use semantic scope. For example, service scope binds executable + action + concrete unit/resource. Broader mutations normally use exact full-argv scope. Powerful workload-start/exec/remote forms are elevated back into the dev.7 powerful classes rather than receiving a weaker operational approval path.
+Stable operations may use semantic scope. Broader mutations normally use exact full-argv scope. Powerful workload-start/exec/remote forms are elevated back into the dev.7 powerful classes rather than receiving a weaker operational approval path.
 
 See `docs/OPERATIONAL_RISK.md`.
+
+### External worker network boundary
+
+`0.1.0-dev.9` adds an independent runtime egress boundary for the Execution Worker.
+
+Normal Sentinel logic already resolves jobs only to protected logical targets, but a compromised worker process or guest must not be able to ignore that application logic and open arbitrary network connections. Therefore production worker egress is enforced **outside the guest**.
+
+For Proxmox VE deployment the intended hard boundary is the VM firewall on the worker virtual interface. Its autonomous runtime egress set is deliberately minimal:
+
+1. one literal-IP HTTPS Control Plane endpoint;
+2. global-unicast literal IP:port SSH endpoints from protected target inventory.
+
+DNS, generic LAN access, broad RFC1918 ranges, package mirrors and unrestricted Internet/HTTPS are not part of the normal worker runtime policy.
+
+`sentinel-egress-policy` is an operator/deployment utility that deterministically derives the external PVE policy from the protected target inventory plus Control Plane endpoint. It:
+
+- emits `policy_out: DROP`;
+- emits explicit TCP allow rules only for Control Plane and registered SSH endpoints;
+- deduplicates shared target endpoints;
+- includes a canonical policy SHA-256;
+- verifies installed policy byte-for-byte;
+- verifies Datacenter firewall `enable: 1` and `firewall=1` on the selected worker VM NIC.
+
+The utility does **not** apply PVE configuration. Worker/AI identities must have no credentials or API/filesystem path that can modify `/etc/pve`, NIC firewall flags, or external network policy.
+
+Guest nftables may exist as defense in depth but is not trusted as the sole boundary because a compromised guest can potentially rewrite its own firewall.
+
+External policy configuration checks are not a substitute for packet-level validation. The first real PVE acceptance test must demonstrate from inside the worker VM that Control Plane + registered SSH endpoints work and unrelated LAN/Internet/DNS/unlisted ports are blocked.
+
+Shrinking firewall rules is not assumed to instantly terminate already-established stateful flows. Job deadlines, short SSH certificates and the later global-revoke/active-worker termination mechanism remain independent controls.
+
+See `docs/WORKER_EGRESS.md`.
 
 ### Execution Worker
 
@@ -117,7 +155,7 @@ Worker flow:
 6. receive short-lived certificate plus operator-resolved target;
 7. verify certificate belongs to the generated keypair and does not outlive the job;
 8. verify logical target matches immutable job;
-9. dial only the resolved literal IP/port;
+9. dial only the resolved literal IP/port, which must also be allowed by the external worker boundary;
 10. verify exact pinned SSH host key;
 11. send deterministic job-bound command envelope;
 12. complete once with result metadata/output digest.
@@ -128,18 +166,9 @@ Execution context is capped by `job.expires_at`. TCP dial and SSH handshake have
 
 This is the hard execution-policy checkpoint immediately before any infrastructure credential is returned.
 
-For a running job, Control Plane:
+For a running job, Control Plane validates job/claim/binding, re-runs current risk policy, requires current category/scope equality, re-authenticates the original grant, requires `shell=true` when necessary, resolves the protected target, and only then calls the isolated Signer.
 
-1. validates job and one-shot claim secret;
-2. verifies immutable command binding;
-3. re-runs the **current** risk classifier on immutable `job.argv`;
-4. requires current category and scope key to equal stored job metadata;
-5. re-authenticates the original grant;
-6. requires `shell=true` when current category requires it;
-7. resolves the protected logical SSH target;
-8. only then calls the isolated Signer.
-
-A queued job therefore does not freeze an old policy decision. This applies to both dev.7 powerful classifications and dev.8 operational classifications: newly hardened policy invalidates stale queued authority before credentials are issued.
+A queued job therefore does not freeze old policy authority.
 
 ### SSH Signer
 
@@ -203,11 +232,11 @@ Production state is planned for PostgreSQL with separate least-privilege roles f
 7. Pre-certificate current-policy + capability revalidation.
 8. Isolated SSH CA and signer-owned certificate shape.
 9. Ephemeral per-job private keys.
-10. Operator-owned literal-IP target registry + exact host-key pinning.
-11. Job-expiry/handshake/output bounds.
-12. Root/operator-owned forced wrapper with binding/target verification.
-13. Root-protected target at-most-once replay marker.
-14. Remote Unix permissions and narrow sudo/doas policy.
-15. Independent VM/network segmentation and worker egress filtering.
+10. Operator-owned global-unicast target registry + exact host-key pinning.
+11. External worker VM egress allowlist enforced outside the guest.
+12. Job-expiry/handshake/output bounds.
+13. Root/operator-owned forced wrapper with binding/target verification.
+14. Root-protected target at-most-once replay marker.
+15. Remote Unix permissions and narrow sudo/doas policy.
 
 No single layer is sufficient.
