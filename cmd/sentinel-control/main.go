@@ -19,6 +19,8 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/contextstore"
 	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
+	"github.com/kotaru34/tethys-sentinel/internal/emergency"
+	"github.com/kotaru34/tethys-sentinel/internal/emergencyapi"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/notes"
 	"github.com/kotaru34/tethys-sentinel/internal/resourceapi"
@@ -60,6 +62,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("open/verify execution job store: %v", err)
 	}
+	emergencyStore, err := emergency.Open(env("SENTINEL_EMERGENCY_STATE", "/var/lib/tethys-sentinel/emergency.json"))
+	if err != nil {
+		log.Fatalf("open emergency authority state: %v", err)
+	}
 	contextStore, err := contextstore.New(env("SENTINEL_CONTEXT_FILE", "/etc/tethys-sentinel/context.json"))
 	if err != nil {
 		log.Fatalf("open authoritative context: %v", err)
@@ -69,8 +75,9 @@ func main() {
 		log.Fatalf("open notes store: %v", err)
 	}
 
-	caps := capability.NewService(grantStore)
+	caps := capability.NewServiceWithEmergency(grantStore, emergencyStore)
 	api := controlapi.New(caps, approvalStore, auditLog, jobStore, adminToken, workerToken)
+	emergencyAPI := emergencyapi.New(emergencyStore, caps, jobStore, auditLog, adminToken, workerToken)
 	resources := resourceapi.New(caps, contextStore, auditLog, noteStore).Handler()
 	credentials, err := credentialHandlerFromEnv(caps, jobStore, auditLog, workerToken)
 	if err != nil {
@@ -82,13 +89,17 @@ func main() {
 	internalMux.Handle("/internal/v1/history", resources)
 	internalMux.Handle("/internal/v1/notes/", resources)
 	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/ssh-certificate", credentials)
+	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/authority", emergencyAPI.InternalHandler())
 	internalMux.Handle("/", api.InternalHandler())
 
 	adminAddr := env("SENTINEL_ADMIN_LISTEN", "127.0.0.1:8081")
 	if !loopbackAddr(adminAddr) {
 		log.Fatal("admin API must bind a loopback address in this development milestone")
 	}
-	adminServer := hardenedServer(adminAddr, api.AdminHandler())
+	adminMux := http.NewServeMux()
+	adminMux.Handle("/admin/v1/emergency/", emergencyAPI.AdminHandler())
+	adminMux.Handle("/", api.AdminHandler())
+	adminServer := hardenedServer(adminAddr, adminMux)
 
 	internalAddr := env("SENTINEL_INTERNAL_LISTEN", "127.0.0.1:9091")
 	internalServer := hardenedServer(internalAddr, internalMux)
