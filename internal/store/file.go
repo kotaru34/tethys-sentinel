@@ -67,6 +67,16 @@ func (s *FileGrantStore) GrantByTokenHash(_ context.Context, hash [32]byte) (dom
 	return grant, nil
 }
 
+func (s *FileGrantStore) GrantByID(_ context.Context, id string) (domain.Grant, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	hash, ok := s.byID[id]
+	if !ok {
+		return domain.Grant{}, ErrNotFound
+	}
+	return s.byHash[hash], nil
+}
+
 func (s *FileGrantStore) RevokeGrant(_ context.Context, id string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
