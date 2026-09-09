@@ -22,6 +22,8 @@ If an attacker can alter Trust-0 source material, prompt-level provenance is def
 
 Capabilities are high-entropy opaque bearer secrets. Mitigations: short TTL, narrow targets/permissions, server-side revocation, hashes at rest, TLS and later optional proof-of-possession.
 
+`dev.10` additionally stamps every grant with the current monotonic emergency authority epoch. Global revoke-all increments the epoch and disables AI access. Re-enabling access does not make any older capability valid again.
+
 ### Gateway compromise
 
 Gateway compromise must not become grant issuance, target mutation, worker control, arbitrary SSH destination selection or CA compromise.
@@ -118,11 +120,31 @@ Independent enforcement remains mandatory: capability target/permission scope, a
 
 Ordinary filesystem authority is deliberately not inferred from generic command names; actual write/root ability remains constrained by the target OS permission boundary.
 
-### Revocation race
+### Revocation race and stale capability revival
 
-Revocation cancels unclaimed jobs. Claimed jobs still require `start`, which revalidates the original grant. Running jobs must pass another grant/current-policy check before certificate issuance.
+Individual grant revocation still cancels unclaimed work and is rechecked at `start`, certificate issuance, and the active worker authority lease.
 
-After an SSH certificate has already been accepted, OpenSSH cannot retroactively revoke that credential. Mitigations: short TTL, exact source binding, job-expiry cap, worker execution context capped by job expiry and target one-shot replay state. Global active-session termination remains a later emergency-control milestone.
+`dev.10` adds a separate global authority boundary. `REVOKE ALL` atomically advances a monotonic security epoch and disables global AI access. Every grant records the epoch at issuance. While disabled, new capability use, worker claim, start/signing paths and active authority checks fail closed. Re-enabling keeps the advanced epoch, so grants from every earlier epoch remain permanently invalid and cannot revive.
+
+Non-running `staged`, `pending` and `claimed` jobs are canceled by revoke-all and one-shot claim material is invalidated. A job that already reached `running` is not silently rewritten as completed by the store; the worker continuously checks authoritative lease state and cancels its execution context when authority is lost.
+
+### Kill-switch persistence failure
+
+Emergency disable is more important than preserving a writable state file. If revoke-all updates the live in-memory authority state but persistence fails, the current Control Plane remains disabled and returns an error to the operator. It must not roll the kill switch back merely because disk persistence failed.
+
+A restart after such a persistence failure is unsafe until the operator repairs/validates emergency-state persistence, because an unpersisted in-memory epoch cannot survive process loss.
+
+Re-enable is stricter in the opposite direction: an enable transition that cannot be safely persisted/audited must fail closed and leave or return the system to disabled state.
+
+### Active worker continues after revoke
+
+Certificate expiry and firewall rule removal are not assumed to terminate an already-established SSH session. `dev.10` therefore gives the worker a dedicated internal authority-check endpoint and requires an authoritative check before executor invocation plus short-interval checks while SSH is active.
+
+Default authority polling is approximately 250 ms and each check has a similarly bounded request timeout. Global revoke, individual grant revoke, epoch mismatch, job expiry, invalid claim, or Control Plane loss cancels the worker execution context. The SSH executor closes transport on cancellation.
+
+This is deliberately fail-closed: temporary inability to reach the Control Plane is treated as loss of authority, not permission to keep running.
+
+The mechanism only controls the Sentinel-owned execution/session. It cannot guarantee instantaneous removal of every daemonized/detached child process that a previously authorized target command may already have created. Target-side Unix/service policy and operation-specific controls remain necessary for that class of effect.
 
 ### Worker compromise
 
@@ -131,6 +153,8 @@ Worker compromise must not become policy/grant/CA compromise or arbitrary networ
 It generates per-job Ed25519 keys in memory and receives target transport only from Control Plane. `dev.9` adds an independent external worker egress boundary so a compromised worker process or guest cannot simply ignore application-level target resolution and dial arbitrary infrastructure.
 
 The production hard boundary is outside the guest. For Proxmox VE this means VM-interface firewall enforcement owned by the operator/hypervisor. Guest-local nftables may be defense in depth but cannot be the sole boundary because guest root/RCE may rewrite it.
+
+A fully compromised worker that also possesses its worker credential can query its own running-job authority endpoint, but that endpoint can only reduce/confirm existing job authority; it cannot mint grants, expand targets, alter epochs, or request arbitrary Signer policy.
 
 ### Worker egress confused deputy
 
@@ -160,7 +184,7 @@ The generated policy includes a canonical SHA-256 over Control Plane + target de
 
 Removing an allow rule is not treated as guaranteed immediate termination of an already-established stateful TCP flow.
 
-Therefore dev.9 egress enforcement is a containment boundary, not the global kill switch. Short SSH certificate TTL, job expiry, execution deadlines and target one-shot replay remain required. The separate global-revoke milestone must stop new signing/execution and actively terminate worker activity/connections where feasible.
+Therefore dev.9 egress enforcement remains a containment boundary rather than a kill switch. `dev.10` independently cancels Sentinel-owned active execution through the continuous authority lease; short SSH certificate TTL, job expiry and target one-shot replay remain additional controls.
 
 ### Arbitrary SSH destination / SSRF pivot
 
@@ -176,7 +200,7 @@ Worker uses exact raw pinned SSH host public key. Mismatch aborts handshake befo
 
 TCP dial and SSH handshake are bounded. Execution context cannot outlive job expiry and closes the SSH client when deadline/cancellation fires.
 
-Certificate expiry alone is not assumed to terminate an already-established session.
+Certificate expiry alone is not assumed to terminate an already-established session. Active authority loss is a separate cancellation source after `dev.10`.
 
 ### Output flooding / secret-bearing stdout
 
@@ -228,11 +252,11 @@ History is filtered by target/session/agent scope. Notes require explicit permis
 
 Audit is append-oriented and hash-chained; chain is checked on startup and history reads. External sealing remains future hardening against an attacker able to rewrite all trusted state coherently.
 
-Certificate issuance is audited. If audit append fails after signing, certificate is withheld and job rejected/canceled.
+Certificate issuance and emergency transitions are audited. Re-enable is fail-closed around audit so an unauditable transition does not silently restore authority.
 
 ### Persistence after expiry
 
-Agents do not receive CA keys or long-lived infrastructure keys. Worker credentials are ephemeral and short-lived; execution session is job-deadline bounded; forwarding extensions are absent; target job can be consumed once.
+Agents do not receive CA keys or long-lived infrastructure keys. Worker credentials are ephemeral and short-lived; execution session is job-deadline and active-authority bounded; forwarding extensions are absent; target job can be consumed once.
 
 ## Security invariants
 
@@ -254,20 +278,26 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 - Worker per-job private keys are ephemeral and not persisted.
 - Plaintext capability is not stored; token hash is persisted.
 - Expired/revoked grants fail closed.
+- Every grant is bound to an emergency security epoch.
+- Global revoke-all advances the epoch and invalidates all older grants permanently, including after re-enable.
+- Global disable suppresses worker claims and blocks start/signing through grant re-authentication.
+- Global revoke cancels non-running jobs and invalidates claimed one-shot material.
+- Running jobs require a fail-closed active authority lease; authority loss or Control Plane loss cancels Sentinel-owned execution.
+- Emergency revoke persistence failure does not re-enable the live process in memory.
 - Request ID cannot be rebound to different target/argv.
 - Staged jobs are unclaimable.
 - Claimed jobs require authoritative start revalidation.
-- SSH certificate requires running, unexpired, binding-valid, current-policy-valid job and active grant.
+- SSH certificate requires running, unexpired, binding-valid, current-policy-valid job and active current-epoch grant.
 - Signer caller cannot broaden principal/force-command/source/extensions/TTL.
 - Certificate does not outlive job and grants no PTY/agent/port/X11 forwarding.
 - Worker target is global-unicast literal IP from operator-owned inventory and host key is exactly pinned.
 - Worker runtime egress is externally deny-by-default and limited to Control Plane HTTPS plus registered target SSH endpoints.
 - Worker/AI identities cannot apply, widen or reconcile the external PVE egress policy.
 - Generated egress policy drift and PVE Datacenter/NIC activation are operator-verifiable and fail closed on mismatch.
-- Packet-level worker-VM egress behavior must be tested before treating dev.9 as infrastructure-accepted.
-- Firewall shrink is not assumed to terminate already-established flows; revocation controls remain independent.
+- Packet-level worker-VM egress behavior must be tested before treating the infrastructure boundary as accepted.
+- Firewall shrink is not assumed to terminate already-established flows; active authority revocation remains independent.
 - Wrapper directly executes verified argv, verifies local target identity, and consumes root-protected replay marker.
-- Worker execution is bounded by job expiry and output limit.
+- Worker execution is bounded by job expiry, active authority and output limit.
 - A functioning release is not production-deployable until tested on intended isolated infrastructure.
 
 ## Out of scope for early milestones
@@ -276,5 +306,5 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 - malicious operator with host root
 - formal verification
 - proving arbitrary shell/interpreter content intrinsically safe
-- instantaneous guaranteed termination of every descendant process on every target OS after session loss
+- instantaneous guaranteed termination of every detached/daemonized descendant process on every target OS after session loss
 - production persistence before PostgreSQL migration
