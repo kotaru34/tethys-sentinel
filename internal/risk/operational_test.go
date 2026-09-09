@@ -12,6 +12,7 @@ func TestOperationalRiskRules(t *testing.T) {
 		{"systemd read", []string{"systemctl", "status", "pdns"}, Allow, "DEFAULT"},
 		{"systemd start", []string{"systemctl", "start", "pdns"}, ApprovalRequired, "SERVICE_CONTROL"},
 		{"systemd manager", []string{"systemctl", "daemon-reload"}, ApprovalRequired, "SYSTEM_MANAGER"},
+		{"systemd reboot", []string{"systemctl", "reboot"}, ApprovalRequired, "POWER"},
 		{"freebsd service read", []string{"service", "sshd", "status"}, Allow, "DEFAULT"},
 		{"freebsd service restart", []string{"service", "sshd", "restart"}, ApprovalRequired, "SERVICE_RESTART"},
 		{"openbsd rcctl read", []string{"rcctl", "check", "unwind"}, Allow, "DEFAULT"},
@@ -20,6 +21,7 @@ func TestOperationalRiskRules(t *testing.T) {
 		{"void runit restart", []string{"sv", "restart", "sshd"}, ApprovalRequired, "SERVICE_RESTART"},
 		{"freebsd sysrc read", []string{"sysrc", "sshd_enable"}, Allow, "DEFAULT"},
 		{"freebsd sysrc write", []string{"sysrc", "sshd_enable=YES"}, ApprovalRequired, "SYSTEM_CONFIG"},
+		{"freebsd sysrc delete with no-name", []string{"sysrc", "-n", "-x", "sshd_enable"}, ApprovalRequired, "SYSTEM_CONFIG"},
 
 		{"ip route read", []string{"ip", "route", "show"}, Allow, "DEFAULT"},
 		{"ip route replace", []string{"ip", "route", "replace", "default", "via", "10.169.0.1"}, ApprovalRequired, "NETWORK_CONTROL"},
@@ -38,7 +40,13 @@ func TestOperationalRiskRules(t *testing.T) {
 		{"xbps install", []string{"xbps-install", "-y", "haproxy"}, ApprovalRequired, "PACKAGE_CONTROL"},
 		{"freebsd pkg read", []string{"pkg", "info", "postgresql18-server"}, Allow, "DEFAULT"},
 		{"freebsd pkg upgrade", []string{"pkg", "upgrade", "-y"}, ApprovalRequired, "PACKAGE_CONTROL"},
+		{"pacman search", []string{"pacman", "-Ss", "haproxy"}, Allow, "DEFAULT"},
+		{"pacman upgrade", []string{"pacman", "-Syu"}, ApprovalRequired, "PACKAGE_CONTROL"},
 
+		{"mount list", []string{"mount"}, Allow, "DEFAULT"},
+		{"mount filesystem", []string{"mount", "/srv/data"}, ApprovalRequired, "STORAGE_CONTROL"},
+		{"losetup list", []string{"losetup", "-a"}, Allow, "DEFAULT"},
+		{"losetup attach", []string{"losetup", "/dev/loop0", "disk.img"}, ApprovalRequired, "STORAGE_CONTROL"},
 		{"zpool read", []string{"zpool", "status", "tank"}, Allow, "DEFAULT"},
 		{"zpool attach", []string{"zpool", "attach", "tank", "da0", "da1"}, ApprovalRequired, "STORAGE_CONTROL"},
 		{"zfs read", []string{"zfs", "list", "tank/data"}, Allow, "DEFAULT"},
@@ -47,6 +55,8 @@ func TestOperationalRiskRules(t *testing.T) {
 		{"lvm remove", []string{"lvremove", "-y", "vg/data"}, ApprovalRequired, "STORAGE_CONTROL"},
 		{"fdisk list", []string{"fdisk", "-l", "/dev/sda"}, Allow, "DEFAULT"},
 		{"fdisk mutate", []string{"fdisk", "/dev/sda"}, ApprovalRequired, "STORAGE_CONTROL"},
+		{"parted print", []string{"parted", "/dev/sda", "print"}, Allow, "DEFAULT"},
+		{"parted mkpart", []string{"parted", "/dev/sda", "mkpart", "primary", "1MiB", "1GiB"}, ApprovalRequired, "STORAGE_CONTROL"},
 		{"raw dd", []string{"dd", "if=/dev/zero", "of=/dev/sda", "bs=1M"}, ApprovalRequired, "RAW_STORAGE_WRITE"},
 		{"mdadm detail", []string{"mdadm", "--detail", "/dev/md0"}, Allow, "DEFAULT"},
 		{"mdadm create", []string{"mdadm", "--create", "/dev/md0", "--level=1", "/dev/sda", "/dev/sdb"}, ApprovalRequired, "STORAGE_CONTROL"},
@@ -56,10 +66,14 @@ func TestOperationalRiskRules(t *testing.T) {
 		{"sysctl read", []string{"sysctl", "net.ipv4.ip_forward"}, Allow, "DEFAULT"},
 		{"sysctl write", []string{"sysctl", "-w", "net.ipv4.ip_forward=1"}, ApprovalRequired, "KERNEL_CONTROL"},
 		{"module load", []string{"modprobe", "wireguard"}, ApprovalRequired, "KERNEL_CONTROL"},
+		{"journal read", []string{"journalctl", "-u", "sshd"}, Allow, "DEFAULT"},
+		{"journal vacuum", []string{"journalctl", "--vacuum-time=7d"}, ApprovalRequired, "LOG_CONTROL"},
 
 		{"docker read", []string{"docker", "ps"}, Allow, "DEFAULT"},
-		{"docker restart", []string{"docker", "restart", "pdns"}, ApprovalRequired, "CONTAINER_CONTROL"},
+		{"docker start", []string{"docker", "start", "pdns"}, ApprovalRequired, "ARBITRARY_CODE"},
+		{"docker stop", []string{"docker", "stop", "pdns"}, ApprovalRequired, "CONTAINER_CONTROL"},
 		{"docker exec", []string{"docker", "exec", "pdns", "id"}, ApprovalRequired, "ARBITRARY_CODE"},
+		{"docker remote context", []string{"docker", "--context", "remote", "ps"}, ApprovalRequired, "REMOTE_EXEC"},
 		{"kubectl read", []string{"kubectl", "get", "pods"}, Allow, "DEFAULT"},
 		{"kubectl apply", []string{"kubectl", "apply", "-f", "deployment.yaml"}, ApprovalRequired, "ORCHESTRATOR_CONTROL"},
 		{"helm read", []string{"helm", "list"}, Allow, "DEFAULT"},
@@ -101,6 +115,11 @@ func TestOperationalScopesAndCapabilitySemantics(t *testing.T) {
 	netns := Classify([]string{"ip", "netns", "exec", "blue", "id"})
 	if !RequiresShell(netns) || SessionApprovalAllowed(netns) {
 		t.Fatalf("namespace execution did not retain powerful-execution semantics: %+v", netns)
+	}
+
+	dockerStart := Classify([]string{"docker", "start", "pdns"})
+	if !RequiresShell(dockerStart) || SessionApprovalAllowed(dockerStart) {
+		t.Fatalf("container workload start is not treated as mutable code execution: %+v", dockerStart)
 	}
 
 	dd := Classify([]string{"dd", "if=/dev/zero", "of=/dev/sda"})
