@@ -202,20 +202,22 @@ func (s lockedGrantAuthority) allowed() bool {
 
 func lockGrantAuthority(ctx context.Context, tx pgx.Tx, grantID string) (lockedGrantAuthority, error) {
 	var state lockedGrantAuthority
-	err := tx.QueryRow(ctx, `
-		SELECT a.epoch, a.disabled, g.security_epoch, g.revoked_at, g.expires_at, clock_timestamp(), g.agent
-		FROM sentinel.authority_state a
-		JOIN sentinel.grants g ON g.id = $1
-		WHERE a.id = 1
-		FOR SHARE OF a, g
-	`, grantID).Scan(
-		&state.authorityEpoch, &state.disabled, &state.grantEpoch, &state.revokedAt,
-		&state.expiresAt, &state.now, &state.agent,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return lockedGrantAuthority{}, errors.New("grant not found")
+	if err := tx.QueryRow(ctx, `
+		SELECT epoch, disabled, clock_timestamp()
+		FROM sentinel.authority_state
+		WHERE id = 1
+		FOR SHARE
+	`).Scan(&state.authorityEpoch, &state.disabled, &state.now); err != nil {
+		return lockedGrantAuthority{}, err
 	}
-	if err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT security_epoch, revoked_at, expires_at, agent
+		FROM sentinel.grants
+		WHERE id = $1
+		FOR SHARE
+	`, grantID).Scan(&state.grantEpoch, &state.revokedAt, &state.expiresAt, &state.agent); errors.Is(err, pgx.ErrNoRows) {
+		return lockedGrantAuthority{}, errors.New("grant not found")
+	} else if err != nil {
 		return lockedGrantAuthority{}, err
 	}
 	if state.authorityEpoch < 0 || state.grantEpoch < 0 {
