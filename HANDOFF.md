@@ -81,8 +81,9 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - A consumed `allow_once` approval can only be retried for the same bound job and can never authorize a second job in the same scope.
 - Worker claim/start/complete are transactional semantic operations; start revalidates authority/grant under lock and completion records factual outcome even if authority was revoked after execution began.
 - Audit chain ordering is serialized through `audit_head`; transaction rollback cannot leave state changed without its required audit event.
-- First constrained infrastructure acceptance uses separate guests for PostgreSQL, Control, Gateway, Worker, Signer and disposable target. Gateway stays non-public during acceptance.
-- First acceptance uses PostgreSQL 18 because it is directly exercised by CI; authority must remain disabled until TLS, target hardening and PVE Worker packet-level egress checks pass.
+- The selected first constrained infrastructure acceptance uses an existing operator-managed remote PostgreSQL service plus five separate guests: Control, Gateway, Worker, Signer and disposable target.
+- The existing PostgreSQL service must use a CI-supported major (15 or 18 for dev.11), a dedicated Sentinel database and LOGINs, verified TLS, source-restricted HBA, schema version 2, and least-privilege runtime access from Control only.
+- Authority must remain disabled until TLS, target hardening and PVE Worker packet-level egress checks pass.
 - When MCP/agent tools are added, keep the surface narrow and purpose-built for autonomous Qwen-class models rather than exposing backend/admin operations wholesale.
 
 ## Version history
@@ -136,11 +137,12 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 
 No runtime feature/version bump was made after `0.1.0-dev.11`; this checkpoint is deployment documentation and state handoff only.
 
-- Added `docs/INFRASTRUCTURE_ACCEPTANCE.md` with the first complete constrained PVE acceptance procedure (`52c1dad81345b101b5a535b54dd5909d694ee9db`).
-- Acceptance topology is now fixed for the first run: `sentinel-db`, `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer`, `sentinel-target-test` as separate disposable/constrained guests.
-- PostgreSQL 18 is the first acceptance database major; Gateway remains non-public until acceptance is complete.
-- Runbook covers separate TLS trust domains, PostgreSQL role/schema setup, isolated SSH CA generation, target sshd/forced wrapper/replay state, component environments/systemd shape, PVE Worker deny-by-default egress, positive/negative packet tests, harmless execution, one-shot approval non-reuse, individual/global active revoke and PostgreSQL restart/loss behavior.
-- Synchronized current architecture/API/emergency/SSH-execution/Worker-egress docs with the dev.11 PostgreSQL and active-revoke state; README links the acceptance runbook.
+- Added `docs/INFRASTRUCTURE_ACCEPTANCE.md` with the complete constrained PVE acceptance procedure.
+- Added `docs/INFRASTRUCTURE_ACCEPTANCE_REMOTE_POSTGRES.md` for the selected deployment topology using an existing remote PostgreSQL service rather than a dedicated DB guest.
+- Selected acceptance topology is now five separate disposable/constrained guests: `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer`, `sentinel-target-test`; PostgreSQL remains an existing operator-managed external service.
+- Gateway remains non-public until acceptance is complete.
+- Runbooks cover separate TLS trust domains, PostgreSQL role/schema setup, isolated SSH CA generation, target sshd/forced wrapper/replay state, component environments/systemd shape, PVE Worker deny-by-default egress, positive/negative packet tests, harmless execution, one-shot approval non-reuse, individual/global active revoke and PostgreSQL restart/loss behavior.
+- Synchronized current architecture/API/emergency/SSH-execution/Worker-egress docs with the dev.11 PostgreSQL and active-revoke state.
 
 ## Current phase
 
@@ -152,17 +154,18 @@ Do **not** merge to `main` yet. The operator merge rule requires the constrained
 
 ## Next implementation/deployment steps
 
-1. Provision the six acceptance guests and assign unused static IPs/VMIDs according to `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
-2. Build the accepted `0.1.0-dev.11` commit and deploy only the required binaries/credentials to each guest.
-3. Configure PostgreSQL 18 schema v2 and verify the runtime role over verified TLS while authority remains disabled.
-4. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
-5. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
-6. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
-7. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
-8. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
-9. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
-10. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
-11. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Validate the existing remote PostgreSQL endpoint/version/TLS path and reserve the five acceptance VMIDs/static IPs on the selected PVE node.
+2. Provision `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer` and `sentinel-target-test` as separate VMs according to the acceptance runbooks.
+3. Create the dedicated Sentinel database/LOGINs on the existing PostgreSQL service, apply schema v2, and verify the runtime role over verified TLS while authority remains disabled.
+4. Build the accepted `0.1.0-dev.11` commit and deploy only the required binaries/credentials to each guest.
+5. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
+6. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
+7. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
+8. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
+9. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
+10. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
+11. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
+12. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
 
 ## Deployment state
 
