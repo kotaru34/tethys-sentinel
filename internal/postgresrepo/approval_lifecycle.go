@@ -56,7 +56,7 @@ func (l *ApprovalLifecycle) Request(ctx context.Context, req approval.Request, r
 	if err != nil {
 		return approval.Request{}, false, err
 	}
-	if !active.allowed() {
+	if !active.allowed() || !active.exec {
 		return approval.Request{}, false, errors.New("approval grant is no longer active")
 	}
 	if active.agent != req.Agent {
@@ -161,7 +161,7 @@ func (l *ApprovalLifecycle) Decide(ctx context.Context, id string, decision appr
 	if decision == approval.AllowSession && !allowed {
 		return approval.Request{}, errors.New("session approval is not allowed for this risk category; use allow_once")
 	}
-	if decision != approval.Deny && !active.allowed() {
+	if decision != approval.Deny && (!active.allowed() || !active.exec) {
 		return approval.Request{}, errors.New("approval grant is no longer active")
 	}
 
@@ -194,6 +194,7 @@ type lockedGrantAuthority struct {
 	expiresAt      time.Time
 	now            time.Time
 	agent          string
+	exec           bool
 }
 
 func (s lockedGrantAuthority) allowed() bool {
@@ -211,11 +212,11 @@ func lockGrantAuthority(ctx context.Context, tx pgx.Tx, grantID string) (lockedG
 		return lockedGrantAuthority{}, err
 	}
 	if err := tx.QueryRow(ctx, `
-		SELECT security_epoch, revoked_at, expires_at, agent
+		SELECT security_epoch, revoked_at, expires_at, agent, permission_exec
 		FROM sentinel.grants
 		WHERE id = $1
 		FOR SHARE
-	`, grantID).Scan(&state.grantEpoch, &state.revokedAt, &state.expiresAt, &state.agent); errors.Is(err, pgx.ErrNoRows) {
+	`, grantID).Scan(&state.grantEpoch, &state.revokedAt, &state.expiresAt, &state.agent, &state.exec); errors.Is(err, pgx.ErrNoRows) {
 		return lockedGrantAuthority{}, errors.New("grant not found")
 	} else if err != nil {
 		return lockedGrantAuthority{}, err
