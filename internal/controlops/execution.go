@@ -36,10 +36,10 @@ type LegacyExecutionLifecycle struct {
 
 func NewLegacyExecutionLifecycle(caps *capability.Service, jobs ExecutionJobStore, auditLog AuditAppender) *LegacyExecutionLifecycle {
 	return &LegacyExecutionLifecycle{
-		caps: caps,
-		jobs: jobs,
+		caps:  caps,
+		jobs:  jobs,
 		audit: auditLog,
-		now: func() time.Time { return time.Now().UTC() },
+		now:   func() time.Time { return time.Now().UTC() },
 	}
 }
 
