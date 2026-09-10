@@ -75,6 +75,7 @@ Powerful execution classes such as shells/interpreters, privilege launchers, rem
 - `docs/WORKER_EGRESS.md` — generated external worker egress policy, PVE activation/drift checks and real acceptance criteria
 - `docs/EMERGENCY_CONTROLS.md` — security epoch, revoke-all, re-enable and active worker termination semantics
 - `docs/POSTGRESQL_PERSISTENCE.md` — PostgreSQL schema, transactional invariants, roles, migration/cutover and recovery rules
+- `docs/INFRASTRUCTURE_ACCEPTANCE.md` — first constrained PVE deployment and pass/fail procedure before WIP merge
 - `docs/SSH_CA.md` — isolated SSH signer and certificate constraints
 - `docs/SSH_EXECUTION.md` — real worker SSH transport, target registry, wrapper and replay boundary
 - `HANDOFF.md` — development state, decisions and operator-mandated workflow rules
