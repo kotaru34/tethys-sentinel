@@ -82,7 +82,7 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if currentRisk.Decision == risk.Allow {
-		a.stageAndAuthorizeResponse(w, r, grant, req, "", authorizer)
+		a.stageAndAuthorizeResponse(w, r, grant, req, "", currentRisk, authorizer)
 		return
 	}
 
@@ -102,19 +102,19 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
-		a.stageAndAuthorizeResponse(w, r, grant, req, matchedApproval.ID, authorizer)
+		a.stageAndAuthorizeResponse(w, r, grant, req, matchedApproval.ID, currentRisk, authorizer)
 		return
 	}
 
 	item, _, err := approvalOps.Request(r.Context(), approval.Request{
-		GrantID: grant.ID,
-		Agent: grant.Agent,
-		Target: req.Target,
-		Argv: append([]string(nil), req.Argv...),
-		Category: currentRisk.Category,
-		RiskLevel: string(currentRisk.Level),
-		ScopeKey: currentRisk.ScopeKey,
-		RiskReason: currentRisk.Reason,
+		GrantID:     grant.ID,
+		Agent:       grant.Agent,
+		Target:      req.Target,
+		Argv:        append([]string(nil), req.Argv...),
+		Category:    currentRisk.Category,
+		RiskLevel:   string(currentRisk.Level),
+		ScopeKey:    currentRisk.ScopeKey,
+		RiskReason:  currentRisk.Reason,
 		AgentReason: strings.TrimSpace(req.AgentReason),
 	}, req.RequestID)
 	if err != nil {
@@ -126,21 +126,21 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (a *API) stageAndAuthorizeResponse(w http.ResponseWriter, r *http.Request, grant domain.Grant, req internalapi.SubmitCommandRequest, approvalID string, authorizer controlops.JobAuthorizer) {
+func (a *API) stageAndAuthorizeResponse(w http.ResponseWriter, r *http.Request, grant domain.Grant, req internalapi.SubmitCommandRequest, approvalID string, currentRisk risk.Result, authorizer controlops.JobAuthorizer) {
 	expiresAt := a.now().Add(executionJobTTL)
 	if grant.ExpiresAt.Before(expiresAt) {
 		expiresAt = grant.ExpiresAt
 	}
 	job, _, err := a.jobs.Enqueue(r.Context(), executionjob.EnqueueInput{
-		RequestID: req.RequestID,
-		GrantID: grant.ID,
-		Agent: grant.Agent,
-		Target: req.Target,
-		Argv: append([]string(nil), req.Argv...),
-		ApprovalID: approvalID,
-		RiskCategory: risk.Classify(req.Argv).Category,
-		ScopeKey: risk.Classify(req.Argv).ScopeKey,
-		ExpiresAt: expiresAt,
+		RequestID:    req.RequestID,
+		GrantID:      grant.ID,
+		Agent:        grant.Agent,
+		Target:       req.Target,
+		Argv:         append([]string(nil), req.Argv...),
+		ApprovalID:   approvalID,
+		RiskCategory: currentRisk.Category,
+		ScopeKey:     currentRisk.ScopeKey,
+		ExpiresAt:    expiresAt,
 	})
 	if errors.Is(err, executionjob.ErrRequestConflict) {
 		writeError(w, http.StatusConflict, err.Error())
@@ -155,7 +155,7 @@ func (a *API) stageAndAuthorizeResponse(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusConflict, "request_id is already consumed by a non-executable job; use a new request_id")
 			return
 		}
-		writeJSON(w, http.StatusOK, acceptedResponse(job, risk.Classify(job.Argv)))
+		writeJSON(w, http.StatusOK, acceptedResponse(job, currentRisk))
 		return
 	}
 	a.authorizeStagedResponse(w, r, req, job.ID, authorizer)
