@@ -32,6 +32,7 @@ type persistenceBundle struct {
 	grants       controlops.GrantLifecycle
 	approvalOps  controlops.ApprovalLifecycle
 	executionOps controlops.ExecutionLifecycle
+	authorizer   controlops.JobAuthorizer
 	approvals    controlapi.ApprovalStore
 	audit        resourceapi.AuditStore
 	jobs         jobPersistence
@@ -92,6 +93,7 @@ func openFilePersistence() (*persistenceBundle, error) {
 		grants:       controlops.NewLegacyGrantLifecycle(caps, jobStore, auditLog),
 		approvalOps:  controlops.NewLegacyApprovalLifecycle(approvalStore, auditLog),
 		executionOps: controlops.NewLegacyExecutionLifecycle(caps, jobStore, auditLog),
+		authorizer:   controlops.NewLegacyJobAuthorizer(caps, approvalStore, jobStore, auditLog),
 		approvals:    approvalStore,
 		audit:        auditLog,
 		jobs:         jobStore,
@@ -119,6 +121,7 @@ func openPostgresPersistence(ctx context.Context) (*persistenceBundle, error) {
 		grants:       repo.Grants(),
 		approvalOps:  repo.ApprovalOperations(),
 		executionOps: repo.ExecutionOperations(),
+		authorizer:   repo.Authorizer(),
 		approvals:    repo.Approvals(),
 		audit:        repo.Audit(),
 		jobs:         repo.Jobs(),
