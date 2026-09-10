@@ -3,7 +3,7 @@
 Updated: 2026-09-10
 Current development version: `0.1.0-dev.11`
 Branch: `wip/bootstrap-security-core`
-Deployment: not deployed; no merge to `main` yet
+Deployment: five acceptance VMs provisioned on `ai-server`; Sentinel runtime not deployed; no merge to `main` yet
 
 ## Project goal
 
@@ -139,14 +139,15 @@ No runtime feature/version bump was made after `0.1.0-dev.11`; this checkpoint i
 
 - Added `docs/INFRASTRUCTURE_ACCEPTANCE.md` with the complete constrained PVE acceptance procedure.
 - Added `docs/INFRASTRUCTURE_ACCEPTANCE_REMOTE_POSTGRES.md` for the selected deployment topology using an existing remote PostgreSQL service rather than a dedicated DB guest.
-- Selected acceptance topology is now five separate disposable/constrained guests: `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer`, `sentinel-target-test`; PostgreSQL remains an existing operator-managed external service.
+- Selected acceptance topology is five separate disposable/constrained guests: `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer`, `sentinel-target-test`; PostgreSQL remains an existing operator-managed external service.
+- The five acceptance VMs have now been provisioned on PVE node `ai-server`; VM creation/layout is complete. Runtime components and security credentials are not deployed yet.
 - Gateway remains non-public until acceptance is complete.
 - Runbooks cover separate TLS trust domains, PostgreSQL role/schema setup, isolated SSH CA generation, target sshd/forced wrapper/replay state, component environments/systemd shape, PVE Worker deny-by-default egress, positive/negative packet tests, harmless execution, one-shot approval non-reuse, individual/global active revoke and PostgreSQL restart/loss behavior.
 - Synchronized current architecture/API/emergency/SSH-execution/Worker-egress docs with the dev.11 PostgreSQL and active-revoke state.
 
 ## Current phase
 
-`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete; the project is now at the **first real constrained infrastructure acceptance** boundary.
+`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete. The five PVE acceptance guests are provisioned on `ai-server`; the project is now entering guest/database configuration for the **first real constrained infrastructure acceptance**.
 
 No production trust should be placed in it yet. File persistence remains explicit development compatibility only. PostgreSQL is the production candidate.
 
@@ -154,19 +155,18 @@ Do **not** merge to `main` yet. The operator merge rule requires the constrained
 
 ## Next implementation/deployment steps
 
-1. Validate the existing remote PostgreSQL endpoint/version/TLS path and reserve the five acceptance VMIDs/static IPs on the selected PVE node.
-2. Provision `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer` and `sentinel-target-test` as separate VMs according to the acceptance runbooks.
-3. Create the dedicated Sentinel database/LOGINs on the existing PostgreSQL service, apply schema v2, and verify the runtime role over verified TLS while authority remains disabled.
-4. Build the accepted `0.1.0-dev.11` commit and deploy only the required binaries/credentials to each guest.
-5. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
-6. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
-7. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
-8. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
-9. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
-10. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
-11. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
-12. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Validate basic boot/network identity of the five provisioned guests and validate the existing remote PostgreSQL endpoint/version/TLS path.
+2. Create the dedicated Sentinel database/LOGINs on the existing PostgreSQL service, apply schema v2, and verify the runtime role over verified TLS while authority remains disabled.
+3. Build the accepted `0.1.0-dev.11` commit and deploy only the required binaries/credentials to each guest.
+4. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
+5. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
+6. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
+7. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
+8. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
+9. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
+10. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
+11. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
 
 ## Deployment state
 
-Not deployed. No production trust should be placed in the current branch. No merge to `main` yet.
+Five acceptance VMs are provisioned on PVE node `ai-server`. Sentinel binaries, trust material and PostgreSQL schema are not deployed/configured yet. No production trust should be placed in the current branch. No merge to `main` yet.
