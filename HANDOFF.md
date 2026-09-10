@@ -139,10 +139,10 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - Added durable `allow_once -> consumed_by_job_id` binding. One-shot consumption, job publication and authorization audit commit together, preventing concurrent/replayed reuse for a second job.
 - Worker start serializes authority/grant checks with revoke; completion is transactional and replay-resistant while still permitting factual result recording after later revocation.
 - Audit uses the existing canonical Go hash format and serializes append ordering through `audit_head`.
-- CI now applies every migration in order and validates runtime privileges on PostgreSQL 15 and 18.
+- CI applies every migration in order and validates runtime privileges on PostgreSQL 15 and 18.
 - Added real integration regression coverage for grant/revoke ordering, rollback on blocked audit, one-shot approval concurrency/reuse, authorize-vs-revoke, transactional worker lifecycle and completion replay.
 - Code acceptance gate: commit `2900a72098a410cb6d56c058c608d347e3ffd038`, Actions run `34480201607`; module tidy, gofmt, vet, `go test -race ./...`, PostgreSQL 15 and PostgreSQL 18 all passed.
-- Release version was bumped to `0.1.0-dev.11`; final release-commit Actions result should be recorded here once available.
+- Versioned acceptance: commit `d64e0ce2f4ff40377b37f71a05755cfa7cea7410`, Actions run `34480805323`; module tidy, gofmt, vet, `go test -race ./...`, PostgreSQL 15 and PostgreSQL 18 all passed.
 
 ## Current phase
 
