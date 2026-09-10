@@ -14,7 +14,7 @@ BEGIN
 
     SELECT version INTO v_version
     FROM sentinel.schema_version WHERE id = 1;
-    IF v_version <> 1 THEN
+    IF v_version <> 2 THEN
         RAISE EXCEPTION 'unexpected schema version: %', v_version;
     END IF;
 
@@ -129,6 +129,20 @@ BEGIN
     END;
 END
 $request_unique$;
+
+-- A consumed-by-job binding is valid only for an allow-once consumption.
+DO $approval_consumption_binding$
+BEGIN
+    BEGIN
+        UPDATE sentinel.approvals
+        SET consumed_by_job_id = 'job-ci-00000001'
+        WHERE id = 'approval-ci-0001';
+        RAISE EXCEPTION 'job binding on pending approval was accepted';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
+END
+$approval_consumption_binding$;
 
 -- Claim material is present only in claimed/running states.
 DO $claim_state_constraint$
