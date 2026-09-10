@@ -77,7 +77,7 @@ func TestIntegrationTransactionalExecutionLifecycle(t *testing.T) {
 	}
 
 	completed, err := repo.ExecutionOperations().Complete(ctx, job.ID, claim.ClaimToken, "worker-ci", executionjob.Result{
-		Success: true,
+		Success:  true,
 		ExitCode: 0,
 	})
 	if err != nil {
@@ -87,7 +87,7 @@ func TestIntegrationTransactionalExecutionLifecycle(t *testing.T) {
 		t.Fatalf("unexpected transactional completion: %+v", completed)
 	}
 	if _, err := repo.ExecutionOperations().Complete(ctx, job.ID, claim.ClaimToken, "worker-ci", executionjob.Result{
-		Success: true,
+		Success:  true,
 		ExitCode: 0,
 	}); !errors.Is(err, executionjob.ErrInvalidClaim) {
 		t.Fatalf("completion replay err=%v, want invalid claim", err)
