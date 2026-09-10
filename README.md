@@ -13,8 +13,8 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 - Arbitrary-code, privilege-launcher and remote-exec classes require `shell=true` and one-shot operator approval.
 - Reusable session approval is forbidden for powerful execution classes because identical argv can still reference mutable scripts, remote state or other changing inputs.
 - High-impact administrator mutations are semantically classified while known read-only inspection paths remain autonomous.
-- Control Plane, AI Gateway, Execution Worker, SSH Signer, target wrapper, emergency authority state, and worker network boundary are independent security layers.
-- Execution uses immutable one-shot jobs rather than a separable `authorize now / execute later` flow.
+- Control Plane, AI Gateway, Execution Worker, SSH Signer, target wrapper, emergency authority state, PostgreSQL authority state, and worker network boundary are independent security layers.
+- Execution uses immutable one-shot jobs rather than a separable authorize-now/execute-later flow.
 - A claimed job requires an authoritative pre-execution start gate so grant revocation can still stop it before executor invocation.
 - SSH credentials are short-lived OpenSSH user certificates issued by an isolated CA service only for an already-running, still-authorized job.
 - Before signing, the Control Plane reclassifies immutable argv under current policy and re-authenticates capability scope; stale queued policy fails closed.
@@ -23,46 +23,46 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 - SSH destinations are resolved only from operator-owned logical target inventory; target endpoints are global-unicast literal IP:port values with exact pinned host keys.
 - Worker runtime egress is externally restricted to the Control Plane HTTPS endpoint plus registered target SSH endpoints; the worker cannot widen this boundary itself.
 - Real SSH execution uses exact pinned host keys, job-expiry deadlines and bounded output accounting.
-- Remote execution uses a deterministic job-bound envelope and direct argv execution; Sentinel does not reconstruct agent commands through `/bin/sh -c`.
+- Remote execution uses a deterministic job-bound envelope and direct argv execution; Sentinel does not reconstruct agent commands through a shell.
 - Target-side replay state enforces at-most-once execution of a job even while its short-lived certificate remains valid.
 - Global `REVOKE ALL` advances a monotonic security epoch, permanently invalidating every older grant even after access is re-enabled.
 - Active workers continuously revalidate execution authority; explicit revocation or loss of the Control Plane cancels the executor context and SSH transport fail-closed.
+- Production mutable security state is PostgreSQL-backed and security-sensitive state transitions are coupled with audit in the same transaction.
 - Append-oriented, tamper-evident audit trail with scoped history reads.
 
 ## Status
 
-`0.1.0-dev.10` release candidate — the existing SSH execution, policy, and external worker-egress boundaries now include global revoke-all semantics and active execution termination.
+`0.1.0-dev.11` — PostgreSQL transactional persistence milestone.
 
-The worker path is now:
+The Control Plane now requires an explicit persistence backend:
 
 ```text
-claim -> start -> ephemeral Ed25519 key -> short-lived certificate
-      -> authority check -> pinned-key SSH -> periodic authority lease
-      -> forced wrapper -> direct argv execution -> complete
+SENTINEL_PERSISTENCE_BACKEND=file      # development compatibility mode
+SENTINEL_PERSISTENCE_BACKEND=postgres  # production candidate
 ```
 
-The Control Plane resolves logical targets through a protected server-side SSH registry. Target endpoints must be global-unicast literal IPs with explicit ports and exact pinned host keys. The agent never supplies the SSH address, Unix account or host identity accepted by the worker.
+For PostgreSQL, set `SENTINEL_POSTGRES_DSN`. PostgreSQL is authoritative for mutable grants, approvals, execution jobs, emergency authority state, audit/history and Trust-2 agent notes. Trust-0 context, SSH target inventory, signer CA material/policy and external PVE worker-egress policy remain separate operator-owned boundaries.
 
-Powerful execution classes such as shells/interpreters, privilege launchers, remote pivots, mutable container workload execution/start/build, namespace execution and guest/jail exec paths require both `exec=true` and `shell=true`. They are `allow_once` only.
+Schema version **2** adds a durable `allow_once` approval-to-job binding. Grant issue/revoke, approval request/decision, staged authorization, one-shot approval consumption, worker claim/start/complete, emergency transitions and their required audit events use transactional semantic operations. Concurrent reuse of a consumed one-shot approval is prevented by binding it to exactly one execution job.
 
-Known administrator inspection paths such as service status, route/firewall inspection, package queries, ZFS/RAID status and PVE status/API reads remain ordinary `exec`; high-impact mutation forms require scoped approval.
+PostgreSQL startup is fail-closed: backend selection is explicit; DSN, connection, schema version and runtime role are validated; production requires verified TLS; and PostgreSQL failure never falls back to file authority state. Fresh PostgreSQL authority starts disabled.
 
-`dev.9` added a deny-by-default external PVE worker egress boundary. `dev.10` adds the emergency authority layer:
+The PostgreSQL runtime role does not own the schema and receives no schema `CREATE`, table `DELETE`, superuser, role-administration, replication or bypass-RLS authority. Gateway, Worker and Signer receive no PostgreSQL credentials.
 
-- every grant carries the current monotonic `security_epoch`;
-- `REVOKE ALL` increments that epoch and disables global AI access;
-- old capabilities remain permanently stale after a later `Enable`;
-- staged/pending/claimed jobs are canceled and claim secrets invalidated;
-- new worker claims are suppressed while disabled;
-- existing `start` and SSH-certificate gates automatically reject stale-epoch grants;
-- a worker must pass an authority check before executor invocation and then periodically while the SSH execution is active;
-- authority denial, timeout, broken mTLS/control connectivity, global revoke, individual grant revoke, grant expiry, or job expiry terminates the worker execution context fail-closed.
+CI exercises the complete migration chain and integration suite against PostgreSQL 15 and 18 in addition to module tidy, `gofmt`, `go vet` and `go test -race ./...`. Coverage includes issue/revoke serialization, audit rollback, one-shot approval concurrency, authorization versus revoke ordering, transaction rollback when audit cannot commit, and transactional worker lifecycle/replay handling.
 
-The default active-authority polling interval is 250 ms and is configurable with `SENTINEL_WORKER_AUTHORITY_POLL_MS`.
+The worker path remains:
 
-Active worker termination closes Sentinel's worker-side SSH transport but cannot promise that every already-detached/daemonized process on every target OS is killed or that completed side effects are reversed. Lower target privileges, short credential/job lifetimes, one-shot replay state and network containment remain required.
+```text
+submit -> staged authorization -> pending -> claim -> start
+       -> ephemeral Ed25519 key -> short-lived certificate
+       -> authority check -> pinned-key SSH -> periodic authority lease
+       -> forced wrapper -> direct argv execution -> complete
+```
 
-`dev.10` is still **not a production release**. File-backed bootstrap persistence must move to transactional production state, and the entire stack — including PVE egress enforcement and emergency termination — must still be exercised on disposable/constrained infrastructure before the first WIP merge.
+Powerful execution classes such as shells/interpreters, privilege launchers, remote pivots, mutable container workload execution/start/build, namespace execution and guest/jail exec paths require both `exec=true` and `shell=true`. They remain `allow_once` only.
+
+`dev.11` is still **not a production release**. The first constrained real-infrastructure acceptance — including PVE worker-egress enforcement, non-destructive SSH execution, negative packet-level checks and active revoke — is still required before the first WIP merge to `main`.
 
 ## Documentation
 
@@ -74,6 +74,7 @@ Active worker termination closes Sentinel's worker-side SSH transport but cannot
 - `docs/OPERATIONAL_RISK.md` — semantic administrator mutation/read-only routing
 - `docs/WORKER_EGRESS.md` — generated external worker egress policy, PVE activation/drift checks and real acceptance criteria
 - `docs/EMERGENCY_CONTROLS.md` — security epoch, revoke-all, re-enable and active worker termination semantics
+- `docs/POSTGRESQL_PERSISTENCE.md` — PostgreSQL schema, transactional invariants, roles, migration/cutover and recovery rules
 - `docs/SSH_CA.md` — isolated SSH signer and certificate constraints
 - `docs/SSH_EXECUTION.md` — real worker SSH transport, target registry, wrapper and replay boundary
 - `HANDOFF.md` — development state, decisions and operator-mandated workflow rules
