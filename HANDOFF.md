@@ -140,7 +140,8 @@ No runtime feature/version bump was made after `0.1.0-dev.11`; this checkpoint i
 - Added `docs/INFRASTRUCTURE_ACCEPTANCE.md` with the complete constrained PVE acceptance procedure.
 - Added `docs/INFRASTRUCTURE_ACCEPTANCE_REMOTE_POSTGRES.md` for the selected deployment topology using an existing remote PostgreSQL service rather than a dedicated DB guest.
 - Selected acceptance topology is five separate disposable/constrained guests: `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer`, `sentinel-target-test`; PostgreSQL remains an existing operator-managed external service.
-- The five acceptance VMs have now been provisioned on PVE node `ai-server`; VM creation/layout is complete. Runtime components and security credentials are not deployed yet.
+- The five acceptance VMs are provisioned on PVE node `ai-server` on VLAN 1520 / `10.169.2.0/24`: `1310 sentinel-control = 10.169.2.210`, `1320 sentinel-gateway = 10.169.2.211`, `1330 sentinel-worker = 10.169.2.212`, `1340 sentinel-signer = 10.169.2.213`, `1350 sentinel-target-test = 10.169.2.214`. Worker NIC has PVE firewall enabled for the later deny-by-default egress policy.
+- VM provisioning was recreated from template `1399` with cloud-init user/key/network configuration applied before boot.
 - Gateway remains non-public until acceptance is complete.
 - Runbooks cover separate TLS trust domains, PostgreSQL role/schema setup, isolated SSH CA generation, target sshd/forced wrapper/replay state, component environments/systemd shape, PVE Worker deny-by-default egress, positive/negative packet tests, harmless execution, one-shot approval non-reuse, individual/global active revoke and PostgreSQL restart/loss behavior.
 - Synchronized current architecture/API/emergency/SSH-execution/Worker-egress docs with the dev.11 PostgreSQL and active-revoke state.
@@ -169,4 +170,4 @@ Do **not** merge to `main` yet. The operator merge rule requires the constrained
 
 ## Deployment state
 
-Five acceptance VMs are provisioned on PVE node `ai-server`. Sentinel binaries, trust material and PostgreSQL schema are not deployed/configured yet. No production trust should be placed in the current branch. No merge to `main` yet.
+Five acceptance VMs are provisioned on PVE node `ai-server` with their final VMIDs and VLAN 1520 addresses. Sentinel binaries, trust material and PostgreSQL schema are not deployed/configured yet. No production trust should be placed in the current branch. No merge to `main` yet.
