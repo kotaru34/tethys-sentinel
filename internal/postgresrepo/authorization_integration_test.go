@@ -20,13 +20,13 @@ func TestIntegrationAllowOnceBindsToExactlyOneConcurrentJob(t *testing.T) {
 
 	now := time.Now().UTC()
 	grant, _, err := repo.Grants().Issue(ctx, domain.Grant{
-		ID: "grant-pg-allow-once",
-		Agent: "agent-pg-allow-once",
-		Purpose: "allow-once concurrency regression",
-		Targets: []string{"dns01"},
+		ID:          "grant-pg-allow-once",
+		Agent:       "agent-pg-allow-once",
+		Purpose:     "allow-once concurrency regression",
+		Targets:     []string{"dns01"},
 		Permissions: domain.Permissions{Exec: true},
-		IssuedAt: now,
-		ExpiresAt: now.Add(time.Hour),
+		IssuedAt:    now,
+		ExpiresAt:   now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,14 +38,14 @@ func TestIntegrationAllowOnceBindsToExactlyOneConcurrentJob(t *testing.T) {
 		t.Fatalf("test command risk=%+v, want approval_required", riskResult)
 	}
 	approvalItem, created, err := repo.ApprovalOperations().Request(ctx, approval.Request{
-		GrantID: grant.ID,
-		Agent: grant.Agent,
-		Target: "dns01",
-		Argv: append([]string(nil), argv...),
-		Category: riskResult.Category,
-		RiskLevel: string(riskResult.Level),
-		ScopeKey: riskResult.ScopeKey,
-		RiskReason: riskResult.Reason,
+		GrantID:     grant.ID,
+		Agent:       grant.Agent,
+		Target:      "dns01",
+		Argv:        append([]string(nil), argv...),
+		Category:    riskResult.Category,
+		RiskLevel:   string(riskResult.Level),
+		ScopeKey:    riskResult.ScopeKey,
+		RiskReason:  riskResult.Reason,
 		AgentReason: "integration allow-once",
 	}, "request-pg-approval-once")
 	if err != nil {
@@ -65,15 +65,15 @@ func TestIntegrationAllowOnceBindsToExactlyOneConcurrentJob(t *testing.T) {
 	jobs := make([]executionjob.Job, 0, 2)
 	for i, requestID := range []string{"request-pg-once-a", "request-pg-once-b"} {
 		job, created, err := repo.Jobs().Enqueue(ctx, executionjob.EnqueueInput{
-			RequestID: requestID,
-			GrantID: grant.ID,
-			Agent: grant.Agent,
-			Target: "dns01",
-			Argv: append([]string(nil), argv...),
-			ApprovalID: approvalItem.ID,
+			RequestID:    requestID,
+			GrantID:      grant.ID,
+			Agent:        grant.Agent,
+			Target:       "dns01",
+			Argv:         append([]string(nil), argv...),
+			ApprovalID:   approvalItem.ID,
 			RiskCategory: riskResult.Category,
-			ScopeKey: riskResult.ScopeKey,
-			ExpiresAt: time.Now().UTC().Add(time.Minute),
+			ScopeKey:     riskResult.ScopeKey,
+			ExpiresAt:    time.Now().UTC().Add(time.Minute),
 		})
 		if err != nil {
 			t.Fatalf("enqueue job %d: %v", i, err)
