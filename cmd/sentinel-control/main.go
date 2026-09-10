@@ -54,11 +54,13 @@ func main() {
 	}
 	controlInternal := api.InternalHandler()
 	executionInternal := api.ExecutionHandler(persistence.executionOps)
+	commandInternal := api.CommandHandler(persistence.approvalOps, persistence.authorizer)
 
 	internalMux := http.NewServeMux()
 	internalMux.Handle("/internal/v1/context", resources)
 	internalMux.Handle("/internal/v1/history", resources)
 	internalMux.Handle("/internal/v1/notes/", resources)
+	internalMux.Handle("POST /internal/v1/commands/submit", commandInternal)
 	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/ssh-certificate", credentials)
 	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/authority", emergencyAPI.InternalHandler())
 	internalMux.Handle("POST /internal/v1/execution/jobs/claim", emergencyAPI.GuardWorkerEnabled(executionInternal))
