@@ -11,6 +11,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
+	"github.com/kotaru34/tethys-sentinel/internal/controlops"
 	"github.com/kotaru34/tethys-sentinel/internal/credentialapi"
 	"github.com/kotaru34/tethys-sentinel/internal/emergency"
 	"github.com/kotaru34/tethys-sentinel/internal/emergencyapi"
@@ -28,6 +29,7 @@ type jobPersistence interface {
 
 type persistenceBundle struct {
 	caps      *capability.Service
+	grants    controlops.GrantLifecycle
 	approvals controlapi.ApprovalStore
 	audit     resourceapi.AuditStore
 	jobs      jobPersistence
@@ -84,9 +86,14 @@ func openFilePersistence() (*persistenceBundle, error) {
 	}
 	caps := capability.NewServiceWithEmergency(grantStore, emergencyStore)
 	return &persistenceBundle{
-		caps: caps, approvals: approvalStore, audit: auditLog, jobs: jobStore, notes: noteStore,
+		caps: caps,
+		grants: controlops.NewLegacyGrantLifecycle(caps, jobStore, auditLog),
+		approvals: approvalStore,
+		audit: auditLog,
+		jobs: jobStore,
+		notes: noteStore,
 		emergency: emergencyapi.NewLegacyController(emergencyStore, jobStore, auditLog),
-		close:     func() {},
+		close: func() {},
 	}, nil
 }
 
@@ -104,8 +111,13 @@ func openPostgresPersistence(ctx context.Context) (*persistenceBundle, error) {
 	}
 	caps := capability.NewServiceWithBackend(repo.Capabilities())
 	return &persistenceBundle{
-		caps: caps, approvals: repo.Approvals(), audit: repo.Audit(), jobs: repo.Jobs(), notes: repo.Notes(),
+		caps: caps,
+		grants: repo.Grants(),
+		approvals: repo.Approvals(),
+		audit: repo.Audit(),
+		jobs: repo.Jobs(),
+		notes: repo.Notes(),
 		emergency: repo.Emergency(),
-		close:     repo.Close,
+		close: repo.Close,
 	}, nil
 }
