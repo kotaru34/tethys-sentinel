@@ -68,10 +68,12 @@ func main() {
 		log.Fatal("admin API must bind a loopback address in this development milestone")
 	}
 	grantAdmin := api.GrantHandler(persistence.grants)
+	approvalAdmin := api.ApprovalHandler(persistence.approvalOps)
 	adminMux := http.NewServeMux()
 	adminMux.Handle("/admin/v1/emergency/", emergencyAPI.AdminHandler())
 	adminMux.Handle("/admin/v1/grants", grantAdmin)
 	adminMux.Handle("/admin/v1/grants/", grantAdmin)
+	adminMux.Handle("/admin/v1/approvals/", approvalAdmin)
 	adminMux.Handle("/", api.AdminHandler())
 	adminServer := hardenedServer(adminAddr, adminMux)
 
