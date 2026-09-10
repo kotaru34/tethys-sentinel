@@ -28,15 +28,16 @@ type jobPersistence interface {
 }
 
 type persistenceBundle struct {
-	caps        *capability.Service
-	grants      controlops.GrantLifecycle
-	approvalOps controlops.ApprovalLifecycle
-	approvals   controlapi.ApprovalStore
-	audit       resourceapi.AuditStore
-	jobs        jobPersistence
-	notes       resourceapi.NoteStore
-	emergency   emergencyapi.Controller
-	close       func()
+	caps         *capability.Service
+	grants       controlops.GrantLifecycle
+	approvalOps  controlops.ApprovalLifecycle
+	executionOps controlops.ExecutionLifecycle
+	approvals    controlapi.ApprovalStore
+	audit        resourceapi.AuditStore
+	jobs         jobPersistence
+	notes        resourceapi.NoteStore
+	emergency    emergencyapi.Controller
+	close        func()
 }
 
 func openPersistence(ctx context.Context) (*persistenceBundle, error) {
@@ -87,15 +88,16 @@ func openFilePersistence() (*persistenceBundle, error) {
 	}
 	caps := capability.NewServiceWithEmergency(grantStore, emergencyStore)
 	return &persistenceBundle{
-		caps:        caps,
-		grants:      controlops.NewLegacyGrantLifecycle(caps, jobStore, auditLog),
-		approvalOps: controlops.NewLegacyApprovalLifecycle(approvalStore, auditLog),
-		approvals:   approvalStore,
-		audit:       auditLog,
-		jobs:        jobStore,
-		notes:       noteStore,
-		emergency:   emergencyapi.NewLegacyController(emergencyStore, jobStore, auditLog),
-		close:       func() {},
+		caps:         caps,
+		grants:       controlops.NewLegacyGrantLifecycle(caps, jobStore, auditLog),
+		approvalOps:  controlops.NewLegacyApprovalLifecycle(approvalStore, auditLog),
+		executionOps: controlops.NewLegacyExecutionLifecycle(caps, jobStore, auditLog),
+		approvals:    approvalStore,
+		audit:        auditLog,
+		jobs:         jobStore,
+		notes:        noteStore,
+		emergency:    emergencyapi.NewLegacyController(emergencyStore, jobStore, auditLog),
+		close:        func() {},
 	}, nil
 }
 
@@ -113,14 +115,15 @@ func openPostgresPersistence(ctx context.Context) (*persistenceBundle, error) {
 	}
 	caps := capability.NewServiceWithBackend(repo.Capabilities())
 	return &persistenceBundle{
-		caps:        caps,
-		grants:      repo.Grants(),
-		approvalOps: repo.ApprovalOperations(),
-		approvals:   repo.Approvals(),
-		audit:       repo.Audit(),
-		jobs:        repo.Jobs(),
-		notes:       repo.Notes(),
-		emergency:   repo.Emergency(),
-		close:       repo.Close,
+		caps:         caps,
+		grants:       repo.Grants(),
+		approvalOps:  repo.ApprovalOperations(),
+		executionOps: repo.ExecutionOperations(),
+		approvals:    repo.Approvals(),
+		audit:        repo.Audit(),
+		jobs:         repo.Jobs(),
+		notes:        repo.Notes(),
+		emergency:    repo.Emergency(),
+		close:        repo.Close,
 	}, nil
 }
