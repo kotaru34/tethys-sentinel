@@ -81,88 +81,88 @@ Tethys Sentinel is a security-first access broker between AI agents and infrastr
 - A consumed `allow_once` approval can only be retried for the same bound job and can never authorize a second job in the same scope.
 - Worker claim/start/complete are transactional semantic operations; start revalidates authority/grant under lock and completion records factual outcome even if authority was revoked after execution began.
 - Audit chain ordering is serialized through `audit_head`; transaction rollback cannot leave state changed without its required audit event.
+- First constrained infrastructure acceptance uses separate guests for PostgreSQL, Control, Gateway, Worker, Signer and disposable target. Gateway stays non-public during acceptance.
+- First acceptance uses PostgreSQL 18 because it is directly exercised by CI; authority must remain disabled until TLS, target hardening and PVE Worker packet-level egress checks pass.
 - When MCP/agent tools are added, keep the surface narrow and purpose-built for autonomous Qwen-class models rather than exposing backend/admin operations wholesale.
 
 ## Version history
 
 ### Through `0.1.0-dev.2` — capability, approval and audit core
-
 - Opaque capability lifecycle, separated Control Plane/Gateway, protected transports, narrow approvals, Trust-0 bootstrap and hash-chained audit.
 
 ### `0.1.0-dev.3` — authoritative context and continuity
-
 - Strict Control-Plane-owned Trust-0 context with scoped inventory/runbooks and scoped non-authoritative history/notes.
 
 ### `0.1.0-dev.4` — execution-job security protocol
-
-- Atomic submit, immutable HMAC-protected jobs, request idempotency, staged/claim/start/terminal lifecycle and crash/revocation handling.
-- Acceptance: commit `7d263af6bf6aa9699e2a770efc023e585ddbeb56`, Actions run `34389191377`.
+- Immutable/idempotent execution jobs with staged/claim/start/terminal lifecycle and revocation handling.
+- Acceptance: `7d263af6bf6aa9699e2a770efc023e585ddbeb56`, Actions `34389191377`.
 
 ### `0.1.0-dev.5` — isolated SSH CA/Signer
-
-- Standalone constrained Ed25519 signer, dedicated mTLS/token boundary, signer-owned certificate shape and ephemeral per-job worker identity.
-- Acceptance: commit `750d5d8d0ba899ff2fe45e3b39c70a8969b6a469`, Actions run `34392961793`.
+- Standalone constrained Ed25519 signer, dedicated mTLS/token boundary and ephemeral per-job Worker identity.
+- Acceptance: `750d5d8d0ba899ff2fe45e3b39c70a8969b6a469`, Actions `34392961793`.
 
 ### `0.1.0-dev.6` — real SSH execution boundary
-
-- Protected logical-target registry, pinned-key real SSH worker, deterministic direct-argv wrapper, root-only replay consume helper and bounded execution/output.
-- Versioned acceptance: commit `9eaa16febd801b4082221e45e7b929969e91b72c`, run `34397117715`.
+- Logical-target registry, pinned-key real SSH Worker, direct-argv forced wrapper and root-only replay consume helper.
+- Acceptance: `9eaa16febd801b4082221e45e7b929969e91b72c`, Actions `34397117715`.
 
 ### `0.1.0-dev.7` — powerful execution policy
-
-- Conservative arbitrary-code/privilege/remote-exec routing, independent `exec`/`shell`, one-shot powerful approvals, complete-argv scope, Gateway prefilter and current-policy certificate gate.
-- Versioned acceptance: commit `58318f7a1f0693941dce4d791ea97fac8e3d3519`, Actions run `34401911162`.
+- Arbitrary-code/privilege/remote-exec routing, independent `exec`/`shell`, one-shot powerful approvals and current-policy certificate gate.
+- Acceptance: `58318f7a1f0693941dce4d791ea97fac8e3d3519`, Actions `34401911162`.
 
 ### `0.1.0-dev.8` — semantic operational-risk policy
+- Semantic administrator mutation/read-only routing across intended Linux/BSD/PVE operations.
+- Acceptance: `4fcde4fa771f5008cbd696e4889ca51b564a9507`, Actions `34406118118`.
 
-- Semantic service/network/package/storage/system/runtime risk routing while preserving reliably read-only inspection paths; conservative escape coverage retained.
-- Versioned acceptance: commit `4fcde4fa771f5008cbd696e4889ca51b564a9507`, Actions run `34406118118`.
-
-### `0.1.0-dev.9` — external worker egress enforcement
-
-- Deterministic deny-by-default PVE worker-egress policy, installed-policy drift/activation verification, literal-IP target/control transport and packet-level acceptance criteria.
-- Versioned acceptance: commit `6a14729036b3f8cafa8f79a1855b7f54ddc2b246`, Actions run `34407900220`.
+### `0.1.0-dev.9` — external Worker egress enforcement
+- Deterministic deny-by-default PVE Worker egress rendering/verification plus packet-level acceptance criteria.
+- Acceptance: `6a14729036b3f8cafa8f79a1855b7f54ddc2b246`, Actions `34407900220`.
 
 ### `0.1.0-dev.10` — global revoke-all and active execution termination
-
-- Monotonic emergency `security_epoch`, persistent revoke-all/re-enable controls, worker authority endpoint and fail-closed continuous active-execution authority checks.
-- Versioned acceptance: commit `162d1f3c038ae905a4e27a419d9d4a61789466ae`, Actions run `34411432011`.
+- Monotonic security epoch, persistent revoke-all/re-enable, Worker authority lease and fail-closed active transport cancellation.
+- Acceptance: `162d1f3c038ae905a4e27a419d9d4a61789466ae`, Actions `34411432011`.
 
 ### `0.1.0-dev.11` — PostgreSQL transactional persistence
+- PostgreSQL schema version 2 for mutable grants/targets, approvals, execution jobs/claim hashes, emergency authority, canonical audit/history and Trust-2 notes.
+- Explicit `file|postgres` backend selection; PostgreSQL startup validates DSN/TLS/schema/runtime role and never silently falls back.
+- Transactional semantic lifecycle operations for grant issue/revoke, approval request/decision, staged authorization and Worker claim/start/complete.
+- Durable `allow_once -> consumed_by_job_id` binding makes one-shot consumption + job publication + authorization audit atomic and concurrency-safe.
+- Ordered authority/grant locking serializes authorization/start with revoke.
+- CI applies full migration chain and runtime privilege assertions to PostgreSQL 15 and 18.
+- Code acceptance: `2900a72098a410cb6d56c058c608d347e3ffd038`, Actions `34480201607`.
+- Versioned acceptance: `d64e0ce2f4ff40377b37f71a05755cfa7cea7410`, Actions `34480805323`.
+- Final metadata HEAD validation: `acc4b41e755f124a20fc1029b73a2ea122e95346`, Actions `34481032244`; all Go and PostgreSQL 15/18 jobs passed.
 
-- Added reviewed PostgreSQL role/bootstrap/migration system and schema version 2.
-- Mutable grants/targets, approvals, execution jobs/claim hashes, emergency authority, canonical hash-chained audit/history and Trust-2 notes are PostgreSQL-backed.
-- Added explicit `SENTINEL_PERSISTENCE_BACKEND=file|postgres`; missing/invalid PostgreSQL configuration, connectivity, schema or runtime-role checks fail startup with no file fallback.
-- PostgreSQL production connections require verified TLS; insecure PostgreSQL is development-only and explicit.
-- Added narrow semantic lifecycle ports for grant issue/revoke, approval request/decision, staged authorization and worker claim/start/complete; production routes use these PostgreSQL transactional implementations.
-- Individual/global revoke and enable couple security-state changes, job cleanup and required audit records in single transactions.
-- Added durable `allow_once -> consumed_by_job_id` binding. One-shot consumption, job publication and authorization audit commit together, preventing concurrent/replayed reuse for a second job.
-- Worker start serializes authority/grant checks with revoke; completion is transactional and replay-resistant while still permitting factual result recording after later revocation.
-- Audit uses the existing canonical Go hash format and serializes append ordering through `audit_head`.
-- CI applies every migration in order and validates runtime privileges on PostgreSQL 15 and 18.
-- Added real integration regression coverage for grant/revoke ordering, rollback on blocked audit, one-shot approval concurrency/reuse, authorize-vs-revoke, transactional worker lifecycle and completion replay.
-- Code acceptance gate: commit `2900a72098a410cb6d56c058c608d347e3ffd038`, Actions run `34480201607`; module tidy, gofmt, vet, `go test -race ./...`, PostgreSQL 15 and PostgreSQL 18 all passed.
-- Versioned acceptance: commit `d64e0ce2f4ff40377b37f71a05755cfa7cea7410`, Actions run `34480805323`; module tidy, gofmt, vet, `go test -race ./...`, PostgreSQL 15 and PostgreSQL 18 all passed.
+## Infrastructure acceptance preparation checkpoint
+
+No runtime feature/version bump was made after `0.1.0-dev.11`; this checkpoint is deployment documentation and state handoff only.
+
+- Added `docs/INFRASTRUCTURE_ACCEPTANCE.md` with the first complete constrained PVE acceptance procedure (`52c1dad81345b101b5a535b54dd5909d694ee9db`).
+- Acceptance topology is now fixed for the first run: `sentinel-db`, `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer`, `sentinel-target-test` as separate disposable/constrained guests.
+- PostgreSQL 18 is the first acceptance database major; Gateway remains non-public until acceptance is complete.
+- Runbook covers separate TLS trust domains, PostgreSQL role/schema setup, isolated SSH CA generation, target sshd/forced wrapper/replay state, component environments/systemd shape, PVE Worker deny-by-default egress, positive/negative packet tests, harmless execution, one-shot approval non-reuse, individual/global active revoke and PostgreSQL restart/loss behavior.
+- Synchronized current architecture/API/emergency/SSH-execution/Worker-egress docs with the dev.11 PostgreSQL and active-revoke state; README links the acceptance runbook.
 
 ## Current phase
 
-`0.1.0-dev.11` is the latest completed development release. The PostgreSQL persistence milestone is code/CI complete but has **not** been deployed to intended infrastructure.
+`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete; the project is now at the **first real constrained infrastructure acceptance** boundary.
 
-File persistence remains available only as an explicit development compatibility backend. PostgreSQL is the production candidate and starts fail-closed; it must not be described as production-proven until infrastructure acceptance is complete.
+No production trust should be placed in it yet. File persistence remains explicit development compatibility only. PostgreSQL is the production candidate.
 
-Do **not** merge to `main` yet. The operator merge rule requires a functioning constrained real-infrastructure execution test first.
+Do **not** merge to `main` yet. The operator merge rule requires the constrained real-infrastructure execution and negative boundary tests to pass first.
 
-## Next implementation steps
+## Next implementation/deployment steps
 
-1. Build the disposable/constrained deployment: Control Plane with PostgreSQL, Gateway, Worker, isolated SSH Signer/CA, and a disposable target profile.
-2. Apply and verify the generated external PVE worker-egress policy on the selected worker VM interface.
-3. Run the first real non-destructive end-to-end command path through capability -> authorization -> job -> claim/start -> SSH certificate -> pinned-key SSH -> target wrapper -> completion.
-4. Run negative packet-level tests from the worker proving unrelated LAN, Internet, DNS and unlisted target ports are blocked.
-5. Exercise individual revoke and `REVOKE ALL` during a live bounded execution and verify worker transport cancellation plus audit/state behavior.
-6. Validate PostgreSQL restart/persistence behavior while authority starts/returns fail-closed as designed.
-7. After successful constrained infrastructure acceptance, perform the first WIP merge to `main` and review README/docs in the merged state.
-8. Only then move to the operator UI/backend presentation layer; security flows and data model should stay authoritative.
-9. When the MCP interface is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; do not expose general backend/admin APIs.
+1. Provision the six acceptance guests and assign unused static IPs/VMIDs according to `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
+2. Build the accepted `0.1.0-dev.11` commit and deploy only the required binaries/credentials to each guest.
+3. Configure PostgreSQL 18 schema v2 and verify the runtime role over verified TLS while authority remains disabled.
+4. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
+5. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
+6. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
+7. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
+8. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
+9. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
+10. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
+11. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
 
 ## Deployment state
 
