@@ -1,396 +1,245 @@
 # PostgreSQL persistence boundary
 
-This document defines the production persistence target for the milestone after `0.1.0-dev.10`.
+This document defines the implemented PostgreSQL persistence boundary for `0.1.0-dev.11`.
 
-The goal is not to reproduce the development JSON/JSONL stores in SQL. PostgreSQL becomes the authoritative **transaction engine** for mutable security state so operations that currently cross several file stores can be committed or rejected as one unit.
+PostgreSQL is not a SQL mirror of the development JSON/JSONL stores. It is the authoritative **transaction engine** for mutable security state so security-sensitive transitions and their required audit records either commit together or do not commit at all.
 
 ## Scope
 
-Move these mutable runtime records to PostgreSQL:
+PostgreSQL owns mutable runtime records for:
 
-- grants and token hashes;
-- grant target/permission/history scope;
-- approval requests and decisions;
-- execution jobs and one-shot claim hashes;
+- grants, token hashes, target/permission/history scope;
+- approval requests, decisions and one-shot consumption binding;
+- execution jobs and one-shot worker claim hashes;
 - global emergency security epoch/state;
-- audit chain/events;
-- agent continuity notes.
+- hash-chained audit events/history;
+- Trust-2 agent continuity notes.
 
-Keep these operator-owned, read-only configuration sources outside the database for this milestone:
+These remain separate operator-owned boundaries:
 
 - authoritative Trust-0 context source;
 - SSH target inventory;
-- signer CA key and signer policy;
+- SSH signer CA key and signer policy;
 - external PVE worker-egress policy.
 
-Those files are configuration/secret boundaries, not mutable runtime state. Moving them into the same mutable database now would increase the blast radius without solving the current durability/transaction problem.
+Gateway, Worker and Signer receive no PostgreSQL credentials.
 
-## Non-negotiable invariants
+## Runtime selection and startup
 
-1. Production mode never silently falls back from PostgreSQL to local files.
-2. Plaintext capability and worker claim tokens are never stored.
-3. Grant issue and global revoke serialize on the same authority-state row.
-4. Re-enable cannot revive an older security epoch.
-5. Global revoke state change, cancellation of non-running jobs, and emergency audit record commit atomically.
-6. `allow_once` consumption and publication of its bound execution job commit atomically.
-7. A request ID is unique per grant and can never be rebound to different command material.
-8. A pending job can be claimed by at most one worker; concurrent workers use row locking with `SKIP LOCKED`.
-9. Claim/start/complete are compare-and-transition operations over exact prior state and claim hash.
-10. Audit append is serialized through an audit-head row so sequence/hash-chain order is deterministic under concurrency.
-11. Database time is authoritative for state-transition timestamps and expiry checks where a transaction depends on ordering.
-12. Gateway, Worker and Signer receive no PostgreSQL credentials.
+Persistence selection is mandatory and explicit:
 
-## Schema layout
-
-Use one PostgreSQL schema, initially `sentinel`, owned by a migration/owner role rather than the runtime Control Plane role.
-
-### `sentinel.authority_state`
-
-Singleton row (`id = 1`):
-
-- `epoch` — monotonic non-negative authority generation;
-- `disabled`;
-- `updated_at`;
-- `reason`.
-
-All grant issuance and emergency transitions lock this row.
-
-PostgreSQL `BIGINT` is sufficient operationally if the implementation explicitly caps the Go `uint64` epoch at `math.MaxInt64`; alternatively a later migration may use `NUMERIC(20,0)`. Epoch exhaustion is fail-closed either way.
-
-### `sentinel.grants`
-
-- `id` text primary key;
-- `token_hash bytea` unique, exactly 32 bytes;
-- `purpose`, `agent`;
-- booleans for `exec`, `shell`, `upload`, `download`, `history_read`, `notes_read`, `notes_write`;
-- booleans for history scope (`current_session`, `previous`, `other_agents`, `include_output`);
-- `security_epoch`;
-- `issued_at`, `expires_at`, `revoked_at`.
-
-Targets are normalized into `sentinel.grant_targets(grant_id, target)` with a composite primary key.
-
-No plaintext token column exists.
-
-### `sentinel.approvals`
-
-- current `approval.Request` fields;
-- argv as `text[]`;
-- status/decision as text with check constraints;
-- created/decided timestamps;
-- decision actor;
-- `session_approval_allowed` is derived policy metadata, not authority by itself.
-
-A partial unique index prevents more than one simultaneous `pending` approval for the same `(grant_id, target, category, scope_key)`.
-
-Reusable approval lookup is indexed by `(grant_id, target, category, scope_key, status, created_at desc)`.
-
-### `sentinel.execution_jobs`
-
-- current immutable job identity/binding fields;
-- argv as `text[]`;
-- command binding SHA-256;
-- approval/risk/scope metadata;
-- lifecycle timestamps and status;
-- `claim_token_hash bytea` only while claimed/running;
-- terminal result fields (`success`, `exit_code`, `output_sha256`, `error_kind`).
-
-Constraints:
-
-- unique `(grant_id, request_id)`;
-- command/output hashes have exact lengths;
-- known lifecycle statuses only;
-- terminal result fields are only meaningful for terminal states;
-- no plaintext claim token.
-
-The file-store HMAC is not copied into PostgreSQL. Database integrity comes from DB ownership/permissions, constraints, transactions, WAL/durability and backups. HMAC does not protect against the trusted runtime role that would also possess its key.
-
-### `sentinel.audit_head`
-
-Singleton row:
-
-- last sequence;
-- last hash.
-
-Every audit append transaction takes `FOR UPDATE` on this row, constructs the next event using the previous hash, inserts the event, then advances the head before commit.
-
-### `sentinel.audit_events`
-
-Preserve the existing event shape:
-
-- sequence unique/primary ordering;
-- ID and timestamp;
-- kind/actor/grant/target/argv;
-- decision/category/scope/approval/reason;
-- metadata JSONB;
-- previous hash;
-- event hash.
-
-The existing Go canonical event hashing format remains the compatibility contract initially. PostgreSQL stores the resulting hashes; it does not invent a second incompatible chain format.
-
-### `sentinel.agent_notes`
-
-Immutable rows containing current note identity/provenance:
-
-- ID/timestamp;
-- grant/agent/target;
-- Trust-2 level;
-- content;
-- content SHA-256.
-
-Notes remain non-authoritative even though they are durably stored.
-
-## Transaction matrix
-
-### Grant issue
-
-One transaction:
-
-1. `SELECT ... FROM authority_state WHERE id=1 FOR UPDATE`;
-2. reject if disabled;
-3. assign current epoch to the grant;
-4. insert grant + targets;
-5. commit;
-6. return the plaintext token only to the caller.
-
-The token is generated before/during the transaction in application memory and only its SHA-256 enters PostgreSQL.
-
-Because revoke-all locks the same singleton row, issue and revoke have a total order. A newly returned grant is therefore either committed before revoke and immediately invalidated by the new epoch, or issued after a later explicit enable in the new epoch; it cannot be committed from a stale snapshot after revoke.
-
-### Capability authentication
-
-A single read joins grant state with `authority_state` and succeeds only when:
-
-- global state is enabled;
-- grant epoch equals current epoch;
-- `revoked_at IS NULL`;
-- database current time is before `expires_at`.
-
-No lock is required for ordinary authentication; any subsequent privileged transition revalidates inside its own transaction/lease gate.
-
-### Individual grant revoke
-
-One transaction:
-
-1. lock/update the grant if not already revoked;
-2. cancel its `staged`/`pending`/`claimed` jobs where applicable;
-3. clear claim hashes on canceled jobs;
-4. append audit event using the same transaction-aware audit writer;
-5. commit.
-
-Running jobs are not falsified as already terminated. Their next active authority check sees the revoked grant and the worker closes its execution context.
-
-### Global `REVOKE ALL`
-
-One transaction:
-
-1. lock `authority_state FOR UPDATE`;
-2. increment epoch and set disabled;
-3. cancel every `staged`/`pending`/`claimed` job and clear claim hashes;
-4. append `emergency.revoke_all` audit event;
-5. commit.
-
-This removes the development file-store state where emergency state, job cleanup and audit can persist independently.
-
-A failed transaction leaves the old database state unchanged, so the operator endpoint must return failure. Production deployment should additionally retain an out-of-band service/network emergency stop for database-unavailable incidents; SQL cannot revoke authority if the authoritative database itself is unreachable. Workers already treat inability to verify authority as fail-closed.
-
-### Emergency enable
-
-One transaction:
-
-1. lock `authority_state`;
-2. require `disabled=true`;
-3. append `emergency.enable_requested`;
-4. set `disabled=false` without decrementing epoch;
-5. append `emergency.enabled`;
-6. commit.
-
-No compensating revoke is needed if all three records are in one PostgreSQL transaction: a commit failure leaves the system disabled.
-
-### Approval request
-
-Insert a pending approval. The partial unique index resolves concurrent duplicate requests for the same narrow scope; the application loads and returns the existing pending row when the unique constraint wins the race.
-
-### Approval decision
-
-Conditional update `WHERE status='pending'`. `allow_session` eligibility remains re-derived from current risk policy before accepting the decision; a persisted boolean is not trusted to broaden policy.
-
-### Allow-once execution publication
-
-The security-critical path must not do `consume approval` and `publish job` in independent transactions.
-
-One transaction locks both rows and performs:
-
-1. validate staged job and immutable binding;
-2. validate bound approval scope/category/target/grant;
-3. require `allow_once + decided`;
-4. set approval `consumed`;
-5. set staged job `pending`;
-6. append authorization audit event;
-7. commit.
-
-Crash before commit consumes nothing and publishes nothing. Crash after commit publishes exactly one already-consumed authorization.
-
-For session approval, publication still validates the exact current approval under the same job transaction but does not consume it.
-
-### Worker claim
-
-One short transaction selects the oldest eligible pending job with:
-
-```sql
-SELECT id
-FROM sentinel.execution_jobs
-WHERE status = 'pending'
-  AND expires_at > clock_timestamp()
-ORDER BY created_at, id
-FOR UPDATE SKIP LOCKED
-LIMIT 1;
+```text
+SENTINEL_PERSISTENCE_BACKEND=file
+SENTINEL_PERSISTENCE_BACKEND=postgres
 ```
 
-The worker claim secret is generated in process memory, SHA-256 is stored, and the selected row changes to `claimed` before commit.
+`file` is the development compatibility backend. PostgreSQL additionally requires:
 
-Expired pending rows may be marked `expired` in bounded cleanup batches; claim does not need a global queue mutex.
+```text
+SENTINEL_POSTGRES_DSN=postgres://...
+```
 
-### Worker start
+Production PostgreSQL connections require TLS with server verification. `SENTINEL_DEV_INSECURE_POSTGRES=1` exists only for development/CI environments.
 
-One transaction locks the exact job and revalidates:
+If PostgreSQL is selected and DSN parsing, connectivity, schema-version validation or runtime-role validation fails, Control Plane exits. It never falls back to file-backed authority.
 
-- status `claimed`;
-- claim hash;
-- job not expired;
-- original grant is active and current-epoch;
-- global authority is enabled.
+Runtime validates the exact supported schema version. `0.1.0-dev.11` requires schema version **2**.
 
-Then it changes only `claimed -> running`, records `started_at`, and commits.
+## Schema and migrations
 
-### Worker authority lease
+Reviewed migrations live under `db/migrations/` and are applied in zero-padded numeric order by the deployment identity, never automatically by the service:
 
-One read transaction/query verifies running job + claim hash + job expiry + active grant + current authority epoch. No state mutation occurs.
+```text
+0001_core.sql
+0002_allow_once_job_binding.sql
+```
 
-A result is only a short lease observation; the worker must continue polling. DB/control connectivity loss remains fail-closed.
+`0001` creates the core mutable schema and initializes global authority fail-closed:
 
-### Worker completion/rejection
+```text
+epoch=0
+disabled=true
+```
 
-Conditional row update with exact job ID, `running`/allowed prior state and claim hash. On terminal transition claim hash is cleared. Replays fail because the prior state no longer matches.
+`0002` adds `approvals.consumed_by_job_id` and advances schema version to 2. That column is a security binding: a consumed `allow_once` approval is durably tied to exactly one execution job, so a second staged job cannot reuse the same one-shot authority.
 
-### Audit append
+Each migration checks the schema version it expects before advancing it. See `db/README.md` for bootstrap order.
 
-Every path that must couple state and audit receives a transaction-scoped audit writer instead of calling a separate auto-commit audit store.
+## Database roles
 
-Standalone informational audit events use their own short transaction but still serialize `audit_head`.
+### `sentinel_owner`
 
-## Isolation and locking
+Owns schema objects and is not used by running services.
 
-Default transaction isolation may remain `READ COMMITTED` if every security-sensitive transition explicitly locks the rows that establish its preconditions.
+### `sentinel_migrator`
 
-Do not globally switch to `SERIALIZABLE` as a substitute for defining lock order; that would add retry complexity without documenting the actual authority dependencies.
+Deployment-only identity permitted to apply reviewed migrations through the owner role path.
 
-Canonical lock order for multi-object transitions:
+### `sentinel_control`
 
-1. `authority_state` when involved;
+Control Plane runtime role. It has only the table DML needed by the application and no schema ownership, schema `CREATE`, table `DELETE`, role administration, database creation, superuser, replication or bypass-RLS authority.
+
+The running service must never receive owner/migrator credentials.
+
+## Core invariants
+
+1. PostgreSQL mode never silently falls back to local files.
+2. Plaintext capability tokens and worker claim tokens are never persisted.
+3. Fresh PostgreSQL authority starts disabled.
+4. Grant issue and global revoke serialize on the same `authority_state` row.
+5. Re-enable never revives a grant from an older security epoch.
+6. Individual grant revoke, non-running job cleanup and its audit record commit atomically.
+7. Global revoke, epoch increment/disable, non-running job cancellation and emergency audit commit atomically.
+8. Approval request/decision and their required audit records commit atomically.
+9. `allow_once` consumption, binding to one job, staged-job publication and authorization audit commit atomically.
+10. A `(grant_id, request_id)` is immutable and cannot be rebound to different command material.
+11. Claim/start/complete are compare-and-transition operations over exact prior state and claim hash.
+12. Concurrent worker claims use row locking with `SKIP LOCKED`.
+13. Worker start revalidates current authority/grant state inside the transaction before changing `claimed -> running`.
+14. Completion can still record the factual result after a grant has been revoked; it does not pretend the already-started execution never happened.
+15. Audit append is serialized by `audit_head`, preserving deterministic sequence/hash-chain order.
+16. Database time is authoritative for transactional expiry/order checks.
+
+## Canonical lock order
+
+Security-sensitive multi-object transactions use this order where the objects are involved:
+
+1. `authority_state`;
 2. grant;
 3. approval;
 4. execution job;
 5. `audit_head` last.
 
-Code must not acquire these in the opposite order in another path. This reduces deadlock risk and makes transaction review tractable.
+Authority and grant locks are acquired explicitly rather than relying on planner ordering across a multi-table `FOR UPDATE/SHARE`. This keeps revoke, authorization and start paths reviewable and avoids avoidable deadlock cycles.
 
-## Database roles
+`READ COMMITTED` remains sufficient because security preconditions are explicitly re-read/locked inside each transition; `SERIALIZABLE` is not used as a substitute for defined lock order.
 
-Deployment creates roles outside ordinary application migrations.
+## Transaction semantics
 
-### `sentinel_owner`
+### Grant issue
 
-- owns schema/tables/functions;
-- `NOLOGIN` where operationally practical;
-- not used by running services.
+One transaction locks `authority_state`, rejects disabled state, stamps the current epoch, writes grant + targets, appends `grant.issued`, and commits. Only the hash of the generated capability token enters PostgreSQL.
 
-### `sentinel_migrator`
+Because revoke-all locks the same authority row, issue and revoke have a total order. A grant cannot commit from a stale pre-revoke epoch snapshot.
 
-- deployment-only login/role allowed to apply reviewed migrations as/for the owner;
-- no service runtime use.
+### Capability authentication
 
-### `sentinel_control`
+Authentication joins the grant with current authority state and succeeds only when global authority is enabled, grant epoch equals current epoch, grant is not revoked, and database time is before grant expiry.
 
-- Control Plane runtime role;
-- connect/use schema and only the DML/sequence privileges required by current tables;
-- no schema ownership, `CREATE`, role administration, database creation, superuser, replication or bypass-RLS privileges.
+Privileged transitions do not trust an earlier authentication snapshot; they revalidate inside their own transaction.
 
-Gateway, Worker and Signer do not receive this credential and do not connect directly to PostgreSQL.
+### Individual grant revoke
 
-A future physically separate audit sink may use insert-only/read roles. Splitting several passwords inside the same Control Plane process does not protect against total Control Plane RCE, so role proliferation is not treated as a substitute for process isolation.
+One transaction locks authority/grant state, marks the grant revoked, cancels its `staged`/`pending`/`claimed` jobs where applicable, clears claim hashes, appends `grant.revoked`, then commits.
 
-## Connection security
+Running jobs are not falsified as already terminated. Worker authority polling observes the revoked grant and closes the active execution context; completion may later record the factual terminal result.
 
-Production DSN requirements:
+### Global revoke and enable
 
-- TLS with server identity verification (`sslmode=verify-full` or equivalent pgx TLS config);
-- credentials from protected secret files/environment injection, never repository config;
-- bounded pool sizes and statement/transaction timeouts;
-- startup health check must fail the service if the configured production database is unavailable.
+`REVOKE ALL` locks `authority_state`, increments the epoch, sets global access disabled, cancels every non-running executable job/claim, appends the emergency audit event, and commits.
 
-The runtime must not auto-create schema or apply migrations.
+Enable requires disabled state, preserves the incremented epoch, writes the enable transition and its audit events in one transaction, and never revives old grants.
 
-## No silent fallback
+If PostgreSQL itself is unavailable, SQL cannot be the emergency stop. Deployment therefore still requires an out-of-band service/network stop for database-unavailable incidents.
 
-Storage backend selection must be explicit.
+### Approval request and decision
 
-Suggested behavior:
+Approval creation/deduplication and `approval.requested` audit are one semantic operation. A partial unique index allows only one simultaneous pending approval for a narrow `(grant, target, category, scope_key)`.
 
-```text
-SENTINEL_STORE_BACKEND=file      # development only
-SENTINEL_STORE_BACKEND=postgres  # production candidate
-```
+Decision is conditional on `pending`, re-derives current policy for reusable-session eligibility, records decision + actor + timestamp, appends `approval.decided`, and commits atomically.
 
-If `postgres` is selected and connection/schema validation fails, Control Plane exits. It must not fall back to stale local JSON authority state.
+Powerful execution classes remain one-shot only; persisted metadata cannot widen current policy.
 
-A later explicit `SENTINEL_ENV=production` mode should reject `file` entirely.
+### Staged authorization and `allow_once`
 
-## Migration from development file state
+Authorization revalidates authority, grant, `permission_exec`, target, agent, immutable command binding and current risk classification before publication.
 
-There is no automatic live import.
+For a risky job it also locks/validates the exact approval. `allow_session` must still be active and scope-matching. `allow_once` must either be unconsumed or already consumed by **that same job**; it cannot authorize a different job.
 
-Safe initial migration policy:
+For first use of `allow_once`, the same transaction:
 
-1. stop Gateway/Worker/Control Plane;
-2. initialize PostgreSQL with global AI access **disabled**;
-3. set the PostgreSQL epoch to a value newer than any imported file epoch;
-4. optionally import audit, notes and terminal historical records for continuity;
-5. do not import active bearer authority as active;
-6. imported grants, if retained for provenance, are marked revoked/stale;
-7. do not import claimed/running jobs as executable work;
-8. validate row counts/hash-chain/history offline;
-9. start Control Plane against PostgreSQL while still disabled;
-10. explicitly enable and issue fresh grants only after validation.
+1. binds `consumed_by_job_id` to the staged job;
+2. marks the approval consumed;
+3. publishes `staged -> pending`;
+4. appends `execution.job_authorized`;
+5. commits.
 
-This intentionally sacrifices old live capabilities rather than risking authority duplication during backend cutover.
+If any step, including audit append, cannot commit, approval consumption and job publication roll back together.
 
-## Backups and recovery
+Invalid/stale authorization fails closed and the staged job is canceled with a rejection audit event where applicable.
 
-PostgreSQL durability does not eliminate the need for recovery rules.
+### Worker claim
 
-- use regular base backups plus WAL/PITR appropriate to the deployment;
-- protect backups as sensitive authority/audit data;
-- restoration to an older point can resurrect an older authority epoch in the database.
+Claim selects the oldest eligible pending job using `FOR UPDATE SKIP LOCKED`, generates a fresh claim secret in process memory, persists only its SHA-256, changes the job to `claimed`, appends `execution.job_claimed`, and commits.
 
-Therefore disaster recovery must include an **epoch bump/revoke-all after restore before any worker/gateway access is permitted**. A restored database must come up behind an operator-controlled disabled/network-isolated state until this is done.
+Concurrent workers cannot claim the same job.
 
-## Testing requirements
+### Worker start
 
-Before PostgreSQL becomes the accepted production backend, automated tests must cover at least:
+Start locks/revalidates authority and grant before the job transition, verifies status, claim hash and expiry, then changes only `claimed -> running`, records start time, appends `execution.job_started`, and commits.
 
-- concurrent grant issue vs revoke-all;
-- concurrent duplicate request IDs;
-- concurrent duplicate approval requests;
-- two workers racing to claim one job;
-- claim token replay;
-- grant revoke racing start;
-- revoke-all racing claim/start;
-- allow-once consume + publication crash/rollback;
-- completion replay;
-- audit-head concurrent appends and chain verification;
-- database disconnect during active worker authority checks;
-- enable transaction rollback;
-- migration startup with wrong schema version;
-- production backend refusing file fallback.
+Individual/global revoke therefore cannot slip between the authoritative grant check and the running transition without acquiring the same ordered locks.
 
-The PostgreSQL integration suite should run against a real PostgreSQL service in CI; SQL semantics are not meaningfully validated by a mock database.
+### Worker completion
+
+Completion verifies the exact running job + claim hash, records terminal status/result, clears claim material, appends `execution.job_completed`, and commits atomically.
+
+Completion deliberately does not require the original grant to remain live: after emergency/revoke cancellation of the active transport, Sentinel still needs to record what actually happened. Replay fails because the prior job state/claim no longer matches.
+
+### Audit
+
+Every state transition that requires an audit record uses the same PostgreSQL transaction and a transaction-scoped audit writer. Standalone informational audit events use their own short transaction.
+
+Audit append locks singleton `audit_head`, derives the next sequence/hash from the canonical Go event format, inserts the event, and advances the head before commit. PostgreSQL therefore preserves the existing event-hash compatibility contract rather than inventing a second chain format.
+
+### Notes/history
+
+Audit history reads verify the chain before returning records. Agent notes are immutable Trust-2 data with provenance/content hash; durable storage never promotes them into Trust-0 authority.
+
+## One-shot secrets
+
+Capability and worker claim plaintext values exist only long enough to return them to the caller that needs them. PostgreSQL stores SHA-256 material only.
+
+Execution jobs retain immutable command-binding hashes. The development file-store HMAC is not duplicated into PostgreSQL; database integrity relies on ownership/privileges, constraints, transactional durability, WAL and protected backups.
+
+## Cutover from file development state
+
+There is no automatic live import. Safe initial cutover is:
+
+1. stop Gateway, Worker and Control Plane;
+2. initialize/apply PostgreSQL migrations while authority remains disabled;
+3. ensure the PostgreSQL epoch is newer than any imported historical authority if history is migrated;
+4. optionally import audit/notes/terminal history for continuity;
+5. never import old active bearer grants as active;
+6. never import claimed/running jobs as executable work;
+7. validate schema, role privileges, history and row counts offline;
+8. start Control Plane with `SENTINEL_PERSISTENCE_BACKEND=postgres` while still disabled;
+9. explicitly enable authority and issue fresh grants only after validation.
+
+This intentionally sacrifices old live capabilities rather than risk duplicated authority.
+
+## Backup and recovery
+
+Use protected PostgreSQL base backups plus WAL/PITR appropriate to the deployment. Backups contain sensitive authority/audit data.
+
+Restoring an older database can restore an older security epoch. A restored database must therefore come up disabled/network-isolated and receive an epoch bump/revoke-all before Gateway/Worker access is permitted.
+
+## CI acceptance
+
+The CI matrix applies the full migration chain and runtime privilege assertions to real PostgreSQL **15** and **18**, then runs PostgreSQL integration tests. General Go CI also requires module tidy, `gofmt`, `go vet` and `go test -race ./...`.
+
+Current integration coverage includes:
+
+- grant issue vs revoke-all serialization and stale-epoch non-revival;
+- revoke rollback when audit cannot commit;
+- approval persistence/dedup/decision semantics;
+- execution idempotency and concurrent claims;
+- atomic one-shot approval binding under concurrent authorization attempts;
+- authorization racing individual revoke;
+- one-shot authorization rollback when `audit_head` is blocked;
+- transactional authorize -> claim -> start -> complete lifecycle;
+- completion replay rejection;
+- emergency API behavior and PostgreSQL stores;
+- explicit backend selection and no PostgreSQL-to-file fallback.
+
+The remaining acceptance before the first WIP merge is **infrastructure**, not another persistence adapter: deploy the constrained components, apply the external PVE worker-egress policy, and run the non-destructive real SSH + negative packet-level + active-revoke acceptance procedure.
