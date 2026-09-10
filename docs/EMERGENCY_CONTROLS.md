@@ -1,41 +1,27 @@
 # Emergency controls
 
-`0.1.0-dev.10` adds a global AI-access kill switch and active worker authority monitoring.
+`0.1.0-dev.10` introduced the monotonic global security epoch and active worker authority monitoring. `0.1.0-dev.11` moves the mutable emergency state and its coupled job/audit transitions into PostgreSQL transactions for the production-candidate backend.
 
-The objective is stronger than "stop issuing new tokens": an operator emergency action must invalidate every existing agent capability, stop jobs that have not begun executing, prevent new SSH credentials from being issued, and make active workers terminate their execution transport when authority is lost.
+The objective is stronger than "stop issuing new tokens": an operator emergency action must invalidate existing agent capabilities, stop jobs that have not begun executing, prevent new SSH credentials from being issued, and make active workers terminate their execution transport when authority is lost.
 
 ## Security epoch
 
-Global authority uses a persistent monotonically increasing **security epoch**.
+Global authority uses a persistent monotonically increasing `security_epoch`.
 
-Each grant is stamped with the current epoch when it is issued. Authentication requires both:
+Each grant is stamped with the current epoch at issuance. Authentication requires:
 
-1. global AI access is enabled;
-2. `grant.security_epoch == current security epoch`.
+1. global AI access enabled;
+2. grant epoch exactly equal to current epoch;
+3. grant not individually revoked;
+4. grant not expired.
 
-`REVOKE ALL` increments the epoch and disables global AI access. This permanently makes all grants from the previous epoch stale.
+`REVOKE ALL` increments the epoch and disables global AI access. `Enable` clears the disabled state without decreasing the epoch. Therefore every grant from the previous epoch remains permanently stale.
 
-`Enable` clears the disabled flag but **does not roll the epoch back**. Therefore old capabilities do not become valid again after an incident is cleared. New grants must be issued in the current epoch.
-
-Example:
-
-```text
-initial state      epoch=0 enabled
-old grant          epoch=0
-
-REVOKE ALL         epoch=1 disabled
-old grant          stale + disabled
-
-Enable             epoch=1 enabled
-old grant          still stale
-new grant          epoch=1 and valid
-```
-
-Repeated `REVOKE ALL` operations increment the epoch again even when the system is already disabled. This prevents an emergency action from being treated as a reversible boolean toggle.
+Repeated `REVOKE ALL` operations increment the epoch again even while already disabled; emergency authority is not a reversible boolean toggle.
 
 ## Operator API
 
-The development Control Plane exposes the emergency API only on the operator/admin surface. The current admin listener remains loopback-bound and requires `SENTINEL_ADMIN_TOKEN`.
+The admin listener remains loopback-only and requires `SENTINEL_ADMIN_TOKEN`:
 
 ```text
 GET  /admin/v1/emergency/state
@@ -49,78 +35,69 @@ Optional reason body:
 {"reason":"suspected compromised agent"}
 ```
 
-The agent-facing Gateway has no emergency-state mutation endpoint.
+Gateway exposes no emergency mutation path.
 
 ### `REVOKE ALL`
 
-The Control Plane performs the emergency transition in the safety direction first:
+In PostgreSQL mode, one transaction:
 
-1. increment security epoch;
-2. set global state to disabled;
-3. cancel `staged`, `pending`, and `claimed` execution jobs;
-4. invalidate their claim secrets;
-5. suppress new worker claims;
-6. reject old/current-epoch grant authentication;
-7. prevent `start` and SSH-certificate issuance through the normal grant checks;
-8. append an emergency audit event;
-9. active workers discover lost authority through the execution-authority lease and cancel their executor context.
+1. locks `authority_state`;
+2. increments epoch;
+3. sets global authority disabled;
+4. cancels `staged`, `pending`, and `claimed` jobs;
+5. clears their claim hashes;
+6. appends `emergency.revoke_all` through the transaction-scoped canonical audit writer;
+7. commits.
 
-Running jobs are deliberately not rewritten directly to `canceled` by the queue cleanup. The active worker owns their executor lifecycle and reports the actual terminal result after its transport has been canceled. This keeps the audit/job state aligned with what the worker really observed.
+If the transaction cannot commit, the operator gets failure rather than a partially durable SQL state.
+
+Independent runtime gates then ensure:
+
+- no new legitimate capability use can authenticate;
+- worker claims yield no work while disabled;
+- `start` cannot authorize a stale/disabled grant;
+- pre-certificate validation cannot issue fresh SSH authority;
+- active Worker authority leases fail and cancel execution context/SSH transport.
+
+Running jobs are deliberately not rewritten directly to `canceled` by queue cleanup. Worker owns their active lifecycle and later records the factual terminal result.
 
 ### `Enable`
 
-Enabling is a higher-risk transition because it restores the ability to issue new authority.
+Enable requires the system to be disabled and keeps the current epoch. PostgreSQL couples the enable state transition and its audit records in one transaction. Old grants are not rewritten or revived; fresh authority requires a new grant in the current epoch.
 
-The Control Plane therefore:
-
-1. requires the system to currently be disabled;
-2. writes an `emergency.enable_requested` audit event before changing state;
-3. enables the current epoch without decrementing it;
-4. writes `emergency.enabled` after the state transition;
-5. if the post-enable audit append fails, attempts an immediate fail-closed `REVOKE ALL` again.
-
-Existing stale grants are not rewritten or revived. The operator must create new grants after recovery.
+The explicit file development backend retains its legacy fail-closed compensating behavior, but it is not the production durability model.
 
 ## Worker execution-authority lease
 
-A worker holding a short-lived SSH certificate is still not treated as permanently authorized for the remainder of the connection.
-
-The worker-only internal API provides:
+Worker-only internal endpoint:
 
 ```text
 POST /internal/v1/execution/jobs/{job_id}/authority
 ```
 
-The request is protected by the existing worker credential and internal mTLS boundary and contains the worker identity plus the one-shot job claim secret.
+It requires the dedicated Worker credential and protected internal mTLS transport. Request contains Worker identity plus the job's one-shot claim secret.
 
-An authority check succeeds only when all of the following remain true:
+A positive lease requires:
 
-- global AI access is enabled;
-- job is still `running`;
-- claim secret still matches the running job;
-- job has not expired;
-- original grant still exists, is not individually revoked, and has not expired;
-- grant security epoch still equals the current global epoch.
+- global authority enabled;
+- job still `running` and unexpired;
+- claim secret still matching;
+- original grant present, unrevoked and unexpired;
+- grant epoch equal to current global epoch.
 
-The endpoint is read-only and performs no job state transition.
+The endpoint does not mutate job state.
 
-## Active termination
-
-`sentinel-worker` performs an authority check immediately before invoking the SSH executor and then periodically while execution remains active.
-
-Default:
+`sentinel-worker` checks authority immediately before executor invocation and periodically while execution remains active. Default:
 
 ```text
 SENTINEL_WORKER_AUTHORITY_POLL_MS=250
 ```
 
-The configured value is also used as the timeout for each authority request. The CLI configuration currently requires at least 100 ms.
+The configured interval is also the individual authority-request timeout. Explicit denial **and inability to verify authority** are fail-closed.
 
-The worker treats **both explicit denial and inability to verify authority** as failure. A Control Plane outage, broken internal mTLS path, timeout, global revoke, individual grant revoke, stale epoch, invalid claim, or expired job therefore causes the worker to cancel the execution context rather than continue optimistically.
+A Control Plane outage, internal mTLS failure, timeout, global revoke, individual grant revoke, stale epoch, invalid claim or expiry therefore cancels the Worker execution context. The SSH executor binds transport lifetime to that context and closes its side of the connection on cancellation.
 
-The SSH executor already binds its connection/session lifetime to that context, so cancellation closes the worker-side SSH transport. With the default interval, detection is normally bounded by the polling interval plus the bounded authority-request timeout, rather than the general 15-second HTTP client timeout.
-
-Terminal job metadata records emergency/lease failures such as:
+Terminal metadata can record conditions such as:
 
 ```text
 execution_authority_denied
@@ -128,84 +105,105 @@ execution_authority_lost
 ssh_access_issuance_failed
 ```
 
-Raw stdout/stderr retention policy is unchanged.
+Raw stdout/stderr is not retained by the current Worker.
 
-## Races covered by independent gates
+## Race coverage
 
-The kill switch does not depend on one timing-sensitive check.
+Emergency safety does not depend on one timing-sensitive check.
 
 ### Revoke before claim
 
-Non-running jobs are canceled and claim is suppressed.
+Non-running work is canceled and new claim attempts return no work while globally disabled.
 
 ### Revoke after claim, before start
 
-The queued job is canceled when possible; independently, `start` re-authenticates the original grant and rejects the stale/disabled epoch.
+Revoke clears/cancels the claim when it obtains the ordered locks first. Independently, PostgreSQL `start` revalidates current authority/grant while holding the relevant locks before `claimed -> running`.
 
-### Revoke after start, before SSH certificate
+### Revoke racing authorization
 
-The existing pre-certificate grant/policy gate rejects the old epoch. The worker now records a terminal `ssh_access_issuance_failed` result instead of leaving the job stuck as `running`.
+PostgreSQL staged authorization and individual/global revoke share ordered authority/grant locks. A job cannot remain newly pending under a revoked grant: either authorization commits first and revoke subsequently cancels the non-running job, or revoke wins and authorization fails closed.
+
+### Revoke after start, before certificate
+
+Pre-certificate policy/grant/epoch validation rejects the revoked state. Worker records a factual terminal failure rather than leaving a stuck running row.
 
 ### Revoke after certificate, before executor
 
-The mandatory pre-executor authority check rejects execution.
+Mandatory pre-executor authority check rejects execution.
 
 ### Revoke during SSH execution
 
-The periodic authority lease fails and the worker cancels the executor context/SSH transport.
+Periodic authority lease fails and Worker cancels executor context/SSH transport.
 
 These layers intentionally overlap.
 
-## Worker claim suppression
+## PostgreSQL durability semantics
 
-While global access is disabled, the exact worker claim route is guarded by the emergency state and returns `204 No Content` for an authenticated worker instead of handing out more jobs.
+For `SENTINEL_PERSISTENCE_BACKEND=postgres`, emergency authority state is the singleton `sentinel.authority_state` row. Fresh schema initializes:
 
-This is an operational consistency feature, not the only security boundary. A race that somehow obtains a claim still cannot pass the authoritative `start`, certificate, or execution-authority checks with a stale/disabled epoch.
+```text
+epoch=0
+disabled=true
+```
 
-## Persistence failure behavior
+The application never auto-enables a fresh database.
 
-The bootstrap emergency state is stored in the Control Plane state directory (`SENTINEL_EMERGENCY_STATE`, default `/var/lib/tethys-sentinel/emergency.json`).
+Grant issuance locks the same authority row as global revoke, so a grant cannot commit from a stale pre-revoke epoch snapshot.
 
-A revoke is a safety-direction transition. If persisting the new disabled state fails, the live Control Plane deliberately **keeps the new disabled epoch in memory** and returns an error to the operator. It does not roll back into an enabled live state merely because disk persistence failed.
+Audit append uses `audit_head` in the same transaction after authority/grant/job state locks. A blocked/failed audit append rolls back the security-state transition rather than leaving SQL state and audit history disagreeing.
 
-An enable is the opposite direction. If enabling cannot be persisted, the in-memory state is rolled back to the prior disabled state and enabling fails.
+The PostgreSQL runtime role is least privilege and cannot apply migrations or own the schema. Gateway, Worker and Signer hold no database credentials.
 
-Important limitation: file-backed bootstrap persistence cannot provide rollback-resistant durability after a storage failure. If a revoke reported a persistence failure, restarting the Control Plane is unsafe until the operator has repaired/reconciled durable emergency state. Production persistence must make the authority epoch transactional and durable rather than relying on a local JSON file.
+If PostgreSQL itself is unavailable, SQL cannot execute `REVOKE ALL`. Deployment must retain an out-of-band operator stop such as stopping/isolating Gateway/Worker/Control or cutting the Worker network boundary. Services that cannot verify authority fail closed; nevertheless the database-unavailable incident procedure must not depend solely on making a successful SQL mutation.
+
+See `docs/POSTGRESQL_PERSISTENCE.md`.
+
+## File development backend
+
+`SENTINEL_PERSISTENCE_BACKEND=file` remains explicit development compatibility mode. Its local emergency file is `SENTINEL_EMERGENCY_STATE`.
+
+A safety-direction revoke keeps live in-memory authority disabled even if local persistence fails; an operator must not restart that development Control Plane until durable state is reconciled. This behavior is retained for testing but is not advertised as production durability.
+
+There is never an automatic fallback from failed PostgreSQL startup to this file state.
 
 ## What active termination does not promise
 
-Canceling the worker SSH context is the strongest generic transport action available without giving Sentinel broader target-side emergency privileges.
+Canceling Worker SSH transport is the strongest generic transport action available without granting a broad target-side kill primitive.
 
-It does **not** prove that every descendant process on every supported operating system has died. An explicitly authorized command may daemonize, detach, hand work to another service, schedule future work, or trigger a remote system before the revoke arrives. Side effects already completed are not reversible.
+It does **not** prove that every descendant process on every target has died. An explicitly authorized command can daemonize, detach, hand work to another service, schedule future work, or trigger another system before revoke arrives. Completed side effects are not reversible.
 
-Therefore emergency termination remains defense in depth with:
+Emergency termination therefore remains defense in depth with:
 
-- narrowly scoped capabilities;
-- one-shot approvals for powerful execution;
+- scoped/short-lived capabilities;
+- one-shot approval for powerful execution;
 - short SSH certificate TTL;
-- job expiration;
+- job expiry;
 - no forwarding extensions;
-- external worker egress containment;
+- external Worker egress containment;
 - target Unix/sudo/doas restrictions;
 - target one-shot replay state.
 
-A future target-side supervisor could provide stronger process-tree guarantees for selected platforms, but it must not require a general root kill primitive exposed to the agent.
+A future platform-specific target supervisor could offer stronger process-tree guarantees without exposing a general root kill primitive to the agent.
 
 ## External firewall interaction
 
-`dev.9` worker egress enforcement and `dev.10` active authority are independent layers.
+Worker egress enforcement and active authority revocation are independent boundaries.
 
-Changing a Proxmox firewall policy is not assumed to terminate an already-established stateful TCP flow. Conversely, the kill switch does not require mutating PVE firewall state during an incident. Active worker context cancellation handles established Sentinel execution sessions; external firewall containment continues to bound where the worker can connect.
+Changing a Proxmox firewall rule is not assumed to terminate an established stateful TCP flow. Conversely, `REVOKE ALL` does not need to mutate PVE firewall policy during an incident. Active Worker context cancellation handles Sentinel's established execution transport while the external firewall continues to bound reachable destinations.
 
 ## Recovery workflow
 
 After `REVOKE ALL`:
 
-1. keep global access disabled while investigating;
-2. inspect audit, active/terminal jobs, grants and target state;
-3. repair any persistence/network/control-plane issue first;
+1. keep authority disabled while investigating;
+2. inspect verified audit/history, job state, grants and target state;
+3. repair database/network/control issues first;
 4. call `Enable` only when autonomous access should resume;
 5. issue fresh grants in the current epoch;
-6. do not expect old bearer tokens to work again.
+6. verify pre-revoke capabilities remain invalid.
 
-`REVOKE ALL` invalidates authority. It does not delete configuration, history, audit records, runbooks, target inventory or other project data.
+After PostgreSQL restore/PITR, treat restored authority as unsafe until the database is isolated/disabled and a new epoch/revoke is established before Gateway/Worker access resumes.
+
+`REVOKE ALL` invalidates authority. It does not delete configuration, history, audit, runbooks, target inventory or other project data.
+
+Real infrastructure acceptance for these semantics is defined in `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
