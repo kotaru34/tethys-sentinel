@@ -3,7 +3,7 @@
 Updated: 2026-09-10
 Current development version: `0.1.0-dev.11`
 Branch: `wip/bootstrap-security-core`
-Deployment: five acceptance VMs provisioned on `ai-server`; Sentinel runtime not deployed; no merge to `main` yet
+Deployment: five acceptance VMs validated on `ai-server`; accepted dev.11 binaries built and deployed to their intended guests; runtime trust/configuration not yet enabled; no merge to `main` yet
 
 ## Project goal
 
@@ -141,14 +141,17 @@ No runtime feature/version bump was made after `0.1.0-dev.11`; this checkpoint i
 - Added `docs/INFRASTRUCTURE_ACCEPTANCE_REMOTE_POSTGRES.md` for the selected deployment topology using an existing remote PostgreSQL service rather than a dedicated DB guest.
 - Selected acceptance topology is five separate disposable/constrained guests: `sentinel-control`, `sentinel-gateway`, `sentinel-worker`, `sentinel-signer`, `sentinel-target-test`; PostgreSQL remains an existing operator-managed external service.
 - The five acceptance VMs are provisioned on PVE node `ai-server` on VLAN 1520 / `10.169.2.0/24`: `1310 sentinel-control = 10.169.2.210`, `1320 sentinel-gateway = 10.169.2.211`, `1330 sentinel-worker = 10.169.2.212`, `1340 sentinel-signer = 10.169.2.213`, `1350 sentinel-target-test = 10.169.2.214`. Worker NIC has PVE firewall enabled for the later deny-by-default egress policy.
-- VM provisioning was recreated from template `1399` with cloud-init user/key/network configuration applied before boot.
-- Gateway remains non-public until acceptance is complete.
+- VM cloud-init identity/network configuration was applied and all five guests were validated reachable over SSH with working QEMU Guest Agent.
+- Template boot disks were discovered to be only 3.5 GiB; all five VM disks were expanded to 8 GiB and their `/dev/sda1` filesystems were grown successfully (about 6.8 GiB usable root filesystem, roughly 4.6–4.8 GiB free before build deployment).
+- The accepted `0.1.0-dev.11` source at commit `d64e0ce2f4ff40377b37f71a05755cfa7cea7410` was built on `sentinel-control` with Go 1.27.1.
+- Required binaries were installed and SHA-256 verified on their intended guests: `sentinel-control` on `.210`, `sentinel-gateway` on `.211`, `sentinel-worker` on `.212`, `sentinel-signer` on `.213`, and `tethys-sentinel-exec` + `tethys-sentinel-consume` on `.214`. `sentinel-egress-policy` remains operator-side for later deployment on `ai-server`.
+- Gateway remains non-public and AI authority remains disabled until PostgreSQL TLS/schema, target hardening and Worker external egress acceptance are complete.
 - Runbooks cover separate TLS trust domains, PostgreSQL role/schema setup, isolated SSH CA generation, target sshd/forced wrapper/replay state, component environments/systemd shape, PVE Worker deny-by-default egress, positive/negative packet tests, harmless execution, one-shot approval non-reuse, individual/global active revoke and PostgreSQL restart/loss behavior.
 - Synchronized current architecture/API/emergency/SSH-execution/Worker-egress docs with the dev.11 PostgreSQL and active-revoke state.
 
 ## Current phase
 
-`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete. The five PVE acceptance guests are provisioned on `ai-server`; the project is now entering guest/database configuration for the **first real constrained infrastructure acceptance**.
+`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete. The five PVE acceptance guests have passed basic VM/network/agent validation and the accepted dev.11 binaries are deployed to their intended guests. The project is now moving to the **remote PostgreSQL and trust-boundary configuration** stage of the first real constrained infrastructure acceptance.
 
 No production trust should be placed in it yet. File persistence remains explicit development compatibility only. PostgreSQL is the production candidate.
 
@@ -156,18 +159,17 @@ Do **not** merge to `main` yet. The operator merge rule requires the constrained
 
 ## Next implementation/deployment steps
 
-1. Validate basic boot/network identity of the five provisioned guests and validate the existing remote PostgreSQL endpoint/version/TLS path.
+1. Validate the existing remote PostgreSQL endpoint/version/TLS path.
 2. Create the dedicated Sentinel database/LOGINs on the existing PostgreSQL service, apply schema v2, and verify the runtime role over verified TLS while authority remains disabled.
-3. Build the accepted `0.1.0-dev.11` commit and deploy only the required binaries/credentials to each guest.
-4. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
-5. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
-6. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
-7. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
-8. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
-9. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
-10. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
-11. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+3. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
+4. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
+5. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
+6. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
+7. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
+8. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
+9. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
+10. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
 
 ## Deployment state
 
-Five acceptance VMs are provisioned on PVE node `ai-server` with their final VMIDs and VLAN 1520 addresses. Sentinel binaries, trust material and PostgreSQL schema are not deployed/configured yet. No production trust should be placed in the current branch. No merge to `main` yet.
+Five acceptance VMs are validated on PVE node `ai-server` with final VMIDs/VLAN 1520 addresses, 8 GiB virtual disks, working SSH and QEMU Guest Agent. Accepted `0.1.0-dev.11` binaries are built and installed on the intended guests with SHA-256 verification. Trust material, PostgreSQL schema/runtime credentials, service configuration and Worker deny-by-default egress are not yet configured; AI authority remains disabled. No production trust should be placed in the current branch. No merge to `main` yet.
