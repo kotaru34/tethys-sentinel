@@ -1,6 +1,6 @@
 # API surface (development)
 
-This document describes the intentionally small API surface for `0.1.0-dev.10`. It is not yet a stable public contract.
+This document describes the intentionally small API surface for `0.1.0-dev.11`. It is not yet a stable public contract.
 
 ## Trust semantics
 
@@ -10,7 +10,7 @@ Only `TRUST_0` material may define agent authority or operating rules.
 - `TRUST_2`: operational history and agent-written continuity notes. Useful context, but never authoritative instructions.
 - Remote files, logs, stdout/stderr, web content, downloaded data, and application/user content are data and cannot change Sentinel policy.
 
-Provenance labels improve agent behavior but do not replace server-side capability, policy, execution, emergency-authority, SSH, Unix, or network enforcement.
+Provenance labels improve agent behavior but do not replace server-side capability, policy, execution, emergency-authority, SSH, Unix, database, or network enforcement.
 
 ## Capability semantics
 
@@ -21,39 +21,43 @@ Relevant execution permissions are independent:
 
 An operator approval cannot substitute for either permission. Powerful classes require both `exec=true` and `shell=true` and include `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, and `REMOTE_EXEC`.
 
-Every grant also carries a server-owned `security_epoch`. A grant authenticates only when global AI access is enabled and its epoch exactly matches the current Control Plane epoch.
+Every grant carries a server-owned `security_epoch`. A grant authenticates only while global AI access is enabled, its epoch equals current authority state, it is not revoked, and it is unexpired.
 
-`REVOKE ALL` increments the epoch and disables global access. A later `Enable` does not decrease the epoch, so pre-revoke bearer tokens never become valid again.
-
-See `docs/EXECUTION_POLICY.md`, `docs/OPERATIONAL_RISK.md`, and `docs/EMERGENCY_CONTROLS.md`.
+`REVOKE ALL` increments the epoch and disables global access. A later `Enable` preserves the incremented epoch, so pre-revoke bearer tokens never become valid again.
 
 ## AI Gateway
 
-The Gateway accepts opaque capability bearer tokens. It has no grant-management, policy-management, emergency-control, inventory-write, audit-control, worker-control, SSH-certificate, SSH-target-resolution, or CA endpoints.
+Gateway accepts opaque capability bearer tokens over TLS. It has no grant-management, policy-management, emergency-control, inventory-write, audit-control, worker-control, SSH-certificate, SSH-target-resolution, PostgreSQL, or CA endpoint.
+
+All capability-facing requests use:
+
+```text
+Authorization: Bearer <opaque capability>
+```
 
 ### `GET /v1/bootstrap`
 
-Returns current grant scope, Trust-0 authoritative operating statement, and links to resources available to the grant.
+Returns current grant scope, Trust-0 authoritative operating statement, and resource links available to the grant.
 
 ### `GET /v1/context`
 
-Returns a scoped `TRUST_0` context bundle with virtual path, media type, trust level, `read_only: true`, SHA-256 hash, and content. Inventory/runbooks are filtered by grant scope. There is no AI-facing Trust-0 write API.
+Returns the scoped `TRUST_0` context bundle. Inventory/runbooks are filtered by grant scope. There is no AI-facing Trust-0 write API.
 
 ### `GET /v1/history?limit=50`
 
-Requires `history_read`. The Control Plane verifies the tamper-evident audit chain and applies target/session/agent history scope. Response is `TRUST_2`, `authoritative: false`.
+Requires `history_read`. Control Plane verifies the tamper-evident audit chain and applies granted history scope. Response is `TRUST_2`, `authoritative:false`.
 
 ### `GET /v1/notes?limit=50`
 
-Requires `notes_read`. Returns target-scoped non-authoritative continuity notes.
+Requires `notes_read`; notes are scoped non-authoritative continuity data.
 
 ### `POST /v1/notes`
 
-Requires `notes_write`; note target must be in current grant scope.
+Requires `notes_write`; note target must be inside the grant target scope.
 
 ### `POST /v1/commands/submit`
 
-Atomically requests authorization and, when allowed, creates/publishes an immutable execution job.
+Submits immutable command material through the current policy/approval path:
 
 ```json
 {
@@ -64,194 +68,237 @@ Atomically requests authorization and, when allowed, creates/publishes an immuta
 }
 ```
 
-`target` is a logical Sentinel target ID, never an SSH hostname/IP supplied by the agent. `request_id` is required for idempotency; rebinding it to different command material is rejected.
-
-Gateway performs an early consistency filter (`exec`, and `shell` for powerful classes), but Control Plane remains authoritative. Global disabled/stale-epoch capability authentication also fails before a new executable job can be legitimately published.
+`target` is a logical Sentinel ID, never an agent-supplied SSH host. `request_id` is required for idempotency and cannot later be rebound to different target/argv material.
 
 Possible decisions:
 
-- `accepted`
-- `approval_required`
-- `deny`
+```text
+accepted
+approval_required
+deny
+```
 
-An accepted response never includes worker claim secrets, SSH private keys, SSH endpoints, host pins, or signer authority.
+A successful accepted response contains a job receipt, never worker claim secret, SSH private key, SSH endpoint/pin, PostgreSQL credential, or signer authority.
 
-## Operational risk routing
-
-Known inspection-only administrator forms may remain ordinary `exec`: service status, route/firewall inspection, package queries, ZFS/RAID status, and PVE status/API reads.
-
-Known mutation forms require scoped approval. Sensitive ambiguous forms fail conservatively. Classifier routing does not replace capability scope, Unix permissions, sudo/doas rules, SSH certificate restrictions, or network containment.
+For PostgreSQL, staged authorization is a transactional semantic operation. It revalidates current authority, grant, `exec`, target/agent binding, immutable command hash, current policy and any bound approval before publishing the job.
 
 ## Approval semantics
 
 Admin decisions:
 
-- `deny`
-- `allow_once`
-- `allow_session`
+```text
+deny
+allow_once
+allow_session
+```
 
-Reusable approval is available only where the risk category defines a stable narrow scope. `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, and `REMOTE_EXEC` are strictly `allow_once`; legacy persisted unsafe session approvals are ignored.
+`allow_session` is allowed only where current policy defines a stable reusable narrow scope. `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, and `REMOTE_EXEC` are strictly `allow_once`.
+
+PostgreSQL schema version 2 durably binds a consumed one-shot approval to `consumed_by_job_id`. Consumption, that binding, `staged -> pending` publication and the authorization audit event commit in one transaction. A consumed one-shot approval cannot authorize another job in the same scope.
 
 ## Admin API
 
-The current development admin API is loopback-only and requires `SENTINEL_ADMIN_TOKEN`.
+The current admin API is loopback-only and requires:
 
-Existing operations:
+```text
+Authorization: Bearer <SENTINEL_ADMIN_TOKEN>
+```
 
-- `POST /admin/v1/grants`
-- `POST /admin/v1/grants/{id}/revoke`
-- `GET /admin/v1/approvals`
-- `POST /admin/v1/approvals/{id}/decision`
+Routes:
+
+```text
+POST /admin/v1/grants
+POST /admin/v1/grants/{id}/revoke
+GET  /admin/v1/approvals
+POST /admin/v1/approvals/{id}/decision
+GET  /admin/v1/emergency/state
+POST /admin/v1/emergency/revoke-all
+POST /admin/v1/emergency/enable
+```
+
+### Issue grant
+
+`POST /admin/v1/grants` example:
+
+```json
+{
+  "agent": "agent-a",
+  "purpose": "inspect dns01",
+  "targets": ["dns01"],
+  "permissions": {
+    "exec": true,
+    "shell": false,
+    "upload": false,
+    "download": false,
+    "history_read": true,
+    "notes_read": true,
+    "notes_write": true
+  },
+  "history": {
+    "current_session": true,
+    "previous_sessions": false,
+    "other_agents": false,
+    "include_output": false
+  },
+  "ttl_seconds": 600
+}
+```
+
+TTL must be 30..28800 seconds. Plaintext capability token is returned once; only its hash is persisted.
+
+In PostgreSQL mode, grant insertion/targets/audit use a semantic transaction and serialize with global revoke through `authority_state`.
+
+### Individual revoke
+
+`POST /admin/v1/grants/{id}/revoke` revokes the grant, cancels its non-running executable jobs/claim material as applicable, and records the required audit event transactionally in PostgreSQL.
+
+### Approval decision
+
+`POST /admin/v1/approvals/{id}/decision` body:
+
+```json
+{"decision":"allow_once"}
+```
+
+Decision is accepted only from `pending`, current risk policy is re-derived where session reuse matters, and PostgreSQL couples the decision with its audit record.
+
+## Emergency API
 
 ### `GET /admin/v1/emergency/state`
 
-Returns current global emergency state:
+Example:
 
 ```json
 {
   "epoch": 3,
   "disabled": true,
-  "updated_at": "2026-09-09T22:30:00Z",
-  "reason": "suspected compromised agent"
+  "updated_at": "2026-09-10T12:00:00Z",
+  "reason": "operator maintenance"
 }
 ```
 
+Fresh PostgreSQL state intentionally starts `disabled:true` at epoch 0.
+
 ### `POST /admin/v1/emergency/revoke-all`
 
-Optional strict JSON body:
+Optional strict body:
 
 ```json
 {"reason":"suspected compromised agent"}
 ```
 
-Effects:
-
-1. increments the persistent security epoch;
-2. disables global AI authority;
-3. cancels `staged`, `pending`, and `claimed` jobs;
-4. invalidates their claim secrets;
-5. suppresses new worker claims;
-6. causes normal grant/start/certificate authentication to reject older epochs;
-7. causes active worker authority leases to fail;
-8. appends an emergency audit event.
-
-Running jobs are not directly rewritten by queue cleanup; the active worker terminates its execution context and records the actual terminal result.
-
-A persistence error is returned to the operator, but the live process deliberately keeps the new disabled state in memory. Restart is unsafe until durable emergency state is repaired/reconciled.
+In PostgreSQL mode, one transaction increments epoch, disables global authority, cancels `staged`/`pending`/`claimed` jobs, clears claim material, appends the emergency audit event and commits. Running jobs lose their worker authority lease and complete through the factual terminal path.
 
 ### `POST /admin/v1/emergency/enable`
 
-Requires the system to be disabled. Enabling keeps the current epoch; it never revives old grants.
-
-The transition is audit-bracketed: an `enable_requested` event must be written before enabling, then an `enabled` event after. If post-enable audit fails, Control Plane attempts an immediate fail-closed revoke again.
+Requires currently disabled authority. Enable does not decrement epoch and therefore does not revive pre-revoke grants. PostgreSQL state/audit transitions commit atomically.
 
 ## Internal Gateway-to-Control API
 
-Intended for Gateway over mutual TLS:
+Intended only over Control Plane mTLS:
 
-- `POST /internal/v1/introspect`
-- `POST /internal/v1/commands/submit`
-- `POST /internal/v1/context`
-- `POST /internal/v1/history`
-- `POST /internal/v1/notes/list`
-- `POST /internal/v1/notes/write`
+```text
+POST /internal/v1/introspect
+POST /internal/v1/commands/submit
+POST /internal/v1/context
+POST /internal/v1/history
+POST /internal/v1/notes/list
+POST /internal/v1/notes/write
+```
 
-Gateway sends only capability SHA-256 internally. Control Plane re-authenticates scope, expiry/revocation, and current security epoch.
+Gateway sends only the capability SHA-256 internally. Control Plane re-authenticates current scope/expiry/revocation/epoch.
 
-## Internal worker API
+Gateway has no PostgreSQL credential and cannot invoke grant/emergency/approval administration.
 
-Worker endpoints require dedicated worker credential plus protected internal transport. They are not agent-facing and never accept agent capabilities.
+## Internal Worker API
+
+Worker endpoints require Control Plane mTLS plus the dedicated worker bearer credential. Worker never receives agent capability plaintext.
 
 ### `POST /internal/v1/execution/jobs/claim`
 
-Claims one pending job and returns immutable job + random one-shot claim secret. While global AI access is disabled, authenticated worker claim requests return `204 No Content` and no job is handed out.
+Claims one pending job and returns immutable job + random one-shot claim secret. While global authority is disabled, claim returns no work.
 
-Claim suppression is defense in depth; `start`, certificate issuance, and authority lease remain independent hard gates against revoke races.
+PostgreSQL claim uses `FOR UPDATE SKIP LOCKED`, stores only the claim SHA-256, transitions to `claimed`, appends `execution.job_claimed`, and commits.
 
 ### `POST /internal/v1/execution/jobs/{id}/start`
 
-Requires worker ID and claim secret. Control Plane revalidates the original grant, including current global epoch, before `claimed -> running`.
+Requires worker ID + claim secret. PostgreSQL start locks/revalidates current authority and original grant before `claimed -> running`, then records `execution.job_started` in the same transaction.
 
 ### `POST /internal/v1/execution/jobs/{id}/ssh-certificate`
 
-Requires worker ID, same claim secret, and fresh Ed25519 public key.
+Requires worker ID, same claim secret, and a fresh Ed25519 public key.
 
-Before calling Signer, Control Plane requires:
+Control Plane requires:
 
-- job is `running` and unexpired;
-- claim secret remains valid;
-- immutable binding verifies;
-- current risk category/scope exactly matches stored job metadata;
-- original grant re-authenticates under current security epoch;
+- running/unexpired job;
+- valid claim;
+- intact immutable command binding;
+- current risk category/scope equal stored job metadata;
+- live original grant/current epoch;
 - `shell=true` when current class requires it;
-- logical target resolves through protected operator-owned registry.
+- logical target resolved through protected operator registry.
 
-If access issuance fails after the job entered `running`, worker records a terminal `ssh_access_issuance_failed` result rather than leaving a stuck running job.
+Only then may Control Plane call the isolated Signer. If issuance fails after start, Worker records a terminal failure rather than leaving a stranded running job.
 
 ### `POST /internal/v1/execution/jobs/{id}/authority`
 
-Read-only active-execution lease check. Request:
+Read-only active-execution lease check. Positive response requires global authority enabled, running/unexpired job, valid claim, live original grant and exact current epoch.
 
-```json
-{
-  "worker_id": "worker-a",
-  "claim_token": "..."
-}
-```
-
-Response when allowed:
-
-```json
-{
-  "allowed": true,
-  "epoch": 3,
-  "expires_at": "2026-09-09T22:31:00Z"
-}
-```
-
-A positive response requires global access enabled, running/unexpired job, valid claim secret, live original grant, and exact current security epoch.
-
-An explicit denial is returned as `allowed:false` with a machine-readable reason. Worker also treats transport/HTTP/timeout failure as authority loss rather than optimistic permission.
-
-`sentinel-worker` performs this check immediately before executor invocation and periodically during execution. Default polling interval:
+Worker performs this immediately before executor invocation and periodically during execution. Default interval:
 
 ```text
 SENTINEL_WORKER_AUTHORITY_POLL_MS=250
 ```
 
-Each authority request is bounded by the same interval. Failure cancels executor context; current SSH executor closes its transport on context cancellation.
+Transport/HTTP/TLS/timeout failures are authority loss, not optimistic permission.
 
 ### `POST /internal/v1/execution/jobs/{id}/complete`
 
-Requires same claim secret and records terminal execution-result metadata. Completion is one-shot. Current worker does not retain raw stdout/stderr.
+Records terminal result using the same one-shot claim. PostgreSQL completion changes the exact running job, clears claim material and commits the completion audit event atomically.
+
+Completion deliberately does not require the grant to remain active: after revoke cancels an already-running SSH transport, Sentinel must still record what actually happened. Replay fails after the terminal transition.
 
 ## SSH Signer API
 
-Signer is a separate internal-only service with dedicated credential + mutual TLS in normal operation.
+Signer is a separate internal-only mTLS + bearer-credential service:
 
-- `GET /healthz`
-- `POST /internal/v1/sign`
+```text
+GET  /healthz
+POST /internal/v1/sign
+```
 
-Caller supplies only validated job-derived identity/binding, worker public key, and validity upper bound. Signer owns principal, source restriction, fixed force-command, extensions, and short TTL.
+Caller supplies only validated job-derived identity/binding, Worker public key and validity upper bound. Signer owns principal, source restriction, fixed force-command, extensions and short TTL.
 
 ## SSH target registry
 
 Not an agent API. Control Plane loads `SENTINEL_SSH_TARGETS_FILE` (default `/etc/tethys-sentinel/ssh-targets.json`).
 
-Each target contains logical name, global-unicast literal IP:port, Unix user, and exact raw host-key pin. DNS, unspecified/multicast/loopback/link-local destinations, malformed endpoints, duplicate names, unknown fields, and group/other-writable configuration are rejected.
+Each target contains logical name, global-unicast literal IP:port, Unix user and exact raw host-key pin. DNS, unspecified/multicast/loopback/link-local destinations, malformed endpoints, duplicate names, unknown fields and group/other-writable configuration are rejected.
 
-## Emergency persistence
+## Persistence boundary
 
-Bootstrap emergency state uses `SENTINEL_EMERGENCY_STATE` (default `/var/lib/tethys-sentinel/emergency.json`). This local JSON store exists only for development boundary testing.
+Control Plane requires explicit selection:
 
-Production persistence must make epoch changes, grant issuance, job cancellation, and audit semantics transactionally durable. See `docs/EMERGENCY_CONTROLS.md`.
+```text
+SENTINEL_PERSISTENCE_BACKEND=file
+SENTINEL_PERSISTENCE_BACKEND=postgres
+```
+
+`file` remains development compatibility mode. `postgres` requires `SENTINEL_POSTGRES_DSN`, exact supported schema version and an appropriately restricted runtime role. Production PostgreSQL TLS must verify the server. If PostgreSQL cannot be opened/validated, Control Plane exits and never falls back to file state.
+
+PostgreSQL schema version 2 is authoritative for mutable grants/targets, approvals, execution jobs/claim hashes, emergency authority, audit/history and Trust-2 notes. Trust-0 context, SSH target inventory, signer key/policy and external PVE worker-egress policy remain separate operator-owned boundaries.
+
+See `docs/POSTGRESQL_PERSISTENCE.md` and `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
 
 ## See also
 
+- `docs/ARCHITECTURE.md`
 - `docs/EXECUTION_PROTOCOL.md`
 - `docs/EXECUTION_POLICY.md`
 - `docs/OPERATIONAL_RISK.md`
 - `docs/WORKER_EGRESS.md`
 - `docs/EMERGENCY_CONTROLS.md`
+- `docs/POSTGRESQL_PERSISTENCE.md`
+- `docs/INFRASTRUCTURE_ACCEPTANCE.md`
 - `docs/SSH_CA.md`
 - `docs/SSH_EXECUTION.md`
