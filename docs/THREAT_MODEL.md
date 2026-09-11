@@ -42,13 +42,19 @@ Within a grant, request IDs are idempotent for identical command material and co
 
 Target-side replay protection is independent: a root-only helper atomically consumes a marker by execution job ID before process start, preventing repeated use of the same job credential on the target.
 
-### Job-store tampering
+### Job-store / persistence tampering
 
-Bootstrap job records are HMAC-SHA-256 protected with a Control-Plane-only integrity key. Unauthorized target/argv/status/approval changes fail closed. This does not defend a fully compromised Control Plane holding the key; production state will use stronger transactional isolation.
+The explicit file development backend protects local job records with HMAC-SHA-256 using a Control-Plane-only integrity key. Unauthorized target/argv/status/approval changes fail closed, but this does not defend a fully compromised Control Plane holding that key.
+
+The production-candidate PostgreSQL backend instead relies on database ownership/least privilege, constraints, ordered transactions, WAL/backups, immutable command bindings and the canonical transactional audit chain. Security-sensitive state changes and required audit records commit together. PostgreSQL does not silently fall back to file authority if connection/schema/runtime-role validation fails.
+
+A fully compromised Control Plane or database authority remains outside what application-level persistence checks can defeat; operator and host boundaries remain required.
 
 ### Approval/queue crash window
 
 A crash after `allow_once` consumption but before publication must not lose authority or create a second authorization. Jobs are staged durably before approval consumption and remain unclaimable until publication; retry recovers the matching staged job.
+
+In PostgreSQL mode, one-shot consumption, binding to the exact job, job publication and authorization audit commit in one transaction.
 
 ### Unsafe reusable approval
 
@@ -92,7 +98,7 @@ They are classified `PRIVILEGE_LAUNCHER`, require `shell=true`, and are allow-on
 
 SSH-family tools, Ansible/Salt, netcat/socat-style pivots, Kubernetes exec/copy/port-forward, container remote contexts, namespace/jail exec, and VM monitor/guest paths can cross the intended logical target boundary.
 
-They are classified `REMOTE_EXEC`, require `shell=true`, and are allow-once only. Production worker/target network policy must still independently restrict possible egress.
+They are classified `REMOTE_EXEC`, require `shell=true`, and are allow-once only. Worker/target network policy must still independently restrict possible egress.
 
 ### High-impact administrator mutation left as DEFAULT
 
@@ -122,7 +128,7 @@ Ordinary filesystem authority is deliberately not inferred from generic command 
 
 ### Revocation race and stale capability revival
 
-Individual grant revocation still cancels unclaimed work and is rechecked at `start`, certificate issuance, and the active worker authority lease.
+Individual grant revocation cancels non-running work and is rechecked at `start`, certificate issuance, and the active worker authority lease.
 
 `dev.10` adds a separate global authority boundary. `REVOKE ALL` atomically advances a monotonic security epoch and disables global AI access. Every grant records the epoch at issuance. While disabled, new capability use, worker claim, start/signing paths and active authority checks fail closed. Re-enabling keeps the advanced epoch, so grants from every earlier epoch remain permanently invalid and cannot revive.
 
@@ -130,11 +136,11 @@ Non-running `staged`, `pending` and `claimed` jobs are canceled by revoke-all an
 
 ### Kill-switch persistence failure
 
-Emergency disable is more important than preserving a writable state file. If revoke-all updates the live in-memory authority state but persistence fails, the current Control Plane remains disabled and returns an error to the operator. It must not roll the kill switch back merely because disk persistence failed.
+In PostgreSQL mode, `REVOKE ALL` is a transaction over authority/job/audit state: if the transaction cannot commit, the operator receives an error rather than a partially durable SQL transition. If PostgreSQL itself is unavailable, SQL cannot be the emergency stop, so deployment requires an out-of-band operator stop/isolation path. Services unable to verify authority fail closed.
 
-A restart after such a persistence failure is unsafe until the operator repairs/validates emergency-state persistence, because an unpersisted in-memory epoch cannot survive process loss.
+The explicit file development backend retains a separate safety-direction behavior: if a revoke updates the live in-memory authority but persistence fails, the process remains disabled and must not roll the kill switch back merely because disk persistence failed. Restart after such an unpersisted development-state failure is unsafe until the operator reconciles durable state.
 
-Re-enable is stricter in the opposite direction: an enable transition that cannot be safely persisted/audited must fail closed and leave or return the system to disabled state.
+Re-enable is fail-closed around persistence/audit; an unauditable enable must not silently restore authority.
 
 ### Active worker continues after revoke
 
@@ -168,9 +174,15 @@ Normal runtime egress is limited to the literal-IP Control Plane HTTPS endpoint 
 
 A correct generated policy file is not evidence that traffic is actually filtered.
 
-The operator-side verifier checks byte-for-byte policy drift, Proxmox Datacenter firewall activation and `firewall=1` on the selected worker VM NIC. The generated VM policy itself uses `enable: 1` and `policy_out: DROP` with explicit destination/port allows only.
+The operator-side verifier checks byte-for-byte policy drift, Proxmox Datacenter firewall activation and `firewall=1` on the selected worker VM NIC. The generated VM policy itself uses `enable: 1`, `policy_in: ACCEPT` and `policy_out: DROP` with explicit destination/port outbound allows only. `policy_in: ACCEPT` preserves unspecified inbound behavior rather than turning this outbound-containment file into an accidental inbound deny policy.
 
 These configuration checks are still not sufficient by themselves. Real acceptance requires packet-level tests from inside the worker VM proving that Control Plane and registered SSH endpoints succeed while unrelated LAN/Internet/DNS/unlisted ports fail.
+
+### IPv6 egress bypass
+
+An IPv4-only deny policy must not leave an autonomous IPv6 path around the intended Worker boundary.
+
+Acceptance must verify that Worker has no global/ULA IPv6 address and no IPv6 default route unless an equally strict external IPv6 policy is intentionally configured and packet-tested. Link-local-only IPv6 is acceptable because it does not provide routed autonomous egress.
 
 ### Stale egress after target-set change
 
@@ -192,9 +204,13 @@ Agent controls only a logical target in its grant. It cannot provide hostname, I
 
 Control Plane target registry accepts global-unicast literal IPv4/IPv6 + port and rejects DNS, unspecified, multicast, loopback/link-local and malformed endpoints. This makes destination deterministic for external firewall enforcement.
 
-### SSH host impersonation
+### SSH host impersonation / wrong advertised host-key selection
 
-Worker uses exact raw pinned SSH host public key. Mismatch aborts handshake before exec. TOFU, empty host callbacks or insecure host-key acceptance are outside the design.
+Worker uses one exact raw pinned SSH host public key. TOFU, empty host callbacks or insecure host-key acceptance are outside the design.
+
+Exact callback verification alone is insufficient when a legitimate target advertises multiple host keys: the SSH client might otherwise negotiate a different advertised host-key family and then correctly reject it as a pin mismatch. `dev.13` therefore constrains host-key algorithm negotiation to the family compatible with the configured pin before verifying the exact negotiated raw key. RSA pins use RSA-SHA2 and do not fall back to SHA-1 `ssh-rsa`.
+
+Wrong key or wrong key family still aborts before exec.
 
 ### Stalled handshake / long-running session
 
@@ -283,28 +299,36 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 - Global disable suppresses worker claims and blocks start/signing through grant re-authentication.
 - Global revoke cancels non-running jobs and invalidates claimed one-shot material.
 - Running jobs require a fail-closed active authority lease; authority loss or Control Plane loss cancels Sentinel-owned execution.
-- Emergency revoke persistence failure does not re-enable the live process in memory.
+- PostgreSQL-backed security transitions and required audit commit atomically; failed PostgreSQL startup never falls back to file authority.
 - Request ID cannot be rebound to different target/argv.
 - Staged jobs are unclaimable.
 - Claimed jobs require authoritative start revalidation.
 - SSH certificate requires running, unexpired, binding-valid, current-policy-valid job and active current-epoch grant.
 - Signer caller cannot broaden principal/force-command/source/extensions/TTL.
 - Certificate does not outlive job and grants no PTY/agent/port/X11 forwarding.
-- Worker target is global-unicast literal IP from operator-owned inventory and host key is exactly pinned.
+- Worker target is global-unicast literal IP from operator-owned inventory; host-key negotiation is bound to the configured pin family and the negotiated raw key must exactly match the pin.
 - Worker runtime egress is externally deny-by-default and limited to Control Plane HTTPS plus registered target SSH endpoints.
 - Worker/AI identities cannot apply, widen or reconcile the external PVE egress policy.
 - Generated egress policy drift and PVE Datacenter/NIC activation are operator-verifiable and fail closed on mismatch.
 - Packet-level worker-VM egress behavior must be tested before treating the infrastructure boundary as accepted.
+- Worker must not have an uncontained IPv6 default/global path around the external runtime egress boundary.
 - Firewall shrink is not assumed to terminate already-established flows; active authority revocation remains independent.
 - Wrapper directly executes verified argv, verifies local target identity, and consumes root-protected replay marker.
 - Worker execution is bounded by job expiry, active authority and output limit.
 - A functioning release is not production-deployable until tested on intended isolated infrastructure.
 
-## Out of scope for early milestones
+## Out of scope / residual assumptions
 
-- fully compromised hypervisor
-- malicious operator with host root
-- formal verification
-- proving arbitrary shell/interpreter content intrinsically safe
-- instantaneous guaranteed termination of every detached/daemonized descendant process on every target OS after session loss
-- production persistence before PostgreSQL migration
+- fully compromised hypervisor;
+- malicious operator with host root;
+- formal verification;
+- proving arbitrary shell/interpreter content intrinsically safe;
+- instantaneous guaranteed termination of every detached/daemonized descendant process on every target OS after session loss;
+- protecting against a fully compromised Control Plane/DB administrator who can coherently rewrite all trusted authority and audit state;
+- HSM/Vault-backed SSH CA storage and external audit sealing.
+
+## Infrastructure acceptance status
+
+The dev.13 constrained PVE run completed the planned hard-boundary acceptance on the intended topology. Evidence in `HANDOFF.md` includes real end-to-end pinned SSH execution, multi-host-key negotiation, packet-level Worker egress tests, individual/global active revoke, epoch non-revival, PostgreSQL no-fallback startup failure, Worker sensitive-material/service-account/mTLS checks, and absence of a routed IPv6 bypass.
+
+That acceptance does not eliminate the residual assumptions above. Future changes that alter these boundaries must repeat the relevant automated and real-infrastructure checks. `docs/INFRASTRUCTURE_ACCEPTANCE.md` is the repeatable procedure.
