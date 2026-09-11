@@ -3,7 +3,9 @@ package sshexec
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"net"
 	"strings"
@@ -52,6 +54,34 @@ func TestExecutorUsesPinnedHostKeyAndBoundEnvelope(t *testing.T) {
 		if len(envelope.Argv) != len(job.Argv) || envelope.Argv[2] != job.Argv[2] {
 			t.Fatalf("remote argv mismatch: %#v", envelope.Argv)
 		}
+	case <-ctx.Done():
+		t.Fatal("SSH server did not receive exec request")
+	}
+}
+
+func TestExecutorNegotiatesPinnedHostKeyAlgorithmWithMultipleServerKeys(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	pinnedHostSigner := newSigner(t)
+	alternateHostSigner := newECDSASigner(t)
+	server := startTestSSHServerWithHostKeys(t, []ssh.Signer{alternateHostSigner, pinnedHostSigner}, []byte("ok\n"))
+	defer server.Close()
+
+	job, credential := testCredential(t, now)
+	target := sshtarget.Spec{
+		Name: job.Target, Address: server.Address(), User: "sentinel-ai",
+		HostKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pinnedHostSigner.PublicKey()))),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := (Executor{DialTimeout: time.Second, OutputLimitBytes: 4096}).Execute(ctx, job, credential, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Success || result.ExitCode != 0 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	select {
+	case <-server.commands:
 	case <-ctx.Done():
 		t.Fatal("SSH server did not receive exec request")
 	}
@@ -202,6 +232,19 @@ func newSigner(t *testing.T) ssh.Signer {
 	return signer
 }
 
+func newECDSASigner(t *testing.T) ssh.Signer {
+	t.Helper()
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signer
+}
+
 type testSSHServer struct {
 	listener net.Listener
 	commands chan string
@@ -215,6 +258,11 @@ func startTestSSHServer(t *testing.T, hostSigner ssh.Signer) *testSSHServer {
 
 func startTestSSHServerWithOutput(t *testing.T, hostSigner ssh.Signer, output []byte) *testSSHServer {
 	t.Helper()
+	return startTestSSHServerWithHostKeys(t, []ssh.Signer{hostSigner}, output)
+}
+
+func startTestSSHServerWithHostKeys(t *testing.T, hostSigners []ssh.Signer, output []byte) *testSSHServer {
+	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +273,9 @@ func startTestSSHServerWithOutput(t *testing.T, hostSigner ssh.Signer, output []
 			return nil, nil
 		},
 	}
-	config.AddHostKey(hostSigner)
+	for _, hostSigner := range hostSigners {
+		config.AddHostKey(hostSigner)
+	}
 	go func() {
 		defer close(server.done)
 		for {
