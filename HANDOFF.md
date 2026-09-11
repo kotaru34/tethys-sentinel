@@ -3,7 +3,7 @@
 Updated: 2026-09-11
 Current development version: `0.1.0-dev.13`
 Branch: `wip/bootstrap-security-core`
-Status: constrained infrastructure acceptance in progress; real end-to-end SSH execution, `allow_once` non-reuse, and individual active revoke have passed on the intended PVE topology; global revoke and PostgreSQL-loss tests remain; no merge to `main` yet.
+Status: constrained infrastructure acceptance in progress; real end-to-end SSH execution, `allow_once` non-reuse, individual active revoke, active global revoke, and epoch non-revival have passed on the intended PVE topology; PostgreSQL-loss and final boundary/documentation checks remain; no merge to `main` yet.
 
 ## Project goal
 
@@ -226,6 +226,16 @@ Worker authority leasing detected the revoked grant and terminalized the job at 
 
 Target-side evidence independently confirms transport cancellation: sshd accepted the job-bound ED25519 certificate from Worker `10.169.2.212`, opened the `sentinel-ai` session at `03:40:36`, closed it at `03:40:37`, and no `sleep 20` process remained. This proves individual grant revoke terminates a live SSH execution rather than merely changing persistent job state.
 
+## Active global revoke + epoch non-revival PASS
+
+Fresh epoch-1 grant `700d683a6f94006204cf8006d50803bf` authorized job `04992256647d99d1d32d57ef9625c49c` (`sleep 20`). The job entered `running` at `2026-09-11 03:43:10.080491+00`. `REVOKE ALL` completed at `03:43:10.158259+00`, about 78 ms after start, atomically advancing authority from epoch 1 to epoch 2 and setting `disabled=true` with reason `dev.13 active global revoke acceptance`.
+
+Worker authority leasing terminated the running execution at `03:43:10.682553+00` as `failed`, `result_success=false`, `result_exit_code=-1`, `error_kind=execution_authority_lost`, about 0.52 seconds after the global revoke and almost 30 seconds before its normal deadline. Audit sequence 40-46 records grant issue, authorization, claim, start, SSH certificate issuance, `emergency.revoke_all` with epoch 2, then failed completion.
+
+For epoch non-revival, the pre-revoke grant remained unexpired (`expires_at=2026-09-11 03:48:10.008813+00`; DB time at check `03:45:18.200558+00`) and had no individual `revoked_at`. Authority was re-enabled without changing the epoch: state became `epoch=2, disabled=false` at `03:45:18.278034+00`.
+
+The still-unexpired epoch-1 bearer was then presented to the real Gateway bootstrap endpoint and received HTTP `401` with `{"error":"valid capability required"}`. A newly issued epoch-2 grant `a8438ebb57ce923a4f789dd794fdb464` immediately received HTTP `200` from the same endpoint. This is direct runtime proof that `REVOKE ALL` permanently invalidates earlier security epochs and that re-enable cannot resurrect old capabilities; rejection cannot be attributed to TTL expiry or global disabled state.
+
 ## Operational notes / documentation debt before merge
 
 - Do not `source /etc/tethys-sentinel/service.env` for acceptance DB inspection. It is a systemd EnvironmentFile and the PostgreSQL DSN contains `&`; shell sourcing can corrupt/unset the DSN. Retrieve `SENTINEL_POSTGRES_DSN` silently from the running Control process environment or parse the EnvironmentFile with a non-shell parser.
@@ -236,21 +246,19 @@ Target-side evidence independently confirms transport cancellation: sshd accepte
 
 ## Current phase
 
-`0.1.0-dev.13` is deployed across the complete acceptance runtime. Real harmless SSH execution, one-shot approval non-reuse, and individual active grant revoke have passed on the intended infrastructure. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, restart persistence, durable one-shot approval consumption, and fail-closed active Worker authority leasing now have direct infrastructure evidence.
+`0.1.0-dev.13` is deployed across the complete acceptance runtime. Real harmless SSH execution, one-shot approval non-reuse, individual active revoke, active global revoke, and security-epoch non-revival have passed on the intended infrastructure. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, restart persistence, durable one-shot approval consumption, active authority leasing, and monotonic emergency epoch behavior now have direct infrastructure evidence.
 
-Do not merge to `main` yet. Remaining hard acceptance must prove active global revoke + epoch non-revival, PostgreSQL-unavailable startup fail-closed, sensitive-material boundary, and final documentation consistency.
+Do not merge to `main` yet. Remaining hard acceptance must prove PostgreSQL-unavailable Control startup fails closed, Worker sensitive-material/IPv6 boundaries, and final documentation consistency.
 
-Authority is currently enabled at epoch 1 for the controlled dev.13 acceptance window. The next revocation scenario intentionally ends that window with `REVOKE ALL` and must advance the authority epoch to 2.
+Authority is currently enabled at epoch 2 for the remaining controlled dev.13 acceptance. Fresh epoch-2 acceptance grant `a8438ebb57ce923a4f789dd794fdb464` works; pre-revoke epoch-1 capabilities are permanently stale.
 
 ## Next acceptance steps
 
-1. Run global active revoke with a fresh grant and live `sleep` execution; perform `REVOKE ALL` while the job is running, verify epoch `1 -> 2`, authority disabled, running SSH transport canceled, and job fails due authority loss.
-2. Re-enable epoch 2 only for the explicit stale-capability check, then prove pre-revoke epoch-1 capabilities cannot authenticate or submit work.
-3. Validate PostgreSQL-unavailable Control startup fails closed and never falls back to file persistence.
-4. Recheck Worker contains no agent capabilities, admin token, PostgreSQL credentials, Signer credentials/CA signing material, target inventory, or PVE credentials; complete final IPv6 bypass check.
-5. Correct acceptance documentation debts listed above.
-6. Record final evidence in this handoff.
-7. If all hard-boundary checks pass, perform the first WIP merge to `main` and review/update README/docs.
-8. If a new runtime/code blocker appears, fix on this branch, bump the next dev version, repeat affected CI/infrastructure tests, then reassess merge.
-9. Operator UI follows only after this acceptance/merge checkpoint.
-10. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Validate PostgreSQL-unavailable Control startup fails closed and never falls back to file persistence, without disturbing the live accepted Control instance.
+2. Recheck Worker contains no agent capabilities, admin token, PostgreSQL credentials, Signer credentials/CA signing material, target inventory, or PVE credentials; complete final IPv6 bypass check.
+3. Correct acceptance documentation debts listed above.
+4. Record final evidence in this handoff.
+5. If all hard-boundary checks pass, perform the first WIP merge to `main` and review/update README/docs.
+6. If a new runtime/code blocker appears, fix on this branch, bump the next dev version, repeat affected CI/infrastructure tests, then reassess merge.
+7. Operator UI follows only after this acceptance/merge checkpoint.
+8. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
