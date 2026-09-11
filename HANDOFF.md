@@ -1,9 +1,9 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-10
+Updated: 2026-09-11
 Current development version: `0.1.0-dev.11`
 Branch: `wip/bootstrap-security-core`
-Deployment: five acceptance VMs validated on `ai-server`; accepted dev.11 binaries deployed; remote PostgreSQL TLS/database/schema v2 bootstrapped fail-closed; runtime services/trust boundaries not yet enabled; no merge to `main` yet
+Deployment: five acceptance VMs validated on `ai-server`; accepted dev.11 binaries deployed; remote PostgreSQL TLS/database/schema v2 and runtime least-privilege boundary validated fail-closed; runtime services/trust boundaries not yet enabled; no merge to `main` yet
 
 ## Project goal
 
@@ -146,16 +146,21 @@ No runtime feature/version bump was made after `0.1.0-dev.11`; this checkpoint i
 - The accepted `0.1.0-dev.11` source at commit `d64e0ce2f4ff40377b37f71a05755cfa7cea7410` was built on `sentinel-control` with Go 1.27.1.
 - Required binaries were installed and SHA-256 verified on their intended guests: `sentinel-control` on `.210`, `sentinel-gateway` on `.211`, `sentinel-worker` on `.212`, `sentinel-signer` on `.213`, and `tethys-sentinel-exec` + `tethys-sentinel-consume` on `.214`. `sentinel-egress-policy` remains operator-side for later deployment on `ai-server`.
 - Remote PostgreSQL acceptance endpoint is `10.169.2.6:5432`, PostgreSQL `18.6`. Server TLS was replaced with a local self-signed certificate whose SAN is `IP:10.169.2.6`; Control pinned the exact certificate and `verify_ip 10.169.2.6` returned `Verify return code: 0 (ok)`. Certificate SHA-256 (DER) is `733d9274729649aa90fdad3e2a642108010e9cf8be98da8ff9bc98ba5aefa755`.
-- Dedicated PostgreSQL roles/LOGINs and database were created: `sentinel_owner`, `sentinel_migrator`, `sentinel_control`, `sentinel_deploy`, `sentinel_control_login`, database `tethys_sentinel` owned by `sentinel_owner`. Runtime HBA is restricted to `hostssl tethys_sentinel sentinel_control_login 10.169.2.210/32 scram-sha-256`.
+- Dedicated PostgreSQL roles/LOGINs and database were created: `sentinel_owner`, `sentinel_migrator`, `sentinel_control`, `sentinel_deploy`, `sentinel_control_login`, database `tethys_sentinel` owned by `sentinel_owner`.
+- Runtime HBA precedence was hardened so Sentinel-specific rules are evaluated before the pre-existing broad `10.169.0.0/16` rule: encrypted runtime access is allowed only as `hostssl tethys_sentinel sentinel_control_login 10.169.2.210/32 scram-sha-256`, with an explicit matching `hostnossl ... reject` rule immediately after it.
 - Reviewed migrations `0001_core.sql` and `0002_allow_once_job_binding.sql` from accepted commit `d64e0ce2f4ff40377b37f71a05755cfa7cea7410` were SHA-256 verified and applied successfully through `sentinel_deploy`; deploy role membership to `sentinel_migrator` and SET path to `sentinel_owner` were verified.
 - Fresh PostgreSQL state is verified at schema version `2`, authority `epoch=0`, `disabled=true`. AI authority therefore remains fail-closed.
+- Runtime database credentials were rotated after an operator transcript accidentally exposed the initial generated values; only the rotated credentials remain valid.
+- Runtime acceptance from `sentinel-control` (`10.169.2.210`) passed over `sslmode=verify-full`: authenticated user `sentinel_control_login`, server-observed client `10.169.2.210/32`, TLS active, schema version `2`, authority `0,true`, and membership in `sentinel_control` confirmed.
+- Negative PostgreSQL boundary tests passed: non-TLS runtime connection was rejected by `pg_hba.conf`; runtime `SET ROLE sentinel_owner`, `CREATE TABLE` in schema `sentinel`, and `DELETE` from `sentinel.agent_notes` were each denied for insufficient privilege.
+- PostgreSQL runtime boundary is therefore accepted for this infrastructure checkpoint; Gateway, Worker and Signer still receive no database credentials.
 - Gateway remains non-public and AI authority remains disabled until target hardening and Worker external egress acceptance are complete.
 - Runbooks cover separate TLS trust domains, PostgreSQL role/schema setup, isolated SSH CA generation, target sshd/forced wrapper/replay state, component environments/systemd shape, PVE Worker deny-by-default egress, positive/negative packet tests, harmless execution, one-shot approval non-reuse, individual/global active revoke and PostgreSQL restart/loss behavior.
 - Synchronized current architecture/API/emergency/SSH-execution/Worker-egress docs with the dev.11 PostgreSQL and active-revoke state.
 
 ## Current phase
 
-`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete. The five PVE acceptance guests and accepted binaries are in place, and the remote PostgreSQL TLS/database/schema v2 bootstrap is complete with fresh authority still disabled. The project is now moving to **runtime credential verification and trust-boundary/service configuration** for the first real constrained infrastructure acceptance.
+`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete. The five PVE acceptance guests and accepted binaries are in place, and the remote PostgreSQL boundary is fully bootstrapped and runtime-validated over verified TLS with least-privilege negative tests passing. Fresh authority remains disabled. The project is now moving to **Signer/SSH target and service trust-boundary configuration** for the first real constrained infrastructure acceptance.
 
 No production trust should be placed in it yet. File persistence remains explicit development compatibility only. PostgreSQL is the production candidate.
 
@@ -163,16 +168,15 @@ Do **not** merge to `main` yet. The operator merge rule requires the constrained
 
 ## Next implementation/deployment steps
 
-1. Verify `sentinel_control_login` from `10.169.2.210` over `sslmode=verify-full` using the pinned PostgreSQL certificate and confirm runtime least-privilege behavior.
-2. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
-3. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
-4. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
-5. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
-6. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
-7. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
-8. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
-9. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Configure Signer/SSH CA, disposable target account/sshd/wrapper/replay guard, Control mTLS/registry/context, Gateway and Worker.
+2. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
+3. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
+4. Validate Control restart persistence and PostgreSQL-unavailable startup fail-closed behavior.
+5. If every hard-boundary check passes, record evidence in HANDOFF and perform the first WIP merge to `main` with final README/docs review.
+6. If a runtime/code blocker is found, fix it on this branch, bump to `0.1.0-dev.12`, repeat affected CI/infrastructure tests, then reassess merge.
+7. Operator UI follows only after this infrastructure acceptance/merge checkpoint.
+8. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
 
 ## Deployment state
 
-Five acceptance VMs are validated on PVE node `ai-server` with final VMIDs/VLAN 1520 addresses, 8 GiB virtual disks, working SSH and QEMU Guest Agent. Accepted `0.1.0-dev.11` binaries are built and installed on the intended guests with SHA-256 verification. Remote PostgreSQL `18.6` at `10.169.2.6:5432` has pinned IP-SAN TLS, dedicated Sentinel database/roles, source-restricted runtime HBA, schema version 2, and fresh fail-closed authority state `epoch=0, disabled=true`. Runtime DB credential verification, service trust material/configuration, target hardening and Worker deny-by-default egress are not yet complete; AI authority remains disabled. No production trust should be placed in the current branch. No merge to `main` yet.
+Five acceptance VMs are validated on PVE node `ai-server` with final VMIDs/VLAN 1520 addresses, 8 GiB virtual disks, working SSH and QEMU Guest Agent. Accepted `0.1.0-dev.11` binaries are built and installed on the intended guests with SHA-256 verification. Remote PostgreSQL `18.6` at `10.169.2.6:5432` has pinned IP-SAN TLS, dedicated Sentinel database/roles, source-restricted TLS-only runtime HBA, schema version 2, fresh fail-closed authority state `epoch=0, disabled=true`, and a successfully validated least-privilege runtime boundary from Control. Service trust material/configuration, target hardening and Worker deny-by-default egress are not yet complete; AI authority remains disabled. No production trust should be placed in the current branch. No merge to `main` yet.
