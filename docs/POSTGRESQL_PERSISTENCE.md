@@ -1,6 +1,6 @@
 # PostgreSQL persistence boundary
 
-This document defines the implemented PostgreSQL persistence boundary for `0.1.0-dev.11`.
+This document defines the PostgreSQL persistence boundary introduced in `0.1.0-dev.11` and accepted on real constrained infrastructure in `0.1.0-dev.13`.
 
 PostgreSQL is not a SQL mirror of the development JSON/JSONL stores. It is the authoritative **transaction engine** for mutable security state so security-sensitive transitions and their required audit records either commit together or do not commit at all.
 
@@ -43,7 +43,7 @@ Production PostgreSQL connections require TLS with server verification. `SENTINE
 
 If PostgreSQL is selected and DSN parsing, connectivity, schema-version validation or runtime-role validation fails, Control Plane exits. It never falls back to file-backed authority.
 
-Runtime validates the exact supported schema version. `0.1.0-dev.11` requires schema version **2**.
+The current schema version is **2**.
 
 ## Schema and migrations
 
@@ -242,4 +242,18 @@ Current integration coverage includes:
 - emergency API behavior and PostgreSQL stores;
 - explicit backend selection and no PostgreSQL-to-file fallback.
 
-The remaining acceptance before the first WIP merge is **infrastructure**, not another persistence adapter: deploy the constrained components, apply the external PVE worker-egress policy, and run the non-destructive real SSH + negative packet-level + active-revoke acceptance procedure.
+## Real infrastructure acceptance
+
+The dev.13 constrained infrastructure run completed the previously outstanding persistence acceptance. Evidence in `HANDOFF.md` proves:
+
+- PostgreSQL 18.6 with schema version 2 and least-privilege runtime role on the intended topology;
+- authority state persisted exactly across Control restart;
+- real transactional end-to-end job/audit lifecycle completed through Worker/Signer/SSH target;
+- `allow_once` consumption remained durable and non-reusable;
+- individual and global revoke produced the expected durable/audited state while active execution later recorded the factual failure;
+- epoch 1 remained permanently stale after re-enabling epoch 2;
+- a second exact dev.13 Control binary with an unreachable PostgreSQL endpoint exited during startup before opening API listeners;
+- deliberate file-backend trap paths remained untouched, proving no silent PostgreSQL-to-file fallback;
+- the live accepted Control instance stayed active during the unavailable-database startup test.
+
+`docs/INFRASTRUCTURE_ACCEPTANCE.md` remains the repeatable procedure. Any future change to persistence semantics must re-run the relevant CI and real-infrastructure checks before release/merge.
