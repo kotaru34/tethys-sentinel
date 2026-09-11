@@ -3,7 +3,7 @@
 Updated: 2026-09-11
 Current development version: `0.1.0-dev.13`
 Branch: `wip/bootstrap-security-core`
-Status: constrained infrastructure acceptance in progress; real end-to-end SSH execution and `allow_once` non-reuse have passed on the intended PVE topology; active revocation and PostgreSQL-loss tests remain; no merge to `main` yet.
+Status: constrained infrastructure acceptance in progress; real end-to-end SSH execution, `allow_once` non-reuse, and individual active revoke have passed on the intended PVE topology; global revoke and PostgreSQL-loss tests remain; no merge to `main` yet.
 
 ## Project goal
 
@@ -216,6 +216,16 @@ Retrying the same request ID and identical argv created job `c3c1fad4270ec219afb
 
 Submitting the identical command with new request ID `acceptance-delete-dev13-0002` did not reuse the consumed approval. It returned `approval_required` and created a distinct approval `ecc19afad1b5f5a55bc6664fde1bfe35`. This proves `allow_once` cannot authorize a second job even for the same grant/target/category/scope.
 
+## Individual active revoke PASS
+
+The first manual timing attempt was inconclusive, not a product failure: job `574faf4d1aa82302b37f56fc95332273` reached its normal execution deadline at `03:36:15.572523+00`, while grant `86607a8f19e151b0ffb5d5159de13b86` was not revoked until `03:36:19.051428+00` because the operator round-trip through chat exceeded the 30-second job TTL.
+
+The timing-safe repeat used fresh grant `b5b4c5c32598fbd53149f7eaaf0e2e84` and job `859a427fb81fe7edcafd150441c32a11` (`sleep 20`) in one local Control-side script. Job entered `running` at `2026-09-11 03:40:36.748332+00`; the grant was revoked at `03:40:36.822632+00`, about 74 ms later and roughly 29 seconds before job expiry.
+
+Worker authority leasing detected the revoked grant and terminalized the job at `03:40:37.384472+00` as `failed`, `result_success=false`, `result_exit_code=-1`, `error_kind=execution_authority_lost`, about 0.56 seconds after revoke. Audit sequence 33-39 records grant issuance, authorization, claim, start, SSH certificate issue, `grant.revoked`, and failed completion in order.
+
+Target-side evidence independently confirms transport cancellation: sshd accepted the job-bound ED25519 certificate from Worker `10.169.2.212`, opened the `sentinel-ai` session at `03:40:36`, closed it at `03:40:37`, and no `sleep 20` process remained. This proves individual grant revoke terminates a live SSH execution rather than merely changing persistent job state.
+
 ## Operational notes / documentation debt before merge
 
 - Do not `source /etc/tethys-sentinel/service.env` for acceptance DB inspection. It is a systemd EnvironmentFile and the PostgreSQL DSN contains `&`; shell sourcing can corrupt/unset the DSN. Retrieve `SENTINEL_POSTGRES_DSN` silently from the running Control process environment or parse the EnvironmentFile with a non-shell parser.
@@ -226,16 +236,16 @@ Submitting the identical command with new request ID `acceptance-delete-dev13-00
 
 ## Current phase
 
-`0.1.0-dev.13` is deployed across the complete acceptance runtime. Real harmless SSH execution and one-shot approval non-reuse have passed on the intended infrastructure. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, restart persistence, and durable one-shot approval consumption now have direct infrastructure evidence.
+`0.1.0-dev.13` is deployed across the complete acceptance runtime. Real harmless SSH execution, one-shot approval non-reuse, and individual active grant revoke have passed on the intended infrastructure. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, restart persistence, durable one-shot approval consumption, and fail-closed active Worker authority leasing now have direct infrastructure evidence.
 
-Do not merge to `main` yet. Remaining hard acceptance must prove active individual revoke, active global revoke + epoch non-revival, PostgreSQL-unavailable startup fail-closed, sensitive-material boundary, and final documentation consistency.
+Do not merge to `main` yet. Remaining hard acceptance must prove active global revoke + epoch non-revival, PostgreSQL-unavailable startup fail-closed, sensitive-material boundary, and final documentation consistency.
 
-Authority is currently enabled at epoch 1 for the controlled dev.13 acceptance window. Use a fresh short-lived grant for each revocation scenario and close the window with revoke-all when appropriate.
+Authority is currently enabled at epoch 1 for the controlled dev.13 acceptance window. The next revocation scenario intentionally ends that window with `REVOKE ALL` and must advance the authority epoch to 2.
 
 ## Next acceptance steps
 
-1. Run individual active revoke with a fresh grant and `sleep 30`; wait until running, revoke that grant, verify Worker authority lease cancels SSH and job does not remain stuck.
-2. Run global active revoke with another fresh grant and `sleep 30`; wait running, `REVOKE ALL`, verify epoch increments from 1, authority disables, running transport is canceled, old capability remains stale after re-enable.
+1. Run global active revoke with a fresh grant and live `sleep` execution; perform `REVOKE ALL` while the job is running, verify epoch `1 -> 2`, authority disabled, running SSH transport canceled, and job fails due authority loss.
+2. Re-enable epoch 2 only for the explicit stale-capability check, then prove pre-revoke epoch-1 capabilities cannot authenticate or submit work.
 3. Validate PostgreSQL-unavailable Control startup fails closed and never falls back to file persistence.
 4. Recheck Worker contains no agent capabilities, admin token, PostgreSQL credentials, Signer credentials/CA signing material, target inventory, or PVE credentials; complete final IPv6 bypass check.
 5. Correct acceptance documentation debts listed above.
