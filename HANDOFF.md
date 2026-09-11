@@ -3,7 +3,7 @@
 Updated: 2026-09-11
 Current development version: `0.1.0-dev.13`
 Branch: `wip/bootstrap-security-core`
-Status: constrained infrastructure acceptance in progress; real end-to-end SSH execution, `allow_once` non-reuse, individual active revoke, active global revoke, epoch non-revival, and PostgreSQL-unavailable startup fail-closed have passed on the intended PVE topology; final Worker boundary/documentation checks remain; no merge to `main` yet.
+Status: all constrained infrastructure hard-boundary acceptance checks have passed on the intended PVE topology; documentation debt identified during acceptance has been corrected; pre-merge review is the next step.
 
 ## Project goal
 
@@ -134,7 +134,7 @@ Built from exact release HEAD `bd6796aae2ee192fd9d007bab39a40ab6870dbcc` with Go
 - `tethys-sentinel-consume` — `4ff50ff3c8b8db429efb952e2a8a418d1e16dae22cfd9174a4ac371adc2ef140`
 - `tethys-sentinel-exec` — `7ce5909e362cc937d992cc5f4b8bbae8e19e7f92d0aaf5672dd5ae59190dd0c4`
 
-Control, Gateway, Worker, Signer, and both target helpers are installed at these exact dev.13 hashes. Services report `0.1.0-dev.13` and are active. Control -> Signer authenticated mTLS health check passes. Worker polling is clean while authority is disabled.
+Control, Gateway, Worker, Signer, and both target helpers are installed at these exact dev.13 hashes. Services report `0.1.0-dev.13` and are active. Control -> Signer authenticated mTLS health check passes.
 
 ## dev.12 blocker and epoch transition
 
@@ -244,28 +244,51 @@ The test instance exited with code `1` during persistence initialization and log
 
 File-backend paths were deliberately redirected into a disposable trap directory, including a valid dummy job-auth key, so a silent backend fallback would have had everything needed to create file state. No grant, approval, audit, job, emergency, or note file was created. The original production `sentinel-control.service` remained `active` with the same PID. This is direct runtime proof that PostgreSQL-unavailable startup fails closed before serving APIs and cannot silently fall back to file persistence.
 
-## Operational notes / documentation debt before merge
+## Worker sensitive-material, service-account, mTLS and IPv6 boundary PASS
 
-- Do not `source /etc/tethys-sentinel/service.env` for acceptance DB inspection. It is a systemd EnvironmentFile and the PostgreSQL DSN contains `&`; shell sourcing can corrupt/unset the DSN. Retrieve `SENTINEL_POSTGRES_DSN` silently from the running Control process environment or parse the EnvironmentFile with a non-shell parser.
-- `PermitUserEnvironment no` must be global in Ubuntu/OpenSSH, not inside the target `Match` block; update `docs/INFRASTRUCTURE_ACCEPTANCE.md` accordingly.
-- Synchronize Worker-egress docs with dev.12/dev.13 `policy_in: ACCEPT` behavior.
-- Update stale documentation references that still call the harmless execution test a dev.11/dev.12 step.
-- Empty successful-request journals on Worker/Signer are not treated as missing execution evidence: canonical Control audit recorded `ssh.certificate_issued`, and target sshd independently recorded accepted certificate authentication. Do not infer that Signer was not called solely from an empty journal.
+The running Worker binary matched the accepted dev.13 SHA-256 `f7a49c35b04ba832480cc7a36c8b54964d69593553fad1066c5f5036c4a042f6`.
+
+The process environment contained only Worker-owned Sentinel settings: Control URL/CA/name, Worker ID/token, Worker mTLS client cert/key, poll intervals, SSH dial timeout, and output limit. Negative checks found no admin token, PostgreSQL DSN/backend authority, Signer credentials/CA signing material, SSH target inventory, PVE credentials, agent capability, or mutable local authority-store variables. Files under `/etc/tethys-sentinel` were limited to root-only `service.env`, Worker client key/cert, and Control mTLS CA; no suspicious authority filenames were present.
+
+Worker IPv6 was link-local only (`fe80::/64` on `eth0`) with no global/ULA address and no IPv6 default route, so there is no uncontained IPv6 egress path.
+
+The live process ran as dedicated `sentinel-worker` UID 999/GID 988, whose login shell is `/usr/sbin/nologin`; it had no sudo/wheel membership and `CapInh`, `CapPrm`, `CapEff`, and `CapAmb` were all zero. The service account could read the Worker client key/cert and Control CA but could not read root-only `/etc/tethys-sentinel/service.env`.
+
+Authenticated mTLS from the Worker service account using the configured client certificate reached the real Control HTTP layer and returned HTTP 404 for an intentionally nonexistent internal path. Repeating the probe without a client certificate failed at TLS with curl exit 56. This independently proves the Control internal endpoint requires client-certificate authentication.
+
+## Documentation consistency PASS
+
+Acceptance documentation was synchronized after the infrastructure tests without changing runtime version:
+
+- `docs/WORKER_EGRESS.md` commit `18c446cb2aa7bdbe0fb0f1f9582c07cb86325a30`: documents dev.12/dev.13 `policy_in: ACCEPT`, accepted packet-level behavior, and current revoke semantics.
+- `docs/INFRASTRUCTURE_ACCEPTANCE_REMOTE_POSTGRES.md` commit `66083103cf7eab0e3a07fe151b34418196fd23cb`: updates the remote PostgreSQL profile to dev.13 and documents safe non-shell DSN inspection.
+- `docs/INFRASTRUCTURE_ACCEPTANCE.md` commit `a89554ec7261df5a2e9a6ebd13553c4efecc00de`: updates the accepted source to dev.13, places `PermitUserEnvironment no` globally, requires `policy_in: ACCEPT`, documents pinned host-key negotiation, safe process-environment DSN inspection, timing-safe active revoke tests, PostgreSQL no-fallback startup testing, and the final Worker sensitive-material/mTLS/IPv6 boundary.
+
+No version bump was required because these commits only align documentation with already-deployed and already-accepted dev.13 behavior.
 
 ## Current phase
 
-`0.1.0-dev.13` is deployed across the complete acceptance runtime. Real harmless SSH execution, one-shot approval non-reuse, individual active revoke, active global revoke, security-epoch non-revival, and PostgreSQL-unavailable startup fail-closed have passed on the intended infrastructure. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, restart persistence, durable one-shot approval consumption, active authority leasing, monotonic emergency epoch behavior, and explicit no-fallback persistence now have direct infrastructure evidence.
+`0.1.0-dev.13` is deployed across the complete acceptance runtime and every planned hard-boundary test has passed on the intended infrastructure:
 
-Do not merge to `main` yet. Remaining hard acceptance is Worker sensitive-material/IPv6 boundary verification plus final documentation consistency.
+- real harmless end-to-end SSH execution;
+- `allow_once` consumption/non-reuse;
+- individual active revoke with live SSH transport cancellation;
+- active global `REVOKE ALL` with epoch advancement and live transport cancellation;
+- stale epoch non-revival after re-enable;
+- PostgreSQL restart persistence;
+- PostgreSQL-unavailable startup fail-closed with no file fallback/listener;
+- external Worker PVE egress containment;
+- Worker sensitive-material separation, unprivileged service identity, required mTLS, and no IPv6 bypass;
+- pinned SSH host-key verification/negotiation, target forced wrapper, replay consumption, Signer isolation and audit evidence.
 
-Authority is currently enabled at epoch 2 for the remaining controlled dev.13 acceptance. Fresh epoch-2 acceptance grant `a8438ebb57ce923a4f789dd794fdb464` works; pre-revoke epoch-1 capabilities are permanently stale.
+The known documentation debt found during acceptance has been corrected. The next step is the first WIP pre-merge review against `main`; if README/docs/CI/diff review is clean, merge `wip/bootstrap-security-core` to `main`.
 
-## Next acceptance steps
+Authority is currently enabled at epoch 2 from the stale-capability acceptance check. Fresh epoch-2 acceptance grant `a8438ebb57ce923a4f789dd794fdb464` worked during that test; pre-revoke epoch-1 capabilities are permanently stale. Before treating the acceptance environment as idle, close the controlled authority window with an operator `REVOKE ALL` unless immediately continuing with another explicitly controlled test.
 
-1. Recheck Worker contains no agent capabilities, admin token, PostgreSQL credentials, Signer credentials/CA signing material, target inventory, or PVE credentials; complete final IPv6 bypass check.
-2. Correct acceptance documentation debts listed above.
-3. Record final evidence in this handoff.
-4. If all hard-boundary checks pass, perform the first WIP merge to `main` and review/update README/docs.
-5. If a new runtime/code blocker appears, fix on this branch, bump the next dev version, repeat affected CI/infrastructure tests, then reassess merge.
-6. Operator UI follows only after this acceptance/merge checkpoint.
-7. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+## Next steps
+
+1. Review `wip/bootstrap-security-core` versus `main`, including README and all changed documentation, and verify current branch CI/required checks.
+2. If pre-merge review is clean, perform the first WIP merge to `main` and update this handoff with the merge commit/state.
+3. Close the temporary acceptance authority window with `REVOKE ALL` when no further controlled test is running.
+4. Operator UI follows after this acceptance/merge checkpoint.
+5. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
