@@ -22,7 +22,7 @@ Gateway, Worker and Signer still receive no PostgreSQL credentials. Only Control
 
 The existing cluster must satisfy all of the following before acceptance:
 
-- PostgreSQL major supported by the current CI matrix (15 or 18 for `0.1.0-dev.11`);
+- PostgreSQL major supported by the current CI matrix (15 or 18 for `0.1.0-dev.13`);
 - TLS enabled and verifiable from the Control VM;
 - a dedicated `tethys_sentinel` database;
 - repository bootstrap roles `sentinel_owner`, `sentinel_migrator`, and `sentinel_control`;
@@ -73,6 +73,8 @@ Expected fresh state:
 0|t
 ```
 
+For post-deployment inspection, do **not** shell-source `/etc/tethys-sentinel/service.env`: a systemd `EnvironmentFile` value such as the PostgreSQL DSN may contain `&` and is not shell syntax. When inspecting the running Control instance, retrieve `SENTINEL_POSTGRES_DSN` from `/proc/<MainPID>/environ` without printing it, or parse the EnvironmentFile with a non-shell parser.
+
 ## Egress implications
 
 The remote database endpoint is **not** part of Worker egress. Worker continues to receive only:
@@ -99,4 +101,4 @@ source-restricted HBA rule
 PostgreSQL-unavailable Control startup fail-closed result
 ```
 
-All remaining tests from `docs/INFRASTRUCTURE_ACCEPTANCE.md` remain mandatory: TLS/mTLS boundaries, PVE Worker egress, real SSH execution, one-shot approval non-reuse, individual revoke, global revoke/epoch non-revival, persistence across Control restart, and audit consistency.
+All remaining tests from `docs/INFRASTRUCTURE_ACCEPTANCE.md` remain mandatory: TLS/mTLS boundaries, PVE Worker egress, real SSH execution, one-shot approval non-reuse, individual revoke, global revoke/epoch non-revival, persistence across Control restart, Worker sensitive-material/IPv6 boundary verification, and audit consistency.
