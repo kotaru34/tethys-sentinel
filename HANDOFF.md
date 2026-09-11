@@ -2,8 +2,8 @@
 
 Updated: 2026-09-11
 Current development version: `0.1.0-dev.13`
-Branch: `wip/bootstrap-security-core`
-Status: all constrained infrastructure hard-boundary acceptance checks have passed on the intended PVE topology and the pre-merge README/security-document consistency review is complete; only CI on this final docs-only branch state remains before the first WIP merge.
+Branch: `main`
+Status: the first accepted WIP security-core merge is complete. All constrained infrastructure hard-boundary checks passed on the intended PVE topology, the pre-merge README/security-document review was completed, and PR #1 merged into `main` at `478009b1310b782db7dc20c629bada475c3f3d63`.
 
 ## Project goal
 
@@ -268,14 +268,28 @@ Acceptance and pre-merge documentation were synchronized after the infrastructur
 - `docs/POSTGRESQL_PERSISTENCE.md` — `5347ba55de5a74ad05fb3f24f4a6a79687c6f6c4`: records accepted PostgreSQL persistence/no-fallback infrastructure boundary instead of claiming it remains outstanding.
 - `docs/EXECUTION_PROTOCOL.md` — `78224f9e3c84796d9a7bbefbf461f6d7e6edd778`: execution protocol brought through PostgreSQL, active authority lease, epoch revocation and dev.13 pinned negotiation.
 - `docs/THREAT_MODEL.md` — `11748ffb9d575f9b30ee94897e507add56748a89`: removes pre-PostgreSQL assumptions, adds dev.13 negotiation, IPv6-bypass and current PVE semantics, and records accepted infrastructure status.
+- Pre-merge `HANDOFF.md` finalization — `44ace2905769c87e01b0fdef28f25cc39a5305d6`.
 
-The pre-merge branch review found `wip/bootstrap-security-core` ahead of `main` with no reverse divergence (`main`/merge base `325792ecde3e8e37349711823db035e99cf9f9a7`). Runtime binaries remain the exact accepted dev.13 release artifacts built from `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`; all later commits are documentation/evidence only.
+The pre-merge branch review found `wip/bootstrap-security-core` ahead of `main` with no reverse divergence (`main`/merge base `325792ecde3e8e37349711823db035e99cf9f9a7`). Runtime binaries remain the exact accepted dev.13 release artifacts built from `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`; all later pre-merge commits were documentation/evidence only.
+
+PR #1 CI run `34560756474` passed on exact pre-merge head `44ace2905769c87e01b0fdef28f25cc39a5305d6`: module tidy, format, vet, unit tests, PostgreSQL 15 schema/privilege/integration, and PostgreSQL 18 schema/privilege/integration all succeeded.
 
 No version bump was required for these commits because they only align documentation with already-deployed and already-accepted dev.13 behavior.
 
+## First WIP merge PASS
+
+PR #1, `WIP: merge accepted Tethys Sentinel dev.13 security core`, was merged using a normal merge commit rather than squash so the complete dev.4 -> dev.13 implementation and acceptance history remains visible.
+
+- accepted PR head: `44ace2905769c87e01b0fdef28f25cc39a5305d6`
+- target: `main`
+- merge commit: `478009b1310b782db7dc20c629bada475c3f3d63`
+- accepted runtime release remains `0.1.0-dev.13` / `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`
+
+The merge is a WIP/project checkpoint, not a declaration that dev.13 is a production release.
+
 ## Current phase
 
-`0.1.0-dev.13` is deployed across the complete acceptance runtime and every planned hard-boundary test has passed on the intended infrastructure:
+`0.1.0-dev.13` remains deployed across the complete acceptance runtime and every planned hard-boundary test passed on the intended infrastructure:
 
 - real harmless end-to-end SSH execution;
 - `allow_once` consumption/non-reuse;
@@ -288,15 +302,13 @@ No version bump was required for these commits because they only align documenta
 - Worker sensitive-material separation, unprivileged service identity, required mTLS, and no IPv6 bypass;
 - pinned SSH host-key verification/negotiation, target forced wrapper, replay consumption, Signer isolation and audit evidence.
 
-README and the security/acceptance documentation have now been reviewed and synchronized with that evidence. The remaining pre-merge gate is CI on this final docs-only branch state. When that is green, create/merge the first WIP PR into `main` without changing the accepted runtime version.
+The first security-core WIP merge is complete on `main`. The next product phase may proceed from this accepted checkpoint; operator UI is the planned next major area, followed later by the deliberately narrow AI/MCP surface.
 
-Authority is currently enabled at epoch 2 from the stale-capability acceptance check. Fresh epoch-2 acceptance grant `a8438ebb57ce923a4f789dd794fdb464` worked during that test; pre-revoke epoch-1 capabilities are permanently stale. Before treating the acceptance environment as idle, close the controlled authority window with an operator `REVOKE ALL` unless immediately continuing with another explicitly controlled test.
+Authority on the acceptance environment was last observed enabled at epoch 2 after the stale-capability test. Fresh epoch-2 acceptance grant `a8438ebb57ce923a4f789dd794fdb464` worked during that test; pre-revoke epoch-1 capabilities are permanently stale. Close the controlled authority window with an operator `REVOKE ALL` before treating the acceptance environment as idle.
 
 ## Next steps
 
-1. Verify CI on this final docs-only branch head.
-2. Create and merge `wip/bootstrap-security-core` into `main`, preserving the WIP history rather than squashing it.
-3. Update this handoff on `main` with the merge commit/state.
-4. Close the temporary acceptance authority window with `REVOKE ALL` when no further controlled test is running.
-5. Operator UI follows after this acceptance/merge checkpoint.
-6. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Close the temporary acceptance authority window with `REVOKE ALL` when no further controlled test is running.
+2. Begin the operator UI phase from `main`, using a new development branch when implementation starts and bumping the version when new released functionality is introduced.
+3. Keep the accepted security boundaries above invariant; any change to them requires targeted CI and infrastructure re-acceptance.
+4. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
