@@ -62,9 +62,10 @@ func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential 
 	stderr := newDigestWriterWithLimiter(limit, overflow)
 
 	config := &ssh.ClientConfig{
-		User:            target.User,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(credential.Signer)},
-		HostKeyCallback: ssh.FixedHostKey(pinnedKey),
+		User:              target.User,
+		Auth:              []ssh.AuthMethod{ssh.PublicKeys(credential.Signer)},
+		HostKeyCallback:   ssh.FixedHostKey(pinnedKey),
+		HostKeyAlgorithms: hostKeyAlgorithmsForPinnedKey(pinnedKey),
 	}
 	dialer := net.Dialer{Timeout: dialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", target.Address)
@@ -147,6 +148,13 @@ func parsePinnedHostKey(value string) (ssh.PublicKey, error) {
 		return nil, errors.New("pinned SSH host key must not be a certificate")
 	}
 	return key, nil
+}
+
+func hostKeyAlgorithmsForPinnedKey(key ssh.PublicKey) []string {
+	if key.Type() == ssh.KeyAlgoRSA {
+		return []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
+	}
+	return []string{key.Type()}
 }
 
 type outputLimiter struct {
