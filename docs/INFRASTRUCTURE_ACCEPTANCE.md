@@ -1,6 +1,8 @@
 # Constrained infrastructure acceptance
 
-This runbook is the first real-infrastructure acceptance procedure for `0.1.0-dev.11`. It is deliberately conservative: use disposable/constrained guests, keep the Gateway non-public during acceptance, and do not merge to `main` until every required positive and negative check passes.
+This runbook is the repeatable real-infrastructure acceptance procedure for `0.1.0-dev.13`. It is deliberately conservative: use disposable/constrained guests, keep the Gateway non-public during acceptance, and do not merge to `main` until every required positive and negative check passes.
+
+The first dev.13 run on the intended PVE topology passed the hard-boundary checks described here. `HANDOFF.md` is the evidence record for that run; this document remains the reproducible procedure.
 
 The purpose is to prove the boundaries together, not merely prove that each binary starts.
 
@@ -32,7 +34,7 @@ sentinel-signer       1 vCPU / 512 MiB RAM
 sentinel-target-test  1 vCPU / 512 MiB RAM
 ```
 
-Debian 13 minimal is suitable for the application guests. Use PostgreSQL 18 for this first acceptance because it is directly covered by the CI matrix.
+Debian 13 minimal is suitable for the application guests. Use PostgreSQL 18 for this first acceptance because it is directly covered by the CI matrix. PostgreSQL 15 is also covered by CI.
 
 Do not publish the Gateway to the Internet yet. Reach it from an operator workstation/LAN only.
 
@@ -73,14 +75,14 @@ Never use production infrastructure as `sentinel-target-test` for this acceptanc
 
 ## Build the accepted source
 
-Build from the accepted `0.1.0-dev.11` state, not an arbitrary moving branch checkout:
+Build from the accepted `0.1.0-dev.13` release state, not an arbitrary moving branch checkout:
 
 ```sh
 git clone https://github.com/kotaru34/tethys-sentinel.git
 cd tethys-sentinel
-git checkout d64e0ce2f4ff40377b37f71a05755cfa7cea7410
+git checkout bd6796aae2ee192fd9d007bab39a40ab6870dbcc
 cat VERSION
-# expected: 0.1.0-dev.11
+# expected: 0.1.0-dev.13
 ```
 
 Use Go 1.27.1, matching CI. Build static binaries on a trusted build host before the Worker firewall is locked down:
@@ -156,7 +158,7 @@ postgres CA:
   server: sentinel-db, SAN DNS:sentinel-db + IP:$DB_IP, EKU serverAuth
 ```
 
-Tethys Sentinel requires TLS 1.3 and normal X.509 validation; do not use `InsecureSkipVerify`, unverified self-signed leaf certificates, or plaintext non-loopback development switches for this acceptance.
+Tethys Sentinel requires TLS 1.3 and normal X.509 validation; do not use `InsecureSkipVerify`, `curl -k`, unverified self-signed leaf certificates, or plaintext non-loopback development switches for this acceptance.
 
 A minimal OpenSSL pattern for each CA/leaf is:
 
@@ -355,10 +357,11 @@ sentinel-ai ALL=(root) NOPASSWD: /usr/local/libexec/tethys-sentinel-consume *
 
 Validate with `visudo -cf /etc/sudoers.d/tethys-sentinel-consume`. The helper itself is narrow and validates its job/binding arguments; do not grant any generic root shell or unrelated command.
 
-Add an sshd drop-in equivalent to:
+Add an sshd drop-in equivalent to the following. `PermitUserEnvironment no` is a **global** directive and must remain outside the `Match` block:
 
 ```text
 TrustedUserCAKeys /etc/ssh/tethys-sentinel-user-ca.pub
+PermitUserEnvironment no
 
 Match User sentinel-ai
     PubkeyAuthentication yes
@@ -372,7 +375,6 @@ Match User sentinel-ai
     AllowTcpForwarding no
     X11Forwarding no
     PermitTunnel no
-    PermitUserEnvironment no
 ```
 
 Run `sshd -t` before reload/restart. Do not proceed on configuration warnings/errors.
@@ -383,7 +385,7 @@ Obtain the target host key **locally on the target**, not through TOFU:
 cat /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-Copy that exact raw public key into Control's target registry.
+Copy that exact raw public key into Control's target registry. Sentinel must both verify the pinned raw key and constrain SSH host-key negotiation to algorithms compatible with that pin. For RSA pins, only RSA-SHA2 host-key algorithms are allowed; do not re-enable SHA-1 `ssh-rsa` fallback.
 
 Create one harmless user-owned file for the one-shot approval test:
 
@@ -455,6 +457,8 @@ SENTINEL_SIGNER_SERVER_NAME=sentinel-signer
 
 Because `DB_RUNTIME_PASS` is generated as hex, it is safe to embed in the URI without extra URL escaping for this acceptance.
 
+Do **not** `source /etc/tethys-sentinel/service.env` to recover the live PostgreSQL DSN for acceptance queries. A systemd EnvironmentFile is not a shell script and the DSN contains `&`. For post-start inspection, retrieve `SENTINEL_POSTGRES_DSN` silently from `/proc/<Control MainPID>/environ` or parse the EnvironmentFile with a non-shell parser; never print the DSN.
+
 ## Gateway VM
 
 Create `sentinel-gateway`, install the binary, the Gateway public server certificate/key, its Control mTLS client certificate/key and the Control mTLS CA certificate.
@@ -494,7 +498,7 @@ SENTINEL_WORKER_SSH_DIAL_TIMEOUT_SECONDS=5
 SENTINEL_WORKER_OUTPUT_LIMIT_BYTES=4194304
 ```
 
-Do not install agent capabilities, admin token, PostgreSQL credentials, SSH CA/signing material, signer credential, target inventory, or PVE credentials on Worker.
+Do not install agent capabilities, admin token, PostgreSQL credentials, SSH CA/signing material, signer credentials, target inventory, or PVE credentials on Worker.
 
 ## Minimal systemd service policy
 
@@ -554,14 +558,14 @@ sentinel-egress-policy \
   > "${WORKER_VMID}.fw"
 ```
 
-Review the output. It must contain `policy_out: DROP` and exactly the required outbound destinations:
+Review the output. It must contain **both** `policy_in: ACCEPT` and `policy_out: DROP`, plus exactly the required outbound destinations:
 
 ```text
 CONTROL_IP:9091/tcp
 TARGET_IP:22/tcp
 ```
 
-There must be no generic LAN, Internet, DNS or broad HTTPS allow.
+There must be no generic LAN, Internet, DNS or broad HTTPS allow. `policy_in: ACCEPT` preserves unspecified inbound behavior while this file enforces outbound containment; it is not permission to broaden autonomous Worker egress.
 
 Install it on the PVE node:
 
@@ -612,6 +616,15 @@ Replace the last address with the actual local resolver if necessary. DNS/53 mus
 
 Record the commands and exit status. A configuration diff alone is not acceptance.
 
+Also inspect IPv6 on Worker:
+
+```sh
+ip -6 addr show
+ip -6 route show
+```
+
+Acceptance requires no global/ULA IPv6 address and no IPv6 default route unless an equally strict external IPv6 egress policy has been deliberately configured and tested. Link-local-only IPv6 is acceptable.
+
 ## Initial authority state
 
 On the Control VM, query the loopback-only admin API:
@@ -630,7 +643,7 @@ Only after the egress and TLS boundaries pass, enable authority:
 curl -fsS -X POST \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"reason":"constrained infrastructure acceptance"}' \
+  -d '{"reason":"dev.13 constrained infrastructure acceptance"}' \
   http://127.0.0.1:8081/admin/v1/emergency/enable
 ```
 
@@ -644,7 +657,7 @@ GRANT_JSON="$({ curl -fsS -X POST \
   -H 'Content-Type: application/json' \
   -d '{
     "agent":"acceptance-agent",
-    "purpose":"dev.11 constrained infrastructure acceptance",
+    "purpose":"dev.13 constrained infrastructure acceptance",
     "targets":["sentinel-target-test"],
     "permissions":{"exec":true,"shell":false,"history_read":true,"notes_read":true,"notes_write":true},
     "history":{"current_session":true,"previous_sessions":false,"other_agents":false,"include_output":false},
@@ -657,14 +670,7 @@ test -n "$CAPABILITY" && test "$CAPABILITY" != null
 test -n "$GRANT_ID" && test "$GRANT_ID" != null
 ```
 
-From the operator workstation, use Gateway TLS and the capability:
-
-```sh
-curl --fail --silent --show-error \
-  --cacert gateway-public-ca.crt \
-  -H "Authorization: Bearer $CAPABILITY" \
-  "https://${GATEWAY_IP}:8443/v1/bootstrap"
-```
+From the operator workstation, use Gateway TLS and the capability. If the Gateway certificate is DNS-only, connect using that DNS identity plus an explicit address mapping rather than disabling verification.
 
 Submit a harmless command:
 
@@ -674,45 +680,21 @@ curl --fail --silent --show-error \
   -H "Authorization: Bearer $CAPABILITY" \
   -H 'Content-Type: application/json' \
   -d '{
-    "request_id":"acceptance-true-0001",
+    "request_id":"acceptance-true-dev13-0001",
     "target":"sentinel-target-test",
     "argv":["true"],
-    "agent_reason":"non-destructive infrastructure acceptance"
+    "agent_reason":"non-destructive dev.13 infrastructure acceptance"
   }' \
   "https://${GATEWAY_IP}:8443/v1/commands/submit"
 ```
 
-Expected: `decision:"accepted"`. Worker should claim/start/sign/connect/complete it without operator approval. Verify in Control audit/history that the job reached a successful terminal state and produced exactly one authorization/claim/start/completion chain.
+Expected: `decision:"accepted"`. Worker should claim/start/sign/connect/complete it without operator approval. Verify in Control audit/history that the job reached a successful terminal state and produced exactly one authorization/claim/start/certificate/completion chain. Independently verify target sshd accepted the short-lived CA-signed certificate and the root replay marker exists.
 
 ## Test 2: one-shot approval path
 
-Confirm `/tmp/sentinel-acceptance-delete-me` exists on the disposable target, then submit:
+Confirm `/tmp/sentinel-acceptance-delete-me` exists on the disposable target, then submit `rm /tmp/sentinel-acceptance-delete-me` with a unique request ID.
 
-```sh
-curl --fail --silent --show-error \
-  --cacert gateway-public-ca.crt \
-  -H "Authorization: Bearer $CAPABILITY" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "request_id":"acceptance-rm-0001",
-    "target":"sentinel-target-test",
-    "argv":["rm","/tmp/sentinel-acceptance-delete-me"],
-    "agent_reason":"delete only the disposable acceptance marker"
-  }' \
-  "https://${GATEWAY_IP}:8443/v1/commands/submit"
-```
-
-Expected: `approval_required` and an approval ID.
-
-List pending approvals locally on Control:
-
-```sh
-curl -fsS \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  http://127.0.0.1:8081/admin/v1/approvals
-```
-
-Approve **once**:
+Expected: `approval_required` and an approval ID. Approve **once** through the loopback Control admin endpoint:
 
 ```sh
 curl -fsS -X POST \
@@ -722,24 +704,24 @@ curl -fsS -X POST \
   "http://127.0.0.1:8081/admin/v1/approvals/<APPROVAL_ID>/decision"
 ```
 
-Resubmit the **same** request ID and command. Expected: accepted and executed once. Confirm the marker is gone.
+Resubmit the **same** request ID and command. Expected: accepted and executed once. Confirm the marker is gone and the replay marker exists.
 
 Then submit the same command with a **new** request ID. It must not reuse the consumed one-shot approval; a new operator decision must be required. This is the real-infrastructure proof of the schema-v2 `consumed_by_job_id` invariant.
 
 ## Test 3: individual revoke during execution
 
-Issue a fresh grant and submit:
+Issue a fresh grant and submit a bounded foreground command such as:
 
 ```json
 {
-  "request_id":"acceptance-sleep-revoke-0001",
+  "request_id":"acceptance-active-revoke-dev13-0001",
   "target":"sentinel-target-test",
-  "argv":["sleep","30"],
-  "agent_reason":"bounded active-revoke acceptance"
+  "argv":["sleep","20"],
+  "agent_reason":"individual active revoke acceptance"
 }
 ```
 
-Wait until audit/job state shows `running`, then on Control:
+Avoid human/chat latency between observing `running` and issuing revoke. A single operator-side script should poll until the job is exactly `running` and immediately revoke the grant:
 
 ```sh
 curl -fsS -X POST \
@@ -749,32 +731,35 @@ curl -fsS -X POST \
 
 Expected:
 
-- worker authority lease turns false;
-- worker cancels the execution context/SSH transport;
-- the job does not remain stuck `running`;
-- completion records the factual terminal result/error;
+- grant `revoked_at` is after `started_at` but well before job expiry;
+- Worker authority lease turns false;
+- Worker cancels the execution context/SSH transport;
+- job becomes terminal and does not remain stuck `running`;
+- factual terminal error is `execution_authority_lost` for the accepted dev.13 path;
+- target sshd closes the session and the foreground `sleep` process disappears;
 - the revoked capability cannot submit new work.
 
-A target process that deliberately daemonizes/detaches is outside this generic guarantee; `sleep 30` is intentionally chosen because it remains tied to the SSH session.
+A target process that deliberately daemonizes/detaches is outside this generic guarantee; foreground `sleep` is intentionally chosen because it remains tied to the SSH session.
 
 ## Test 4: global revoke-all and epoch non-revival
 
-Enable authority if required, issue another short grant, and run another `sleep 30`. Once running:
+Enable authority if required, issue another short grant, and run another bounded foreground `sleep`. Once running, immediately perform:
 
 ```sh
 curl -fsS -X POST \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"reason":"acceptance active global revoke"}' \
+  -d '{"reason":"dev.13 active global revoke acceptance"}' \
   http://127.0.0.1:8081/admin/v1/emergency/revoke-all
 ```
 
 Expected:
 
 - global `disabled:true`;
-- epoch increments;
+- epoch increments exactly once;
 - staged/pending/claimed jobs are canceled;
 - running worker execution loses its authority lease and transport is canceled;
+- active foreground target process disappears;
 - old capability is invalid immediately.
 
 Then re-enable:
@@ -783,13 +768,13 @@ Then re-enable:
 curl -fsS -X POST \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"reason":"acceptance recovery after global revoke"}' \
+  -d '{"reason":"stale epoch capability non-revival acceptance"}' \
   http://127.0.0.1:8081/admin/v1/emergency/enable
 ```
 
-The pre-revoke capability must **still** fail after enable. Issue a new grant and confirm only the new epoch works.
+Re-enable must **not** increment the epoch. While the pre-revoke grant is still unexpired, present its bearer to the real Gateway. It must receive HTTP 401. Then issue a fresh grant in the new epoch and prove the same Gateway endpoint accepts it. This distinguishes permanent stale-epoch invalidation from ordinary TTL expiry or temporary global disable.
 
-## Test 5: PostgreSQL persistence/restart
+## Test 5: PostgreSQL persistence and fail-closed startup
 
 Finish/cancel active work, then perform a controlled Control Plane restart while PostgreSQL remains running.
 
@@ -797,15 +782,59 @@ Verify after restart:
 
 - schema version is still 2;
 - current epoch/disabled state is unchanged;
-- revoked grants do not revive;
+- revoked/stale grants do not revive;
 - audit history verifies;
 - previous terminal job/history state remains readable within granted scope.
 
-Then stop PostgreSQL and attempt to start Control Plane with `SENTINEL_PERSISTENCE_BACKEND=postgres`.
+For database inspection of the running Control service, do not shell-source its systemd EnvironmentFile. Derive the DSN silently from the process environment, for example:
 
-Expected: Control Plane startup fails. It must **not** create/open file stores and must not serve authority from stale local state.
+```sh
+PID="$(systemctl show -p MainPID --value sentinel-control.service)"
+DSN="$(tr '\0' '\n' < "/proc/$PID/environ" | sed -n 's/^SENTINEL_POSTGRES_DSN=//p')"
+test -n "$DSN"
+```
 
-Restore PostgreSQL, start Control Plane again, verify state, and leave global authority disabled at the end of the acceptance window unless another controlled test immediately follows.
+Never print the DSN.
+
+To prove startup fail-closed without unnecessarily taking down the accepted live Control instance, launch a **second copy of the exact deployed Control binary** with the live environment cloned from `/proc/<MainPID>/environ`, substitute only the PostgreSQL endpoint with a known-unreachable local endpoint, and use unused test admin/internal listen ports.
+
+Also redirect all file-backend paths into a disposable trap directory and provide any prerequisite dummy key needed by the file backend. Expected:
+
+- test Control exits nonzero during PostgreSQL initialization (`ping PostgreSQL` failure);
+- it does not open either test API listener;
+- no file-backed grant/approval/audit/job/emergency/note state appears in the trap directory;
+- production Control remains active with the same PID.
+
+This proves PostgreSQL loss fails closed before APIs are served and cannot silently fall back to local file authority.
+
+## Test 6: Worker sensitive-material, service-account, mTLS and IPv6 boundary
+
+Inspect the running Worker without printing secret values. The Worker process environment may contain only Worker-owned runtime material and ordinary tuning/configuration such as:
+
+```text
+SENTINEL_WORKER_ID
+SENTINEL_WORKER_TOKEN
+SENTINEL_CONTROL_URL
+SENTINEL_WORKER_TLS_CERT
+SENTINEL_WORKER_TLS_KEY
+SENTINEL_INTERNAL_SERVER_CA
+SENTINEL_INTERNAL_SERVER_NAME
+SENTINEL_WORKER_POLL_MS
+SENTINEL_WORKER_AUTHORITY_POLL_MS
+SENTINEL_WORKER_SSH_DIAL_TIMEOUT_SECONDS
+SENTINEL_WORKER_OUTPUT_LIMIT_BYTES
+```
+
+It must not contain agent capabilities, `SENTINEL_ADMIN_TOKEN`, PostgreSQL credentials/backend authority, Signer API/client credentials or SSH CA signing key, Control target inventory, PVE credentials, or local mutable authority stores.
+
+Verify filesystem permissions by file name/mode only. The Worker service account may read its client mTLS key/cert and Control CA, but must not be able to read the root-only EnvironmentFile directly. The Worker account must use a non-login shell, have no sudo/wheel membership, and the running process must have zero effective and ambient Linux capabilities.
+
+Prove the Control mTLS boundary both ways:
+
+1. as the Worker service account, use the configured Worker client cert/key and Control CA to request a nonexistent internal path; a normal HTTP-layer 4xx proves the authenticated TLS connection reached Control;
+2. repeat without a client certificate; TLS must fail before a normal HTTP response is accepted.
+
+Finally verify Worker IPv6 has no autonomous bypass: no global/ULA address and no IPv6 default route unless a separately reviewed/tested IPv6 PVE policy exists. Link-local IPv6 alone is acceptable.
 
 ## Required evidence
 
@@ -821,10 +850,15 @@ PVE generated-policy SHA256/drift verification result
 packet-level positive/negative results
 non-destructive execution job ID/result
 allow_once approval ID + bound job ID + non-reuse result
-individual revoke grant/job result
+individual revoke grant/job/timing + target session-close result
 revoke-all epoch before/after + running-job result
+stale old-epoch bearer 401 + fresh new-epoch bearer success
 Control restart persistence result
 PostgreSQL-unavailable startup fail-closed result
+Worker forbidden-material/env/files result
+Worker service UID/GID/capabilities result
+Worker authenticated mTLS + no-client-cert negative result
+Worker IPv6 address/default-route result
 relevant audit sequence range/hash head
 ```
 
@@ -836,15 +870,18 @@ The first WIP merge is allowed only when all of these are true:
 
 - all components use authenticated TLS/mTLS as designed;
 - PostgreSQL schema/runtime role checks pass;
-- Worker external PVE egress policy is installed and verified;
+- Worker external PVE egress policy is installed and verified with `policy_in: ACCEPT`, `policy_out: DROP`;
 - positive Worker Control/SSH paths work;
 - Internet, unrelated LAN, DNS and unlisted target ports fail from Worker;
+- Worker has no uncontained IPv6 egress path;
 - autonomous non-destructive command completes through the real target wrapper;
 - one-shot approval executes once and cannot authorize a second job;
-- individual revoke terminates active bounded execution authority;
+- individual revoke terminates active bounded execution authority and target SSH transport;
 - `REVOKE ALL` increments epoch, stops active authority, and old capabilities never revive after enable;
 - Control restart preserves PostgreSQL state;
-- PostgreSQL loss makes Control Plane fail closed with no file fallback;
+- PostgreSQL loss makes Control Plane fail closed with no file fallback or API listener;
+- Worker holds only its own runtime token/mTLS material and no Control/DB/Signer/PVE/agent authority secrets;
+- Worker service account is unprivileged and the no-client-cert mTLS negative test fails as expected;
 - audit/history remains internally consistent.
 
-Any failed hard-boundary check blocks the merge. Fix the implementation/configuration, repeat the affected tests, update HANDOFF, and bump the project version if code/functionality changes are required.
+Any failed hard-boundary check blocks the merge. Fix the implementation/configuration, repeat the affected tests, update `HANDOFF.md`, and bump the project version if code/functionality changes are required.
