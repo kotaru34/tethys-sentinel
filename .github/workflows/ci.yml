@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'wip/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Module tidy check
+        shell: bash
+        run: |
+          go mod tidy
+          changes="$(git status --porcelain -- go.mod go.sum)"
+          if [ -n "$changes" ]; then
+            echo "go.mod/go.sum are not tidy:"
+            printf '%s\n' "$changes"
+            echo
+            git diff -- go.mod || true
+            if [ -f go.sum ]; then
+              echo "----- go.sum -----"
+              cat go.sum
+              echo "----- end go.sum -----"
+            fi
+            exit 1
+          fi
+
+      - name: Format check
+        shell: bash
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "The following files need gofmt:"
+            printf '%s\n' "$files"
+            echo
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test -race ./...
+
+  postgres-schema:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['15', '18']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_PASSWORD: sentinel-ci-postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Bootstrap database roles
+        env:
+          PGPASSWORD: sentinel-ci-postgres
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d postgres -f db/bootstrap/roles.sql
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d postgres <<'SQL'
+          CREATE ROLE sentinel_deploy_ci LOGIN PASSWORD 'sentinel-ci-deploy';
+          GRANT sentinel_migrator TO sentinel_deploy_ci;
+          CREATE ROLE sentinel_control_ci LOGIN PASSWORD 'sentinel-ci-control';
+          GRANT sentinel_control TO sentinel_control_ci;
+          CREATE DATABASE sentinel_ci OWNER sentinel_owner;
+          SQL
+
+      - name: Apply schema as migrator
+        shell: bash
+        env:
+          PGPASSWORD: sentinel-ci-deploy
+        run: |
+          for migration in db/migrations/*.sql; do
+            echo "Applying ${migration}"
+            psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U sentinel_deploy_ci -d sentinel_ci -f "${migration}"
+          done
+
+      - name: Assert schema and privileges
+        env:
+          PGPASSWORD: sentinel-ci-postgres
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d sentinel_ci -f db/ci/assertions.sql
+
+      - name: PostgreSQL authority integration tests
+        env:
+          SENTINEL_TEST_POSTGRES_DSN: postgres://sentinel_control_ci:sentinel-ci-control@127.0.0.1:5432/sentinel_ci?sslmode=disable
+        run: go test -race ./internal/postgresrepo -run '^TestIntegration' -count=1
