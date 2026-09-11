@@ -3,7 +3,7 @@
 Updated: 2026-09-11
 Current development version: `0.1.0-dev.13`
 Branch: `wip/bootstrap-security-core`
-Status: all constrained infrastructure hard-boundary acceptance checks have passed on the intended PVE topology; documentation debt identified during acceptance has been corrected; pre-merge review is the next step.
+Status: all constrained infrastructure hard-boundary acceptance checks have passed on the intended PVE topology and the pre-merge README/security-document consistency review is complete; only CI on this final docs-only branch state remains before the first WIP merge.
 
 ## Project goal
 
@@ -93,7 +93,7 @@ Accepted at `162d1f3c038ae905a4e27a419d9d4a61789466ae`, Actions `34411432011`.
 - Target advertised RSA, ECDSA, and Ed25519 host keys while inventory correctly pinned Ed25519. `ssh.FixedHostKey` validated the negotiated key but the client did not constrain host-key algorithm negotiation, allowing a different advertised server key to be selected.
 - Fix commit `dd996a6b08ce4fef5a3f00479961aac89739f832`: constrain negotiation to the pinned key algorithm; RSA pins use RSA-SHA2 algorithms only.
 - Regression test commit `ff1f85c9005213009faa9f928e3e493b270eefee`: multi-host-key test server proves a pinned Ed25519 key succeeds even when another host key is also advertised.
-- Version bump commits `55acd72967cf08413307ab441239e53a81557300` and `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`.
+- Version bump commits `55acd72967cf08413307ab441239e53a81557300` and release HEAD `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`.
 - CI Actions `34557197627`: Go test/vet/tidy/format plus PostgreSQL 15 and 18 jobs all passed.
 
 ## Acceptance infrastructure
@@ -258,13 +258,20 @@ Authenticated mTLS from the Worker service account using the configured client c
 
 ## Documentation consistency PASS
 
-Acceptance documentation was synchronized after the infrastructure tests without changing runtime version:
+Acceptance and pre-merge documentation were synchronized after the infrastructure tests without changing runtime version:
 
-- `docs/WORKER_EGRESS.md` commit `18c446cb2aa7bdbe0fb0f1f9582c07cb86325a30`: documents dev.12/dev.13 `policy_in: ACCEPT`, accepted packet-level behavior, and current revoke semantics.
-- `docs/INFRASTRUCTURE_ACCEPTANCE_REMOTE_POSTGRES.md` commit `66083103cf7eab0e3a07fe151b34418196fd23cb`: updates the remote PostgreSQL profile to dev.13 and documents safe non-shell DSN inspection.
-- `docs/INFRASTRUCTURE_ACCEPTANCE.md` commit `a89554ec7261df5a2e9a6ebd13553c4efecc00de`: updates the accepted source to dev.13, places `PermitUserEnvironment no` globally, requires `policy_in: ACCEPT`, documents pinned host-key negotiation, safe process-environment DSN inspection, timing-safe active revoke tests, PostgreSQL no-fallback startup testing, and the final Worker sensitive-material/mTLS/IPv6 boundary.
+- `docs/WORKER_EGRESS.md` — `18c446cb2aa7bdbe0fb0f1f9582c07cb86325a30`: dev.12/dev.13 `policy_in: ACCEPT`, accepted packet-level behavior, current revoke semantics.
+- `docs/INFRASTRUCTURE_ACCEPTANCE_REMOTE_POSTGRES.md` — `66083103cf7eab0e3a07fe151b34418196fd23cb`: dev.13 remote PostgreSQL profile and safe non-shell DSN inspection.
+- `docs/INFRASTRUCTURE_ACCEPTANCE.md` — `a89554ec7261df5a2e9a6ebd13553c4efecc00de`: dev.13 release HEAD, global `PermitUserEnvironment no`, PVE inbound-preserve semantics, pinned host-key negotiation, timing-safe revoke tests, no-fallback PostgreSQL startup test and final Worker boundary procedure.
+- `README.md` — `01b4794f6119b79230b4efd6b25b4b4422b23ceb`: project status moved from stale dev.11/pre-acceptance language to dev.13 accepted WIP milestone.
+- `docs/SSH_EXECUTION.md` — `ba8a81c8965553648947421345c88ac337d3a0b8`: dev.13 host-key algorithm negotiation/RSA-SHA2 semantics and completed real-infrastructure acceptance.
+- `docs/POSTGRESQL_PERSISTENCE.md` — `5347ba55de5a74ad05fb3f24f4a6a79687c6f6c4`: records accepted PostgreSQL persistence/no-fallback infrastructure boundary instead of claiming it remains outstanding.
+- `docs/EXECUTION_PROTOCOL.md` — `78224f9e3c84796d9a7bbefbf461f6d7e6edd778`: execution protocol brought through PostgreSQL, active authority lease, epoch revocation and dev.13 pinned negotiation.
+- `docs/THREAT_MODEL.md` — `11748ffb9d575f9b30ee94897e507add56748a89`: removes pre-PostgreSQL assumptions, adds dev.13 negotiation, IPv6-bypass and current PVE semantics, and records accepted infrastructure status.
 
-No version bump was required because these commits only align documentation with already-deployed and already-accepted dev.13 behavior.
+The pre-merge branch review found `wip/bootstrap-security-core` ahead of `main` with no reverse divergence (`main`/merge base `325792ecde3e8e37349711823db035e99cf9f9a7`). Runtime binaries remain the exact accepted dev.13 release artifacts built from `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`; all later commits are documentation/evidence only.
+
+No version bump was required for these commits because they only align documentation with already-deployed and already-accepted dev.13 behavior.
 
 ## Current phase
 
@@ -281,14 +288,15 @@ No version bump was required because these commits only align documentation with
 - Worker sensitive-material separation, unprivileged service identity, required mTLS, and no IPv6 bypass;
 - pinned SSH host-key verification/negotiation, target forced wrapper, replay consumption, Signer isolation and audit evidence.
 
-The known documentation debt found during acceptance has been corrected. The next step is the first WIP pre-merge review against `main`; if README/docs/CI/diff review is clean, merge `wip/bootstrap-security-core` to `main`.
+README and the security/acceptance documentation have now been reviewed and synchronized with that evidence. The remaining pre-merge gate is CI on this final docs-only branch state. When that is green, create/merge the first WIP PR into `main` without changing the accepted runtime version.
 
 Authority is currently enabled at epoch 2 from the stale-capability acceptance check. Fresh epoch-2 acceptance grant `a8438ebb57ce923a4f789dd794fdb464` worked during that test; pre-revoke epoch-1 capabilities are permanently stale. Before treating the acceptance environment as idle, close the controlled authority window with an operator `REVOKE ALL` unless immediately continuing with another explicitly controlled test.
 
 ## Next steps
 
-1. Review `wip/bootstrap-security-core` versus `main`, including README and all changed documentation, and verify current branch CI/required checks.
-2. If pre-merge review is clean, perform the first WIP merge to `main` and update this handoff with the merge commit/state.
-3. Close the temporary acceptance authority window with `REVOKE ALL` when no further controlled test is running.
-4. Operator UI follows after this acceptance/merge checkpoint.
-5. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Verify CI on this final docs-only branch head.
+2. Create and merge `wip/bootstrap-security-core` into `main`, preserving the WIP history rather than squashing it.
+3. Update this handoff on `main` with the merge commit/state.
+4. Close the temporary acceptance authority window with `REVOKE ALL` when no further controlled test is running.
+5. Operator UI follows after this acceptance/merge checkpoint.
+6. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
