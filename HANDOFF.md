@@ -3,7 +3,7 @@
 Updated: 2026-09-11
 Current development version: `0.1.0-dev.13`
 Branch: `wip/bootstrap-security-core`
-Status: constrained infrastructure acceptance in progress; first real end-to-end SSH execution has passed on the intended PVE topology; approval/revocation and PostgreSQL-loss tests remain; no merge to `main` yet.
+Status: constrained infrastructure acceptance in progress; real end-to-end SSH execution and `allow_once` non-reuse have passed on the intended PVE topology; active revocation and PostgreSQL-loss tests remain; no merge to `main` yet.
 
 ## Project goal
 
@@ -206,6 +206,16 @@ Target evidence:
 This proves the full intended path on real infrastructure:
 Gateway -> Control -> PostgreSQL authorization/job -> Worker claim/start -> Control current-authority revalidation -> Signer certificate -> pinned SSH negotiation -> target forced wrapper/replay consume -> direct command execution -> terminal PostgreSQL/audit completion.
 
+## allow_once non-reuse PASS
+
+Disposable target command `rm /tmp/sentinel-acceptance-delete-me` was classified as high-risk `FILESYSTEM_DELETE`, scope `argv-sha256:d60ae195eac9e520c07e8c1aece64b7c3f8fc66f45cfa1feb070c36b448ae4a2`.
+
+First request `acceptance-delete-dev13-0001` returned `approval_required` with approval `2e8e148052890690352befedcfe8420b`; the file remained present before operator decision. Control decided that approval as `allow_once`.
+
+Retrying the same request ID and identical argv created job `c3c1fad4270ec219afb3f605af84ab6a`, bound to that approval. PostgreSQL terminal result was `succeeded`, `result_success=true`, `result_exit_code=0`; target file was deleted and replay marker `/var/lib/tethys-sentinel/executed/c3c1fad4270ec219afb3f605af84ab6a` exists.
+
+Submitting the identical command with new request ID `acceptance-delete-dev13-0002` did not reuse the consumed approval. It returned `approval_required` and created a distinct approval `ecc19afad1b5f5a55bc6664fde1bfe35`. This proves `allow_once` cannot authorize a second job even for the same grant/target/category/scope.
+
 ## Operational notes / documentation debt before merge
 
 - Do not `source /etc/tethys-sentinel/service.env` for acceptance DB inspection. It is a systemd EnvironmentFile and the PostgreSQL DSN contains `&`; shell sourcing can corrupt/unset the DSN. Retrieve `SENTINEL_POSTGRES_DSN` silently from the running Control process environment or parse the EnvironmentFile with a non-shell parser.
@@ -216,22 +226,21 @@ Gateway -> Control -> PostgreSQL authorization/job -> Worker claim/start -> Cont
 
 ## Current phase
 
-`0.1.0-dev.13` is deployed across the complete acceptance runtime and its first real harmless SSH execution has passed end to end. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, and restart persistence have direct infrastructure evidence.
+`0.1.0-dev.13` is deployed across the complete acceptance runtime. Real harmless SSH execution and one-shot approval non-reuse have passed on the intended infrastructure. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, restart persistence, and durable one-shot approval consumption now have direct infrastructure evidence.
 
-Do not merge to `main` yet. Remaining hard acceptance must prove one-shot approval non-reuse, active individual revoke, active global revoke + epoch non-revival, PostgreSQL-unavailable startup fail-closed, sensitive-material boundary, and final documentation consistency.
+Do not merge to `main` yet. Remaining hard acceptance must prove active individual revoke, active global revoke + epoch non-revival, PostgreSQL-unavailable startup fail-closed, sensitive-material boundary, and final documentation consistency.
 
-Authority is currently enabled at epoch 1 for the controlled dev.13 acceptance window. Use fresh short-lived grants for each destructive/revocation scenario and close the window with revoke-all when appropriate.
+Authority is currently enabled at epoch 1 for the controlled dev.13 acceptance window. Use a fresh short-lived grant for each revocation scenario and close the window with revoke-all when appropriate.
 
 ## Next acceptance steps
 
-1. Run `allow_once` on disposable target file `/tmp/sentinel-acceptance-delete-me`: first submission must require approval; local Control decision `allow_once`; retry same request/command must execute exactly once; new request ID for same command must require a new approval.
-2. Run individual active revoke with a fresh grant and `sleep 30`; wait until running, revoke that grant, verify Worker authority lease cancels SSH and job does not remain stuck.
-3. Run global active revoke with another fresh grant and `sleep 30`; wait running, `REVOKE ALL`, verify epoch increments from 1, authority disables, running transport is canceled, old capability remains stale after re-enable.
-4. Validate PostgreSQL-unavailable Control startup fails closed and never falls back to file persistence.
-5. Recheck Worker contains no agent capabilities, admin token, PostgreSQL credentials, Signer credentials/CA signing material, target inventory, or PVE credentials; complete final IPv6 bypass check.
-6. Correct acceptance documentation debts listed above.
-7. Record final evidence in this handoff.
-8. If all hard-boundary checks pass, perform the first WIP merge to `main` and review/update README/docs.
-9. If a new runtime/code blocker appears, fix on this branch, bump the next dev version, repeat affected CI/infrastructure tests, then reassess merge.
-10. Operator UI follows only after this acceptance/merge checkpoint.
-11. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Run individual active revoke with a fresh grant and `sleep 30`; wait until running, revoke that grant, verify Worker authority lease cancels SSH and job does not remain stuck.
+2. Run global active revoke with another fresh grant and `sleep 30`; wait running, `REVOKE ALL`, verify epoch increments from 1, authority disables, running transport is canceled, old capability remains stale after re-enable.
+3. Validate PostgreSQL-unavailable Control startup fails closed and never falls back to file persistence.
+4. Recheck Worker contains no agent capabilities, admin token, PostgreSQL credentials, Signer credentials/CA signing material, target inventory, or PVE credentials; complete final IPv6 bypass check.
+5. Correct acceptance documentation debts listed above.
+6. Record final evidence in this handoff.
+7. If all hard-boundary checks pass, perform the first WIP merge to `main` and review/update README/docs.
+8. If a new runtime/code blocker appears, fix on this branch, bump the next dev version, repeat affected CI/infrastructure tests, then reassess merge.
+9. Operator UI follows only after this acceptance/merge checkpoint.
+10. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
