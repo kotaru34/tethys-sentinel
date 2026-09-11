@@ -1,6 +1,6 @@
 # Execution Protocol
 
-This document defines the security-sensitive command execution protocol introduced in `0.1.0-dev.4` and extended through real SSH execution in `0.1.0-dev.6`.
+This document defines the security-sensitive command execution protocol introduced in `0.1.0-dev.4` and hardened through `0.1.0-dev.13`.
 
 ## Security goal
 
@@ -16,7 +16,7 @@ The AI Gateway never sends an executable job directly to a worker. Only the Cont
 - **Execution Worker**: private internal consumer. It cannot issue or broaden grants and never receives the agent capability.
 - **SSH Signer**: isolated CA boundary that signs only constrained per-job certificates.
 - **Target wrapper**: verifies the signer-bound job/binding against the separately transported immutable command envelope and local target identity.
-- **Operator**: approves or denies sensitive requests and can revoke grants.
+- **Operator**: approves or denies sensitive requests and can revoke grants or all AI authority.
 
 ## Immutable command binding
 
@@ -62,13 +62,15 @@ agent submit
     v
   claimed -- still NOT executable
     |
-    | authoritative start gate revalidates grant
+    | authoritative start gate revalidates authority/grant
     v
   running
     |
-    | ephemeral key + certificate/target gate
-    | pinned SSH + target replay consume
-    | direct remote exec(argv)
+    | current policy/grant certificate gate
+    | ephemeral Ed25519 key + short-lived certificate
+    | pinned host-key algorithm + exact-key SSH
+    | active authority lease
+    | target replay consume + direct exec(argv)
     v
   succeeded / failed
 ```
@@ -91,7 +93,7 @@ Claiming does not grant permission to execute yet.
 
 ### `running`
 
-The worker presents its worker credential, job ID and claim secret to the Control Plane `start` endpoint. The Control Plane revalidates the original grant immediately before changing the job to `running`.
+The worker presents its worker credential, job ID and claim secret to the Control Plane `start` endpoint. The Control Plane revalidates global authority and the original grant immediately before changing the job to `running`.
 
 A successful `start` still does not by itself provide SSH credentials.
 
@@ -99,13 +101,14 @@ A successful `start` still does not by itself provide SSH credentials.
 
 For a running job the worker generates a fresh Ed25519 keypair and sends only the public key to the Control Plane.
 
-The Control Plane re-checks:
+Immediately before requesting a certificate, the Control Plane re-checks:
 
-- running state;
-- claim secret;
-- job expiry;
-- command binding;
-- original grant activity;
+- running state and claim secret;
+- job expiry and immutable command binding;
+- current global security epoch/disabled state;
+- original grant activity, target scope and permissions;
+- current risk classification category/scope for immutable argv;
+- `shell=true` where the current execution class requires it;
 - existence of the logical target in operator-owned SSH target inventory.
 
 The Control Plane then asks the isolated Signer for a short-lived certificate and returns that certificate together with the protected target specification.
@@ -114,7 +117,7 @@ The worker verifies the certificate/private-key binding and target/job match bef
 
 ### remote execution
 
-The worker connects only to the Control-Plane-resolved literal target IP/port and verifies one exact pinned host key.
+The worker connects only to the Control-Plane-resolved literal target IP/port. Before SSH handshake selection it constrains host-key algorithms to those compatible with the operator-pinned raw key, then verifies that the negotiated key is exactly the configured pin. RSA pins use RSA-SHA2 and do not re-enable SHA-1 `ssh-rsa` fallback.
 
 The requested command is transported as a deterministic `sentinel-exec-v1` base64url JSON envelope rather than shell-quoted text.
 
@@ -126,58 +129,59 @@ The certificate force-command invokes `tethys-sentinel-exec --job <id> --binding
 
 Only then is the job consumed through target replay state and the verified argv launched directly.
 
+### active authority lease
+
+A running Worker checks the Control Plane execution-authority endpoint immediately before executor invocation and periodically while execution remains active. The default poll interval is 250 ms.
+
+Explicit denial or inability to verify current authority cancels the execution context and SSH transport fail-closed. This handles individual grant revoke, global `REVOKE ALL`, stale epoch, expiry, invalid claim and Control/mTLS loss.
+
 ### completion
 
 Completion requires the same worker path and claim secret. A completed job cannot be completed again, and the stored claim-token hash is cleared.
 
-The current result contains status/error metadata and output digest accounting, not raw stdout/stderr.
+Completion records the factual terminal result even if the original grant has been revoked after execution started. The current result contains status/error metadata and output digest accounting, not raw stdout/stderr.
 
 ## Approval semantics
 
-Risk classification is recomputed in the Control Plane.
+Risk classification is recomputed in the Control Plane and again before infrastructure credentials are issued.
 
 For an approval-required operation:
 
 - `deny` prevents job publication;
-- `allow_once` is consumed for one matching narrow operation;
-- `allow_session` remains scoped to grant + target + risk category + concrete scope key.
+- `allow_once` is consumed for one matching narrow operation and durably bound to exactly one job;
+- `allow_session` remains scoped to grant + target + risk category + concrete scope key only for classes where current policy permits reusable approval.
 
 The command is staged before one-shot approval consumption and published only after the approval/audit path succeeds.
 
 If the process crashes after `allow_once` has been durably consumed but before publication, retrying the same `request_id` recovers and publishes the already-staged matching job rather than requesting a second approval or creating another job.
 
-Interpreter/shell arbitrary-code carriers require another policy-hardening pass before production trust; exact transport binding does not make opaque code safe to classify.
+Known arbitrary-code/interpreter, privilege-launcher and remote-exec classes require both `exec=true` and `shell=true` and are `allow_once` only. Human approval cannot manufacture a missing capability.
 
 ## Revocation behavior
 
-Grant revocation is authoritative at multiple points:
+Grant/global revocation is authoritative at overlapping points:
 
-1. new agent submissions fail because the grant no longer authenticates;
-2. unclaimed pending/staged jobs for the grant are canceled;
-3. a job already claimed by a worker still cannot execute unless the subsequent `start` gate revalidates the grant successfully;
-4. a running job cannot obtain a new SSH certificate if the grant is revoked before certificate issuance.
+1. new agent submissions fail because the grant/global epoch no longer authenticates;
+2. staged/pending/claimed work is canceled where applicable and claim material is cleared;
+3. a claimed job cannot pass `start` unless current authority/grant still validates;
+4. a running job cannot obtain a new SSH certificate if current grant/epoch/policy has changed;
+5. after certificate issuance, the active Worker authority lease detects authority loss and cancels the SSH execution context/transport.
 
-After a certificate has been issued, OpenSSH provides no server-side instant revocation primitive for that already-issued certificate. `dev.6` limits the remaining window by:
+OpenSSH certificates themselves do not provide an instant server-side revocation list for an already-established connection. Sentinel therefore combines active Worker transport cancellation with short certificate lifetime, source-address restriction, certificate validity capped by job expiry, external Worker egress containment and target-side at-most-once replay consumption.
 
-- short certificate lifetime;
-- source-address restriction;
-- certificate validity capped by job expiry;
-- worker execution context capped by job expiry;
-- target-side at-most-once replay consumption.
+`REVOKE ALL` additionally increments a monotonic security epoch and disables authority. Re-enable preserves the new epoch, so pre-revoke capabilities never become valid again.
 
-A later global emergency-control milestone will add coordinated active worker/session termination semantics.
+## Persistence and job-store integrity
 
-## Job-store integrity
+`SENTINEL_PERSISTENCE_BACKEND=file` remains an explicit development compatibility mode. File-backed execution records use local integrity protection and are not the production durability model.
 
-The bootstrap file-backed execution store uses HMAC-SHA-256 records with a Control-Plane-only integrity key.
+`SENTINEL_PERSISTENCE_BACKEND=postgres` is the production-candidate backend. PostgreSQL schema version 2 persists mutable grants, approvals, jobs, emergency authority, audit/history and Trust-2 notes. Security-sensitive transitions and their required audit events commit transactionally, and the runtime role has least privilege.
 
-This is not encryption. It makes unauthorized modification detectable: an attacker who edits target, argv, status or other protected fields without the HMAC key cannot produce a valid record.
-
-The production persistence migration is expected to move transactional state to PostgreSQL and preserve equivalent or stronger integrity/audit guarantees.
+PostgreSQL startup is explicit and fail-closed: unavailable/invalid PostgreSQL never silently falls back to file-backed authority.
 
 ## Worker authentication
 
-Worker endpoints are separate from agent endpoints and require a dedicated worker credential in addition to the protected internal transport.
+Worker endpoints are separate from agent endpoints and require a dedicated worker credential in addition to protected internal mTLS transport.
 
 The worker credential does not grant:
 
@@ -202,9 +206,11 @@ The protocol rejects or prevents:
 - completion with the wrong claim secret;
 - repeated completion after terminal state;
 - rebinding an existing `request_id` to different target/argv;
+- reuse of a consumed `allow_once` approval for a second job;
 - target execution with a mismatched local target ID;
 - target execution with a different command binding;
-- a second target-side consume of the same job ID.
+- a second target-side consume of the same job ID;
+- old security-epoch capability revival after re-enable.
 
 The target replay semantic is deliberately at-most-once: once the root-protected marker is consumed, a process-start failure does not automatically reopen the job for remote replay.
 
@@ -212,20 +218,21 @@ The target replay semantic is deliberately at-most-once: once the root-protected
 
 - TCP dial timeout is bounded.
 - SSH handshake has an explicit deadline even if the outer context has none.
-- The execution context cannot outlive the job expiry.
+- SSH host-key algorithm negotiation is bound to the configured raw pin family.
+- The execution context cannot outlive the job/grant authority lifetime.
+- Periodic authority loss actively cancels SSH transport.
 - Stdout/stderr accounting is bounded per stream.
 - Output overflow actively closes the SSH transport.
 - Raw stdout/stderr is not persisted by the current worker.
 
 ## Current non-goals / remaining work
 
-`0.1.0-dev.6` still does **not** provide:
+The dev.13 execution protocol and its intended infrastructure boundaries have passed constrained real-infrastructure acceptance. Current non-goals/future work include:
 
-- production PostgreSQL persistence;
-- independent network egress enforcement of the target registry;
-- complete emergency revoke-all/active-session shutdown semantics;
-- a final policy model for interpreters/shells/arbitrary-code carriers;
 - a production operator UI;
-- formal guarantees that every remote descendant process on every supported OS is killed immediately on transport loss.
+- the deliberately narrow AI/MCP tool surface that will sit above the accepted broker APIs;
+- external audit sealing against an attacker able to coherently rewrite all trusted database state;
+- formal verification;
+- a generic guarantee that every detached/daemonized descendant process on every supported target OS dies immediately when an SSH transport is canceled.
 
-See `docs/SSH_EXECUTION.md` for the target transport/wrapper boundary and `docs/THREAT_MODEL.md` for the remaining security assumptions.
+See `docs/SSH_EXECUTION.md`, `docs/EMERGENCY_CONTROLS.md`, `docs/POSTGRESQL_PERSISTENCE.md`, and `docs/THREAT_MODEL.md` for the corresponding boundaries. Real acceptance evidence is recorded in `HANDOFF.md`, while `docs/INFRASTRUCTURE_ACCEPTANCE.md` remains the repeatable procedure.
