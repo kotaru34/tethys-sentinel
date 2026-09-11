@@ -3,7 +3,7 @@
 Updated: 2026-09-11
 Current development version: `0.1.0-dev.13`
 Branch: `wip/bootstrap-security-core`
-Status: constrained infrastructure acceptance in progress; real end-to-end SSH execution, `allow_once` non-reuse, individual active revoke, active global revoke, and epoch non-revival have passed on the intended PVE topology; PostgreSQL-loss and final boundary/documentation checks remain; no merge to `main` yet.
+Status: constrained infrastructure acceptance in progress; real end-to-end SSH execution, `allow_once` non-reuse, individual active revoke, active global revoke, epoch non-revival, and PostgreSQL-unavailable startup fail-closed have passed on the intended PVE topology; final Worker boundary/documentation checks remain; no merge to `main` yet.
 
 ## Project goal
 
@@ -236,6 +236,14 @@ For epoch non-revival, the pre-revoke grant remained unexpired (`expires_at=2026
 
 The still-unexpired epoch-1 bearer was then presented to the real Gateway bootstrap endpoint and received HTTP `401` with `{"error":"valid capability required"}`. A newly issued epoch-2 grant `a8438ebb57ce923a4f789dd794fdb464` immediately received HTTP `200` from the same endpoint. This is direct runtime proof that `REVOKE ALL` permanently invalidates earlier security epochs and that re-enable cannot resurrect old capabilities; rejection cannot be attributed to TTL expiry or global disabled state.
 
+## PostgreSQL-unavailable startup fail-closed PASS
+
+A second instance of the exact deployed Control binary (`sha256 3c1fd0b317ee43d7ee4e1bee1173f1daa3cd9681f152165bdd1a6844ca253ad7`) was launched with the live production process environment cloned without shell parsing, while only the PostgreSQL endpoint was replaced with unreachable `127.0.0.1:1`. The live production Control was left untouched throughout the test.
+
+The test instance exited with code `1` during persistence initialization and logged `open persistence backend: ping PostgreSQL: ... connect refused`. It never opened the dedicated test admin/internal listeners `127.0.0.1:28081` or `127.0.0.1:29091`.
+
+File-backend paths were deliberately redirected into a disposable trap directory, including a valid dummy job-auth key, so a silent backend fallback would have had everything needed to create file state. No grant, approval, audit, job, emergency, or note file was created. The original production `sentinel-control.service` remained `active` with the same PID. This is direct runtime proof that PostgreSQL-unavailable startup fails closed before serving APIs and cannot silently fall back to file persistence.
+
 ## Operational notes / documentation debt before merge
 
 - Do not `source /etc/tethys-sentinel/service.env` for acceptance DB inspection. It is a systemd EnvironmentFile and the PostgreSQL DSN contains `&`; shell sourcing can corrupt/unset the DSN. Retrieve `SENTINEL_POSTGRES_DSN` silently from the running Control process environment or parse the EnvironmentFile with a non-shell parser.
@@ -246,19 +254,18 @@ The still-unexpired epoch-1 bearer was then presented to the real Gateway bootst
 
 ## Current phase
 
-`0.1.0-dev.13` is deployed across the complete acceptance runtime. Real harmless SSH execution, one-shot approval non-reuse, individual active revoke, active global revoke, and security-epoch non-revival have passed on the intended infrastructure. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, restart persistence, durable one-shot approval consumption, active authority leasing, and monotonic emergency epoch behavior now have direct infrastructure evidence.
+`0.1.0-dev.13` is deployed across the complete acceptance runtime. Real harmless SSH execution, one-shot approval non-reuse, individual active revoke, active global revoke, security-epoch non-revival, and PostgreSQL-unavailable startup fail-closed have passed on the intended infrastructure. Worker external egress, Signer mTLS/CA, pinned host-key verification, target forced wrapper/replay, PostgreSQL transaction lifecycle, restart persistence, durable one-shot approval consumption, active authority leasing, monotonic emergency epoch behavior, and explicit no-fallback persistence now have direct infrastructure evidence.
 
-Do not merge to `main` yet. Remaining hard acceptance must prove PostgreSQL-unavailable Control startup fails closed, Worker sensitive-material/IPv6 boundaries, and final documentation consistency.
+Do not merge to `main` yet. Remaining hard acceptance is Worker sensitive-material/IPv6 boundary verification plus final documentation consistency.
 
 Authority is currently enabled at epoch 2 for the remaining controlled dev.13 acceptance. Fresh epoch-2 acceptance grant `a8438ebb57ce923a4f789dd794fdb464` works; pre-revoke epoch-1 capabilities are permanently stale.
 
 ## Next acceptance steps
 
-1. Validate PostgreSQL-unavailable Control startup fails closed and never falls back to file persistence, without disturbing the live accepted Control instance.
-2. Recheck Worker contains no agent capabilities, admin token, PostgreSQL credentials, Signer credentials/CA signing material, target inventory, or PVE credentials; complete final IPv6 bypass check.
-3. Correct acceptance documentation debts listed above.
-4. Record final evidence in this handoff.
-5. If all hard-boundary checks pass, perform the first WIP merge to `main` and review/update README/docs.
-6. If a new runtime/code blocker appears, fix on this branch, bump the next dev version, repeat affected CI/infrastructure tests, then reassess merge.
-7. Operator UI follows only after this acceptance/merge checkpoint.
-8. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Recheck Worker contains no agent capabilities, admin token, PostgreSQL credentials, Signer credentials/CA signing material, target inventory, or PVE credentials; complete final IPv6 bypass check.
+2. Correct acceptance documentation debts listed above.
+3. Record final evidence in this handoff.
+4. If all hard-boundary checks pass, perform the first WIP merge to `main` and review/update README/docs.
+5. If a new runtime/code blocker appears, fix on this branch, bump the next dev version, repeat affected CI/infrastructure tests, then reassess merge.
+6. Operator UI follows only after this acceptance/merge checkpoint.
+7. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
