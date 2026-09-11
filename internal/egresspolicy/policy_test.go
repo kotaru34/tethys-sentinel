@@ -33,6 +33,7 @@ func TestBuildAndRenderPVE(t *testing.T) {
 	text := string(rendered)
 	for _, want := range []string{
 		"enable: 1",
+		"policy_in: ACCEPT",
 		"policy_out: DROP",
 		"OUT ACCEPT -dest 10.169.0.10 -p tcp -dport 9091 -log nolog # sentinel-control",
 		"OUT ACCEPT -dest 10.169.0.53 -p tcp -dport 22 -log nolog # ssh:dns01,dns01-alt",
