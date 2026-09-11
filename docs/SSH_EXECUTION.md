@@ -1,6 +1,6 @@
 # SSH execution boundary
 
-This document defines the real SSH execution path introduced in `0.1.0-dev.6` and hardened through `0.1.0-dev.11`.
+This document defines the real SSH execution path introduced in `0.1.0-dev.6` and hardened through `0.1.0-dev.13`.
 
 The execution path is intentionally split across independently enforced boundaries:
 
@@ -19,7 +19,7 @@ Execution Worker
     |
     | ephemeral Ed25519 key/job
     | short-lived OpenSSH certificate
-    | exact pinned host key
+    | pinned host-key algorithm + exact key
     | active authority lease
     v
 Target sshd
@@ -60,9 +60,13 @@ Security properties:
 - `address` is a literal global-unicast IPv4/IPv6 address plus port; DNS names are rejected;
 - `user` is operator-owned, never selected by the agent;
 - `host_key` is one exact raw SSH host public key; TOFU and insecure callbacks are rejected;
+- SSH host-key algorithm negotiation is restricted to algorithms compatible with the pinned raw key before the handshake selects a server host key;
+- Ed25519/ECDSA pins negotiate only their matching host-key family; RSA pins permit RSA-SHA2 algorithms and do not re-enable SHA-1 `ssh-rsa` fallback;
 - unknown JSON fields are rejected;
 - registry must be a regular file and not group/other writable;
 - agent never supplies SSH endpoint, Unix user or host-key pin.
+
+Constraining negotiation is required in addition to an exact-key callback. A callback alone can correctly reject a different host key selected from a multi-key server, but that would turn a valid configured pin into a deterministic handshake failure rather than selecting the pinned key family.
 
 Control Plane resolves the target only after validating running job, claim, immutable command binding, current policy and active grant/epoch.
 
@@ -77,12 +81,13 @@ For every running job Worker:
 5. verifies returned logical target equals immutable job target;
 6. performs an authoritative execution lease check;
 7. dials only the resolved literal IP/port;
-8. verifies SSH host authentication with the exact configured pin;
-9. opens one session without PTY/forwarding;
-10. sends deterministic job-bound command envelope;
-11. keeps polling Control Plane authority while the SSH execution remains active;
-12. cancels/tears down transport on authority loss;
-13. records terminal result metadata/output digests exactly once.
+8. constrains host-key negotiation to algorithms compatible with the configured pin;
+9. verifies the negotiated SSH host key equals the exact configured raw key;
+10. opens one session without PTY/forwarding;
+11. sends deterministic job-bound command envelope;
+12. keeps polling Control Plane authority while the SSH execution remains active;
+13. cancels/tears down transport on authority loss;
+14. records terminal result metadata/output digests exactly once.
 
 Worker receives no plaintext agent capability, PostgreSQL credentials, signer credential/CA key, target inventory file, or PVE firewall authority.
 
@@ -185,11 +190,13 @@ Before a target enters registry it needs:
 - narrow replay-helper sudo/doas permission;
 - only minimum separately approved application-specific elevated permissions.
 
+`PermitUserEnvironment no` should be set globally in sshd configuration rather than placed in the Sentinel account `Match` block on configurations where OpenSSH does not permit that directive in `Match` context.
+
 Certificate and sshd/account restrictions are intentionally redundant.
 
 ## PostgreSQL/start/revoke interaction
 
-`0.1.0-dev.11` moves mutable execution authority into PostgreSQL semantic transactions.
+`0.1.0-dev.11` moved mutable execution authority into PostgreSQL semantic transactions.
 
 A staged job is not worker-claimable until current policy/grant/approval authorization publishes it. One-shot approval consumption, job publication and authorization audit commit together.
 
@@ -208,7 +215,7 @@ Control Plane HTTPS literal IP:port
 registered target SSH literal IP:port set
 ```
 
-On PVE this is enforced outside the guest at the Worker VM interface. Worker/AI receives no privilege to widen the policy.
+On PVE this is enforced outside the guest at the Worker VM interface. Worker/AI receives no privilege to widen the policy. The generated per-VM policy uses `policy_in: ACCEPT` and `policy_out: DROP` so outbound containment does not accidentally replace unspecified inbound behavior with a deny policy.
 
 See `docs/WORKER_EGRESS.md`.
 
@@ -219,6 +226,8 @@ Automated tests cover, among other cases:
 - malformed/writable target registry rejection;
 - DNS/non-global-unicast target rejection;
 - exact host-key success and wrong-pin rejection;
+- multi-host-key server negotiation where the configured Ed25519 pin succeeds despite other advertised host keys;
+- RSA pin negotiation using RSA-SHA2 without SHA-1 `ssh-rsa` fallback;
 - real in-process SSH client/server path;
 - deterministic binding preservation for shell-looking argument data;
 - certificate/private-key matching and lifetime bounds;
@@ -230,19 +239,20 @@ Automated tests cover, among other cases:
 - global/individual revoke authority loss;
 - PostgreSQL staged authorization/start/complete semantics and replay rejection.
 
-## Remaining acceptance
+## Real infrastructure acceptance
 
-The earlier dev.6 code limits around powerful command classes, external Worker egress, global revoke and production mutable persistence are now implemented by dev.7–dev.11.
-
-The remaining blocker before first WIP merge is **real constrained infrastructure acceptance**, not another theoretical SSH layer. The test must prove:
+The dev.13 constrained infrastructure run completed the previously outstanding SSH acceptance on the intended PVE topology. Evidence in `HANDOFF.md` proves:
 
 - mTLS/TLS between real component VMs;
-- PostgreSQL schema/runtime role and restart/failure behavior;
+- PostgreSQL schema/runtime role, persistence and fail-closed startup behavior;
 - external Worker PVE egress enforcement plus negative packet tests;
-- real pinned-key SSH through the target forced wrapper;
+- successful pinned-key negotiation against a target advertising multiple host keys;
+- real CA-signed SSH through the target forced wrapper and root replay guard;
 - successful autonomous harmless command;
 - one-shot approval execution/non-reuse;
-- individual and global revoke during bounded live SSH execution;
+- individual and global revoke during bounded live SSH execution, including target session closure;
+- permanent stale-epoch rejection after re-enable;
+- Worker sensitive-material/mTLS/IPv6 boundary checks;
 - persistent verified audit/job state.
 
-Use `docs/INFRASTRUCTURE_ACCEPTANCE.md`. Any failed hard-boundary check blocks the merge and becomes an implementation/configuration fix before retest.
+`docs/INFRASTRUCTURE_ACCEPTANCE.md` remains the repeatable procedure. Any future failed hard-boundary check blocks the affected release/merge until fixed and retested.
