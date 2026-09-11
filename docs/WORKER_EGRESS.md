@@ -1,6 +1,6 @@
 # Worker egress enforcement
 
-`0.1.0-dev.9` introduced the operator-owned external network boundary for Execution Worker. The implementation remains current in `0.1.0-dev.11`; the remaining requirement is real PVE packet-level acceptance.
+`0.1.0-dev.9` introduced the operator-owned external network boundary for Execution Worker. `0.1.0-dev.12` corrected the generated PVE policy so inbound traffic is explicitly preserved with `policy_in: ACCEPT` while outbound traffic remains deny-by-default. The implementation and real PVE packet-level acceptance remain current in `0.1.0-dev.13`.
 
 ## Security objective
 
@@ -35,7 +35,7 @@ sentinel-egress-policy \
   > 1234.fw
 ```
 
-Generated policy has `enable: 1`, `policy_out: DROP`, explicit TCP destination/port allows and no blanket `OUT ACCEPT` fallback.
+Generated policy has `enable: 1`, `policy_in: ACCEPT`, `policy_out: DROP`, explicit TCP destination/port allows and no blanket `OUT ACCEPT` fallback. Explicit inbound accept is required because this per-VM policy is an outbound containment boundary and must not accidentally convert unspecified inbound traffic into a deny policy.
 
 Example shape:
 
@@ -43,6 +43,7 @@ Example shape:
 [OPTIONS]
 
 enable: 1
+policy_in: ACCEPT
 policy_out: DROP
 
 [RULES]
@@ -138,7 +139,7 @@ Worker -> registered target IP on unlisted port
 Worker -> DNS resolver:53
 ```
 
-The concrete first-deployment procedure is in `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
+The first dev.13 deployment passed these packet-level checks on the intended PVE topology. The repeatable deployment procedure remains in `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
 
 ## Established connections and active revocation
 
@@ -148,7 +149,7 @@ A stateful firewall may preserve an already-established TCP flow after a rule is
 
 Since `0.1.0-dev.10`, running Worker executions use a fail-closed Control Plane authority lease. Individual grant revoke, global `REVOKE ALL`, stale epoch, expiry, Control loss or authority-check failure cancels the Worker execution context and SSH transport. Short certificate TTL, job expiry and target one-shot replay protection remain additional layers.
 
-`0.1.0-dev.11` makes the relevant grant/emergency/job/audit transitions transactionally durable in PostgreSQL.
+`0.1.0-dev.11` made the relevant grant/emergency/job/audit transitions transactionally durable in PostgreSQL. Real dev.13 acceptance additionally proved both individual active revoke and active global revoke terminate live SSH execution, and proved pre-revoke security epochs never revive after re-enable.
 
 ## Failure behavior
 
@@ -166,4 +167,4 @@ Policy generation/verification fails closed when:
 
 `sentinel-egress-policy` is an operator/deployment tool. It must not enter the AI-facing MCP/tool surface, and Worker/agent must never receive an apply/reconcile path with PVE privileges.
 
-The first WIP merge remains blocked until real packet-level PVE acceptance passes alongside the SSH/revoke/PostgreSQL checks in `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
+The first WIP merge requires the egress boundary to stay consistent with the accepted real-infrastructure evidence documented in `HANDOFF.md` and the repeatable checks in `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
