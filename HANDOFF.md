@@ -3,7 +3,7 @@
 Updated: 2026-09-11
 Current development version: `0.1.0-dev.11`
 Branch: `wip/bootstrap-security-core`
-Deployment: five acceptance VMs validated on `ai-server`; accepted dev.11 binaries deployed; remote PostgreSQL boundary accepted; Signer SSH user CA and disposable target SSH hardening baseline configured; service mTLS/runtime wiring and Worker egress still pending; no merge to `main` yet
+Deployment: five acceptance VMs validated on `ai-server`; accepted dev.11 binaries deployed; remote PostgreSQL boundary accepted; Signer SSH CA + mTLS service boundary and disposable target SSH hardening baseline accepted; Control/Gateway/Worker runtime wiring and Worker egress still pending; no merge to `main` yet
 
 ## Project goal
 
@@ -154,18 +154,21 @@ No runtime feature/version bump was made after `0.1.0-dev.11`; this checkpoint i
 - Runtime acceptance from `sentinel-control` (`10.169.2.210`) passed over `sslmode=verify-full`: authenticated user `sentinel_control_login`, server-observed client `10.169.2.210/32`, TLS active, schema version `2`, authority `0,true`, and membership in `sentinel_control` confirmed.
 - Negative PostgreSQL boundary tests passed: non-TLS runtime connection was rejected by `pg_hba.conf`; runtime `SET ROLE sentinel_owner`, `CREATE TABLE` in schema `sentinel`, and `DELETE` from `sentinel.agent_notes` were each denied for insufficient privilege.
 - PostgreSQL runtime boundary is therefore accepted for this infrastructure checkpoint; Gateway, Worker and Signer still receive no database credentials.
-- On `sentinel-signer` (`10.169.2.213`), the dedicated `sentinel-signer` service identity and `/etc/tethys-sentinel` boundary were created, and the Ed25519 SSH user CA was generated directly on that VM. The private CA key remains local to Signer and is not copied to Control/Gateway/Worker/target.
+- On `sentinel-signer` (`10.169.2.213`), the dedicated `sentinel-signer` service identity and `/etc/tethys-sentinel` boundary were created, and the Ed25519 SSH user CA was generated directly on that VM. The private CA key remains local to Signer and is not copied to Control/Gateway/Worker/target. SSH CA fingerprint is `SHA256:pIfrpoGeNiKBtZrqzhOaFdIQknQrPsmIP3NiysW7opI`.
 - On `sentinel-target-test` (`10.169.2.214`), missing OpenSSH host keys were generated, `sentinel-ai` was created with locked password and real `/bin/sh`, root-owned `tethys-sentinel-exec`/`tethys-sentinel-consume` were installed under `/usr/local/libexec`, target ID was set to `sentinel-target-test`, root-only replay state was created, and the narrow consume-helper sudo rule passed `visudo` validation.
 - The Signer SSH CA public key was installed as `/etc/ssh/tethys-sentinel-user-ca.pub`; authorized principal is exactly `sentinel-ai`. Effective sshd policy for `sentinel-ai` from Worker `10.169.2.212` was validated with `sshd -T`: `AuthenticationMethods publickey`, passwords/kbd-interactive disabled, `AuthorizedKeysFile none`, CA/principals files set, PTY/agent/TCP/X11/tunnel disabled, `PermitUserEnvironment no`, and `PermitUserRC no`.
 - Ubuntu/OpenSSH rejected `PermitUserEnvironment` inside a `Match` block during the first target config attempt. The accepted target config places `PermitUserEnvironment no` globally before `Match User sentinel-ai`; `PermitUserRC no` remains in the user match. `sshd -t` then passed and the service was reloaded. The acceptance runbook must be corrected to reflect this validated placement before merge.
 - The target Ed25519 host-key pin obtained locally is `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJiGpu8vIyouJXQvM0vGHY+ZAeImWtyK6Pplcjpur+tb` (comment omitted for registry use).
-- Gateway remains non-public and AI authority remains disabled until service mTLS wiring and Worker external egress acceptance are complete.
+- A dedicated signer-mTLS CA was created on operator host `ai-server`; Signer received only its server leaf/key plus the signer client-CA certificate, while Control received only its `sentinel-control-signer` client leaf/key plus the signer CA certificate. The signer API token is root-only operator/service material and was not printed into the acceptance transcript.
+- `sentinel-signer.service` is enabled and active on `10.169.2.213:9443` with source-address policy fixed to Worker `10.169.2.212`, principal `sentinel-ai`, 45-second certificate TTL, and the local Ed25519 SSH user CA.
+- Signer mTLS acceptance from Control passed: authenticated client request to `/healthz` returned `{"status":"ok"}` over TLS 1.3; the same request without a client certificate was rejected with TLS 1.3 `certificate required`. The Signer mTLS boundary is therefore accepted.
+- Gateway remains non-public and AI authority remains disabled until Control/Gateway/Worker service wiring and Worker external egress acceptance are complete.
 - Runbooks cover separate TLS trust domains, PostgreSQL role/schema setup, isolated SSH CA generation, target sshd/forced wrapper/replay state, component environments/systemd shape, PVE Worker deny-by-default egress, positive/negative packet tests, harmless execution, one-shot approval non-reuse, individual/global active revoke and PostgreSQL restart/loss behavior.
 - Synchronized current architecture/API/emergency/SSH-execution/Worker-egress docs with the dev.11 PostgreSQL and active-revoke state.
 
 ## Current phase
 
-`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete. The five PVE acceptance guests and accepted binaries are in place; the remote PostgreSQL boundary is fully accepted; the Signer owns its local SSH user CA; and the disposable target SSH account/wrapper/replay/CA/sshd baseline is configured and syntax/effective-policy validated. Fresh authority remains disabled. The project is now moving to **Signer mTLS/API-token service wiring, then Control/Gateway/Worker trust material and runtime configuration** for the first real constrained infrastructure acceptance.
+`0.1.0-dev.11` remains the latest completed development release. Code/CI acceptance is complete. The five PVE acceptance guests and accepted binaries are in place; the remote PostgreSQL boundary is fully accepted; the Signer owns its local SSH user CA; the Signer TLS 1.3 mutual-authentication boundary is accepted; and the disposable target SSH account/wrapper/replay/CA/sshd baseline is configured and syntax/effective-policy validated. Fresh authority remains disabled. The project is now moving to **Control/Gateway/Worker trust material and runtime configuration, then Worker external egress enforcement** for the first real constrained infrastructure acceptance.
 
 No production trust should be placed in it yet. File persistence remains explicit development compatibility only. PostgreSQL is the production candidate.
 
@@ -173,8 +176,8 @@ Do **not** merge to `main` yet. The operator merge rule requires the constrained
 
 ## Next implementation/deployment steps
 
-1. Configure Signer mTLS trust domain/API token/systemd and verify only Control can authenticate to the signing API.
-2. Configure Control mTLS, target registry/context and PostgreSQL runtime service environment; then Gateway and Worker mTLS/service environments.
+1. Configure Control mTLS, target registry/context, PostgreSQL runtime environment and Signer client/API-token settings; start and validate Control while global authority remains disabled.
+2. Configure Gateway and Worker mTLS/service environments.
 3. Correct the OpenSSH `PermitUserEnvironment` placement in the infrastructure acceptance runbook before merge.
 4. Generate/apply/verify the Worker PVE egress policy **before** enabling AI authority, then run required packet-level negative tests.
 5. Enable authority and execute the harmless real SSH path, one-shot approval non-reuse test, individual active revoke and global revoke-all/epoch non-revival tests.
@@ -186,4 +189,4 @@ Do **not** merge to `main` yet. The operator merge rule requires the constrained
 
 ## Deployment state
 
-Five acceptance VMs are validated on PVE node `ai-server` with final VMIDs/VLAN 1520 addresses, 8 GiB virtual disks, working SSH and QEMU Guest Agent. Accepted `0.1.0-dev.11` binaries are built and installed on the intended guests with SHA-256 verification. Remote PostgreSQL `18.6` at `10.169.2.6:5432` has pinned IP-SAN TLS, dedicated Sentinel database/roles, source-restricted TLS-only runtime HBA, schema version 2, fresh fail-closed authority state `epoch=0, disabled=true`, and a successfully validated least-privilege runtime boundary from Control. Signer now owns a local Ed25519 SSH user CA; target `.214` has the hardened `sentinel-ai` wrapper/replay/CA/sshd baseline with validated effective policy and pinned Ed25519 host key. Signer mTLS/API token, Control/Gateway/Worker service trust material/configuration and Worker deny-by-default egress are not yet complete; AI authority remains disabled. No production trust should be placed in the current branch. No merge to `main` yet.
+Five acceptance VMs are validated on PVE node `ai-server` with final VMIDs/VLAN 1520 addresses, 8 GiB virtual disks, working SSH and QEMU Guest Agent. Accepted `0.1.0-dev.11` binaries are built and installed on the intended guests with SHA-256 verification. Remote PostgreSQL `18.6` at `10.169.2.6:5432` has pinned IP-SAN TLS, dedicated Sentinel database/roles, source-restricted TLS-only runtime HBA, schema version 2, fresh fail-closed authority state `epoch=0, disabled=true`, and a successfully validated least-privilege runtime boundary from Control. Signer owns a local Ed25519 SSH user CA and now runs an accepted TLS 1.3 mTLS service on `.213:9443` that rejects unauthenticated clients; target `.214` has the hardened `sentinel-ai` wrapper/replay/CA/sshd baseline with validated effective policy and pinned Ed25519 host key. Control/Gateway/Worker service trust material/configuration and Worker deny-by-default egress are not yet complete; AI authority remains disabled. No production trust should be placed in the current branch. No merge to `main` yet.
