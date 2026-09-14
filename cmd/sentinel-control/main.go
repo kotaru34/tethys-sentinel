@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -16,12 +19,23 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/buildinfo"
 	"github.com/kotaru34/tethys-sentinel/internal/contextstore"
 	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
+	"github.com/kotaru34/tethys-sentinel/internal/credentialapi"
 	"github.com/kotaru34/tethys-sentinel/internal/emergencyapi"
 	"github.com/kotaru34/tethys-sentinel/internal/resourceapi"
+	"github.com/kotaru34/tethys-sentinel/internal/risk"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 )
 
 func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	persistence, err := openPersistence(ctx)
+	cancel()
+	if err != nil {
+		log.Fatal("open persistence backend: ", err)
+	}
+	defer persistence.close()
+
+	contextStore := contextstore.New(env("SENTINEL_CONTEXT_FILE", "/etc/tethys-sentinel/context.json"))
 	adminToken := os.Getenv("SENTINEL_ADMIN_TOKEN")
 	if len(adminToken) < 32 {
 		log.Fatal("SENTINEL_ADMIN_TOKEN must be at least 32 characters")
@@ -31,42 +45,23 @@ func main() {
 		log.Fatal("SENTINEL_WORKER_TOKEN must be at least 32 characters")
 	}
 
-	startupCtx, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	persistence, err := openPersistence(startupCtx)
-	startupCancel()
+	api := controlapi.New(persistence.caps, persistence.approvals, persistence.audit, persistence.jobs, adminToken, workerToken)
+	resourceAPI := resourceapi.New(persistence.caps, persistence.audit, persistence.notes)
+	emergencyAPI := emergencyapi.New(persistence.emergency, adminToken, workerToken)
+	credentialHandler, err := credentialHandlerFromEnv(persistence.caps, persistence.jobs, workerToken)
 	if err != nil {
-		log.Fatalf("open persistence backend: %v", err)
+		log.Fatal("configure credential handler: ", err)
 	}
-	defer persistence.close()
-
-	contextStore, err := contextstore.New(env("SENTINEL_CONTEXT_FILE", "/etc/tethys-sentinel/context.json"))
-	if err != nil {
-		log.Fatalf("open authoritative context: %v", err)
-	}
-
-	caps := persistence.caps
-	api := controlapi.New(caps, persistence.approvals, persistence.audit, persistence.jobs, adminToken, workerToken)
-	emergencyAPI := emergencyapi.NewWithController(persistence.emergency, caps, adminToken, workerToken)
-	resources := resourceapi.New(caps, contextStore, persistence.audit, persistence.notes).Handler()
-	credentials, err := credentialHandlerFromEnv(caps, persistence.jobs, persistence.audit, workerToken)
-	if err != nil {
-		log.Fatalf("configure SSH signer client: %v", err)
-	}
-	controlInternal := api.InternalHandler()
-	executionInternal := api.ExecutionHandler(persistence.executionOps)
-	commandInternal := api.CommandHandler(persistence.approvalOps, persistence.authorizer)
 
 	internalMux := http.NewServeMux()
-	internalMux.Handle("/internal/v1/context", resources)
-	internalMux.Handle("/internal/v1/history", resources)
-	internalMux.Handle("/internal/v1/notes/", resources)
-	internalMux.Handle("POST /internal/v1/commands/submit", commandInternal)
-	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/ssh-certificate", credentials)
-	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/authority", emergencyAPI.InternalHandler())
-	internalMux.Handle("POST /internal/v1/execution/jobs/claim", emergencyAPI.GuardWorkerEnabled(executionInternal))
-	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/start", executionInternal)
-	internalMux.Handle("POST /internal/v1/execution/jobs/{id}/complete", executionInternal)
-	internalMux.Handle("/", controlInternal)
+	internalMux.Handle("/internal/v1/", api.InternalHandler())
+	internalMux.Handle("/internal/v1/resources/", resourceAPI.Handler())
+	internalMux.Handle("/internal/v1/execution/", emergencyAPI.InternalHandler())
+	internalMux.Handle("/internal/v1/execution/jobs/", credentialHandler)
+	internalMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": buildinfo.Version})
+	})
 
 	adminAddr := env("SENTINEL_ADMIN_LISTEN", "127.0.0.1:8081")
 	if !loopbackAddr(adminAddr) {
@@ -74,7 +69,15 @@ func main() {
 	}
 	grantAdmin := api.GrantHandler(persistence.grants)
 	approvalAdmin := api.ApprovalHandler(persistence.approvalOps)
+	operatorRead := api.OperatorReadHandler(persistence.operator)
 	adminMux := http.NewServeMux()
+	adminMux.Handle("GET /admin/v1/overview", operatorRead)
+	adminMux.Handle("GET /admin/v1/grants", operatorRead)
+	adminMux.Handle("GET /admin/v1/grants/{id}", operatorRead)
+	adminMux.Handle("GET /admin/v1/approvals", operatorRead)
+	adminMux.Handle("GET /admin/v1/jobs", operatorRead)
+	adminMux.Handle("GET /admin/v1/jobs/{id}", operatorRead)
+	adminMux.Handle("GET /admin/v1/audit", operatorRead)
 	adminMux.Handle("/admin/v1/emergency/", emergencyAPI.AdminHandler())
 	adminMux.Handle("/admin/v1/grants", grantAdmin)
 	adminMux.Handle("/admin/v1/grants/", grantAdmin)
@@ -175,4 +178,39 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func authenticateBearer(r *http.Request, expected string) bool {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return false
+	}
+	got := strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+	if len(got) != len(expected) || subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
+		return false
+	}
+	return true
+}
+
+func formatServerName(url string) string {
+	host := strings.TrimSpace(url)
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
+}
+
+func validateRiskPolicy() error {
+	for _, item := range risk.KnownCategories() {
+		if item == "" {
+			return fmt.Errorf("risk policy contains empty category")
+		}
+	}
+	return nil
 }
