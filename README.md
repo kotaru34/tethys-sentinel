@@ -38,7 +38,7 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 
 The accepted infrastructure/security core is `0.1.0-dev.13` — pinned SSH host-key negotiation + constrained infrastructure acceptance milestone.
 
-The `wip/operator-ui` branch contains the complete `0.1.0-dev.14` Operator UI v1 release-candidate surface, but the version is intentionally not bumped until final release metadata is prepared and the exact candidate is ready for real mTLS deployment/acceptance.
+The `wip/operator-ui` branch is now versioned `0.1.0-dev.14` and contains the complete Operator UI v1 release-candidate surface. Code/CI acceptance is complete; real mTLS deployment and operator-boundary acceptance are still required before dev.14 is considered infrastructure-accepted.
 
 The Control Plane requires an explicit persistence backend:
 
@@ -68,7 +68,7 @@ submit -> staged authorization -> pending -> claim -> start
 
 Powerful execution classes such as shells/interpreters, privilege launchers, remote pivots, mutable container workload execution/start/build, namespace execution and guest/jail exec paths require both `exec=true` and `shell=true`. They remain `allow_once` only.
 
-### Operator UI v1 release candidate
+### Operator UI v1 — dev.14 release candidate
 
 `sentinel-operator` is a separate privileged BFF/web process intended to run on the Control host. The browser authenticates with a dedicated operator TLS client certificate. The service replaces any browser-supplied authority with its own local Control admin credential and forwards only an identity derived from the verified client-certificate leaf.
 
@@ -83,7 +83,7 @@ The embedded UI provides:
 - read-only `TRUST_0` context/runbooks;
 - emergency Security controls, with global `REVOKE ALL` reachable from every page.
 
-The complete browser/BFF code checkpoint is `aaedad5518ad296426b01af856373672a1847f2d`; Actions run `34898343292` passed Go race tests, PostgreSQL 15/18, TypeScript/Vite build, CSP/storage checks, and frontend embed parity. Deployment and acceptance are documented in `docs/OPERATOR_DEPLOYMENT.md`.
+The complete browser/BFF code checkpoint is `aaedad5518ad296426b01af856373672a1847f2d`; Actions run `34898343292` passed Go race tests, PostgreSQL 15/18, TypeScript/Vite build, CSP/storage checks, and frontend embed parity. The final pre-version candidate `c3efc8ac1b760833744c8254130db0fd5400b11b` also passed the pinned frontend dependency gate plus all Go/PostgreSQL/UI checks. Deployment and acceptance are documented in `docs/OPERATOR_DEPLOYMENT.md`.
 
 ### Real-infrastructure acceptance
 
@@ -98,7 +98,7 @@ The first constrained PVE acceptance for dev.13 has passed on the intended isola
 - Worker sensitive-material separation, unprivileged service account, required Control mTLS, and no IPv6 bypass;
 - exact pinned host-key negotiation against a target advertising multiple host keys.
 
-`0.1.0-dev.13` remains a **development/WIP milestone, not a production release**. The accepted environment is intentionally disabled at security epoch 3 while Operator UI v1 is prepared for its own controlled acceptance.
+`0.1.0-dev.14` remains a **development/WIP release candidate, not a production release**. The accepted dev.13 environment stays intentionally disabled at security epoch 3 until the Operator UI mTLS boundary is deployed and accepted.
 
 ## Documentation
 
