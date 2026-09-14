@@ -2,9 +2,9 @@
 
 Updated: 2026-09-15
 Current development version: `0.1.0-dev.15`
-Branch: `wip/operator-ui`
+Branch: `main` (Operator UI WIP merged from `wip/operator-ui` via PR #2)
 
-Status: dev.15 Operator UI acceptance is complete on the intended infrastructure. Exact deployed runtime source is frozen at `41c343e83596d299af05cf92945395ec008f0fd9`, CI Actions `34903375824` PASS. Real mTLS deployment, Control/BFF integration, credential separation, read-only UI, CSRF/origin/spoofing negatives, grant issue/reveal/revoke, emergency controls, approval deny/allow-once/session-policy, one-shot non-reuse, and a real approved execution all pass. Final authority is fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`. README/deployment documentation has been synchronized; final branch CI/review and merge/release decision remain.
+Status: dev.15 Operator UI acceptance is complete on the intended infrastructure and the accepted WIP has been merged to `main`. Exact deployed runtime source remains frozen at `41c343e83596d299af05cf92945395ec008f0fd9`; deployed binary hashes are recorded below. Documentation-complete branch head `6aaf813e87f8ed84ae062b7d5dcc95b73bdff986` passed push CI `34910290003` and PR CI `34910423543`; PR #2 merged as `0cbe1e4dbb2d7beb0feb751ca1e42872064578ea`. Real mTLS deployment, Control/BFF integration, credential separation, read-only UI, CSRF/origin/spoofing negatives, grant issue/reveal/revoke, emergency controls, approval deny/allow-once/session-policy, one-shot non-reuse, and a real approved execution all pass. Final authority is fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`.
 
 ## Operator-mandated development rules
 
@@ -69,7 +69,7 @@ Accepted dev.13 runtime hashes:
 
 PR #1 merged the accepted core to `main` at `478009b1310b782db7dc20c629bada475c3f3d63`.
 
-## Operator UI implementation checkpoints
+## Operator UI implementation / merge checkpoints
 
 - UI contract: `docs/OPERATOR_UI.md`
 - backend/BFF checkpoint: `f5d37bec113c35efebc72ecc639e275f50161a10`, Actions `34892851385`
@@ -78,6 +78,10 @@ PR #1 merged the accepted core to `main` at `478009b1310b782db7dc20c629bada475c3
 - dev.15 deployment-boundary/runtime source: `41c343e83596d299af05cf92945395ec008f0fd9`, Actions `34903375824` PASS
 - README dev.15 acceptance sync: `32328c49c1a37463aa08af4940031f2ab30b3b8c`
 - deployment-guide isolated-root sync: `62ec7d53f60ba596d00c26737b193fbf230bf572`
+- documentation-complete WIP head: `6aaf813e87f8ed84ae062b7d5dcc95b73bdff986`
+- final push CI: Actions `34910290003` PASS
+- PR #2 CI: Actions `34910423543` PASS
+- PR #2 merge commit: `0cbe1e4dbb2d7beb0feb751ca1e42872064578ea`
 - embedded frontend archive SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`
 - CI pins Node `24.20.0`, npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95`
 
@@ -166,9 +170,9 @@ Epochs 0/1/2/3/4 capabilities are permanently stale after the epoch-5 revoke. Do
 
 ## Current phase / next steps
 
-1. Run final CI/check review on the documentation-complete `wip/operator-ui` branch head.
-2. Confirm no material acceptance blocker or untested authority-changing UI path remains.
-3. Merge/release `wip/operator-ui` per the WIP merge rule if final CI/review is clean.
-4. After merge, record the merge commit and final authority state in this handoff/main documentation if needed.
-5. Preserve accepted dev.13 execution/credential invariants; materially touched execution paths require targeted re-acceptance.
+1. Verify CI on the post-merge `main` handoff/documentation commit; no runtime rebuild or authority change is required for docs-only commits.
+2. Keep production authority fail-closed at epoch 5 unless a future explicitly controlled operation requires enablement.
+3. Decide separately whether `sentinel-operator.service` should be enabled at boot; acceptance deliberately left it running but boot-disabled.
+4. Preserve accepted dev.13 execution/credential invariants; materially touched execution paths require targeted re-acceptance.
+5. Future Operator UI work should start from `main` with a new branch/version as appropriate.
 6. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
