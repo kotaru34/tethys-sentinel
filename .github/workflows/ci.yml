@@ -72,11 +72,23 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '24.20.0'
 
-      - name: Install frontend dependencies
+      - name: Resolve and verify pinned frontend dependency graph
         working-directory: web/operator
-        run: npm install --no-audit --no-fund
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = 'v24.20.0'
+          test "$(npm --version)" = '11.19.0'
+          rm -f package-lock.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          test "$(sha256sum package-lock.json | cut -d' ' -f1)" = \
+            '9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95'
+
+      - name: Install pinned frontend dependencies
+        working-directory: web/operator
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Typecheck operator UI
         working-directory: web/operator
