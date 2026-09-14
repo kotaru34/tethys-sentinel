@@ -13,7 +13,7 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 - Arbitrary-code, privilege-launcher and remote-exec classes require `shell=true` and one-shot operator approval.
 - Reusable session approval is forbidden for powerful execution classes because identical argv can still reference mutable scripts, remote state or other changing inputs.
 - High-impact administrator mutations are semantically classified while known read-only inspection paths remain autonomous.
-- Control Plane, AI Gateway, Execution Worker, SSH Signer, target wrapper, emergency authority state, PostgreSQL authority state, and worker network boundary are independent security layers.
+- Control Plane, AI Gateway, Execution Worker, SSH Signer, target wrapper, emergency authority state, PostgreSQL authority state, worker network boundary, and operator BFF are independent security layers.
 - Execution uses immutable one-shot jobs rather than a separable authorize-now/execute-later flow.
 - A claimed job requires an authoritative pre-execution start gate so grant revocation can still stop it before executor invocation.
 - SSH credentials are short-lived OpenSSH user certificates issued by an isolated CA service only for an already-running, still-authorized job.
@@ -31,10 +31,14 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 - Active workers continuously revalidate execution authority; explicit revocation or loss of the Control Plane cancels the executor context and SSH transport fail-closed.
 - Production mutable security state is PostgreSQL-backed and security-sensitive state transitions are coupled with audit in the same transaction.
 - Append-oriented, tamper-evident audit trail with scoped history reads.
+- The browser operator UI is isolated behind `sentinel-operator`: dedicated HTTPS+mTLS, server-side Control admin authority, same-origin CSRF, strict CSP, no persistent browser secret storage, and no generic admin proxy.
+- Targets and `TRUST_0` context remain read-only in the browser; the UI cannot widen SSH inventory, Signer/CA policy, PVE egress or authoritative context.
 
 ## Status
 
-`0.1.0-dev.13` — pinned SSH host-key negotiation + constrained infrastructure acceptance milestone.
+The accepted infrastructure/security core is `0.1.0-dev.13` — pinned SSH host-key negotiation + constrained infrastructure acceptance milestone.
+
+The `wip/operator-ui` branch contains the complete `0.1.0-dev.14` Operator UI v1 release-candidate surface, but the version is intentionally not bumped until final release metadata is prepared and the exact candidate is ready for real mTLS deployment/acceptance.
 
 The Control Plane requires an explicit persistence backend:
 
@@ -49,9 +53,9 @@ Schema version **2** adds a durable `allow_once` approval-to-job binding. Grant 
 
 PostgreSQL startup is fail-closed: backend selection is explicit; DSN, connection, schema version and runtime role are validated; production requires verified TLS; and PostgreSQL failure never falls back to file authority state. Fresh PostgreSQL authority starts disabled.
 
-The PostgreSQL runtime role does not own the schema and receives no schema `CREATE`, table `DELETE`, superuser, role-administration, replication or bypass-RLS authority. Gateway, Worker and Signer receive no PostgreSQL credentials.
+The PostgreSQL runtime role does not own the schema and receives no schema `CREATE`, table `DELETE`, superuser, role-administration, replication or bypass-RLS authority. Gateway, Worker, Signer and `sentinel-operator` receive no PostgreSQL credentials.
 
-CI exercises the complete migration chain and integration suite against PostgreSQL 15 and 18 in addition to module tidy, `gofmt`, `go vet` and `go test -race ./...`. The accepted dev.13 release HEAD is `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`; its CI run passed the Go suite and both PostgreSQL matrix jobs.
+CI exercises the complete migration chain and integration suite against PostgreSQL 15 and 18 in addition to module tidy, `gofmt`, `go vet` and `go test -race ./...`. Operator UI CI also pins the frontend dependency graph, typechecks/builds the Preact/TypeScript/Vite source, forbids browser persistent secret storage and inline runtime content, and verifies the generated files exactly match the digest-pinned frontend archive embedded in the Go binary.
 
 The worker path is:
 
@@ -63,6 +67,23 @@ submit -> staged authorization -> pending -> claim -> start
 ```
 
 Powerful execution classes such as shells/interpreters, privilege launchers, remote pivots, mutable container workload execution/start/build, namespace execution and guest/jail exec paths require both `exec=true` and `shell=true`. They remain `allow_once` only.
+
+### Operator UI v1 release candidate
+
+`sentinel-operator` is a separate privileged BFF/web process intended to run on the Control host. The browser authenticates with a dedicated operator TLS client certificate. The service replaces any browser-supplied authority with its own local Control admin credential and forwards only an identity derived from the verified client-certificate leaf.
+
+The embedded UI provides:
+
+- Overview with fail-closed authority freshness state;
+- approval queue with exact structured argv and policy reason;
+- grant issue/revoke with one-time in-memory capability reveal;
+- job lifecycle/result inspection without inventing raw output;
+- verified audit browsing;
+- read-only protected SSH target inventory;
+- read-only `TRUST_0` context/runbooks;
+- emergency Security controls, with global `REVOKE ALL` reachable from every page.
+
+The complete browser/BFF code checkpoint is `aaedad5518ad296426b01af856373672a1847f2d`; Actions run `34898343292` passed Go race tests, PostgreSQL 15/18, TypeScript/Vite build, CSP/storage checks, and frontend embed parity. Deployment and acceptance are documented in `docs/OPERATOR_DEPLOYMENT.md`.
 
 ### Real-infrastructure acceptance
 
@@ -77,13 +98,15 @@ The first constrained PVE acceptance for dev.13 has passed on the intended isola
 - Worker sensitive-material separation, unprivileged service account, required Control mTLS, and no IPv6 bypass;
 - exact pinned host-key negotiation against a target advertising multiple host keys.
 
-`0.1.0-dev.13` is still a **development/WIP milestone, not a production release**. The acceptance result authorizes the first WIP merge checkpoint; further product work such as the operator UI and the deliberately narrow AI/MCP tool surface follows after that checkpoint.
+`0.1.0-dev.13` remains a **development/WIP milestone, not a production release**. The accepted environment is intentionally disabled at security epoch 3 while Operator UI v1 is prepared for its own controlled acceptance.
 
 ## Documentation
 
 - `docs/ARCHITECTURE.md` — trust boundaries and component responsibilities
 - `docs/THREAT_MODEL.md` — attacker assumptions, threats and invariants
 - `docs/API.md` — current development API surface
+- `docs/OPERATOR_UI.md` — Operator UI v1 product/security contract and acceptance criteria
+- `docs/OPERATOR_DEPLOYMENT.md` — mTLS operator deployment, systemd boundary and real acceptance procedure
 - `docs/EXECUTION_PROTOCOL.md` — staged/claim/start/complete semantics, idempotency and revocation behavior
 - `docs/EXECUTION_POLICY.md` — `exec`/`shell` capability split, powerful execution classes and approval semantics
 - `docs/OPERATIONAL_RISK.md` — semantic administrator mutation/read-only routing
