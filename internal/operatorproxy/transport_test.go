@@ -1,6 +1,7 @@
 package operatorproxy
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
