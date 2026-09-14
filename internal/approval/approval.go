@@ -83,7 +83,7 @@ func (s *Store) Request(_ context.Context, req Request) (Request, bool, error) {
 	defer s.mu.Unlock()
 	for _, existing := range s.requests {
 		if sameScope(existing, req) && existing.Status == Pending {
-			return existing, false, nil
+			return copyRequest(existing), false, nil
 		}
 	}
 	id, err := randomID()
@@ -100,7 +100,7 @@ func (s *Store) Request(_ context.Context, req Request) (Request, bool, error) {
 		delete(s.requests, req.ID)
 		return Request{}, false, err
 	}
-	return req, true, nil
+	return copyRequest(req), true, nil
 }
 
 func (s *Store) Decide(_ context.Context, id string, decision Decision, actor string) (Request, error) {
@@ -131,7 +131,7 @@ func (s *Store) Decide(_ context.Context, id string, decision Decision, actor st
 		s.requests[id] = old
 		return Request{}, err
 	}
-	return req, nil
+	return copyRequest(req), nil
 }
 
 func (s *Store) Match(_ context.Context, grantID, target, category, scopeKey string) (Request, bool, error) {
@@ -150,7 +150,7 @@ func (s *Store) Match(_ context.Context, grantID, target, category, scopeKey str
 		return Request{}, false, nil
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].CreatedAt.After(matches[j].CreatedAt) })
-	return matches[0], true, nil
+	return copyRequest(matches[0]), true, nil
 }
 
 func (s *Store) ConsumeAllowOnce(_ context.Context, id string) (Request, error) {
@@ -161,7 +161,7 @@ func (s *Store) ConsumeAllowOnce(_ context.Context, id string) (Request, error) 
 		return Request{}, errors.New("approval not found")
 	}
 	if req.Status == Consumed && req.Decision == AllowOnce {
-		return req, nil
+		return copyRequest(req), nil
 	}
 	if req.Status != Decided || req.Decision != AllowOnce {
 		return Request{}, errors.New("approval is not a consumable allow-once decision")
@@ -173,14 +173,14 @@ func (s *Store) ConsumeAllowOnce(_ context.Context, id string) (Request, error) 
 		s.requests[id] = old
 		return Request{}, err
 	}
-	return req, nil
+	return copyRequest(req), nil
 }
 
 func (s *Store) Get(_ context.Context, id string) (Request, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	req, ok := s.requests[id]
-	return req, ok
+	return copyRequest(req), ok
 }
 
 func (s *Store) MatchAndConsume(ctx context.Context, grantID, target, category, scopeKey string) (Decision, string, bool, error) {
@@ -202,10 +202,30 @@ func (s *Store) Pending(_ context.Context) []Request {
 	out := make([]Request, 0)
 	for _, req := range s.requests {
 		if req.Status == Pending {
-			out = append(out, req)
+			out = append(out, copyRequest(req))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
+}
+
+// List returns all factual approval records, newest first. Policy-derived
+// SessionApprovalAllowed is refreshed so operator views cannot inherit stale
+// reuse semantics from old persisted data.
+func (s *Store) List() []Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Request, 0, len(s.requests))
+	for _, req := range s.requests {
+		req.SessionApprovalAllowed = risk.SessionApprovalAllowedCategory(req.Category)
+		out = append(out, copyRequest(req))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
 	return out
 }
 
@@ -257,6 +277,16 @@ func (s *Store) persistLocked() error {
 
 func sameScope(a, b Request) bool {
 	return a.GrantID == b.GrantID && a.Target == b.Target && a.Category == b.Category && a.ScopeKey == b.ScopeKey
+}
+
+func copyRequest(in Request) Request {
+	out := in
+	out.Argv = append([]string(nil), in.Argv...)
+	if in.DecidedAt != nil {
+		t := *in.DecidedAt
+		out.DecidedAt = &t
+	}
+	return out
 }
 
 func randomID() (string, error) {
