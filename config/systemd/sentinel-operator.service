@@ -1,0 +1,45 @@
+[Unit]
+Description=Tethys Sentinel Operator UI
+Documentation=https://github.com/kotaru34/tethys-sentinel/blob/main/docs/OPERATOR_UI.md
+After=network-online.target sentinel-control.service
+Wants=network-online.target
+Requires=sentinel-control.service
+
+[Service]
+Type=simple
+User=tethys-operator
+Group=tethys-operator
+EnvironmentFile=/etc/tethys-sentinel/operator.env
+ExecStart=/usr/local/sbin/sentinel-operator
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+UMask=0077
+
+# The operator service needs only its HTTPS listener and loopback HTTP to Control.
+# It must not receive PostgreSQL, Worker, Signer/CA, SSH-target, or PVE credentials.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
