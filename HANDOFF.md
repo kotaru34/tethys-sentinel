@@ -1,9 +1,9 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-14
-Current development version: `0.1.0-dev.13`
+Current development version: `0.1.0-dev.14`
 Branch: `wip/operator-ui`
-Status: the accepted security core remains deployed fail-closed at epoch 3. Operator UI v1 now has a complete eight-page browser surface, embedded frontend, hardened mTLS BFF boundary, build-integrity checks, and deployment/acceptance artifacts. The complete UI code checkpoint `aaedad5518ad296426b01af856373672a1847f2d` passed all CI jobs in Actions `34898343292`. The active phase is release engineering and real operator-boundary acceptance before declaring `0.1.0-dev.14` accepted.
+Status: the accepted dev.13 security core remains deployed fail-closed at epoch 3. Operator UI v1 is now versioned `0.1.0-dev.14`: the eight-page browser surface, embedded frontend, hardened mTLS BFF boundary, build-integrity checks, dependency pinning, deployment artifacts and documentation are complete. The last pre-version candidate `c3efc8ac1b760833744c8254130db0fd5400b11b` passed all CI jobs in Actions `34899138274`; the active phase is exact dev.14 release-CI verification followed by real operator-boundary deployment/acceptance.
 
 ## Project goal
 
@@ -98,6 +98,14 @@ Accepted at `162d1f3c038ae905a4e27a419d9d4a61789466ae`, Actions `34411432011`.
 - Regression test `ff1f85c9005213009faa9f928e3e493b270eefee` covers a multi-host-key server.
 - Release HEAD `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`.
 - CI Actions `34557197627`: Go test/vet/tidy/format plus PostgreSQL 15 and 18 jobs all passed.
+
+### `0.1.0-dev.14` — mTLS Operator UI v1
+- Backend/BFF checkpoint `f5d37bec113c35efebc72ecc639e275f50161a10`, Actions `34892851385`.
+- Complete eight-page browser/UI checkpoint `aaedad5518ad296426b01af856373672a1847f2d`, Actions `34898343292`, all Go/PostgreSQL/frontend checks PASS.
+- Pre-version release candidate `c3efc8ac1b760833744c8254130db0fd5400b11b`, Actions `34899138274`, including pinned frontend dependency graph, all PASS.
+- Version file bump `cdf422ef973d9a42ff3cafa6e6df2f918e99f3e9`; buildinfo version bump `286383e81ff359d97b63c14b880e82a8a5669dab`.
+- README version sync `2b32c46ea6df5ec88752e5d01d660ff4b4bf8281`.
+- Real mTLS deployment/acceptance is still pending; dev.14 is not yet infrastructure-accepted.
 
 ## Accepted infrastructure checkpoint
 
@@ -209,22 +217,21 @@ Locked v1 direction:
 - Runtime template: `config/operator.env.example`; Control upstream remains loopback-only.
 - Deployment and real acceptance procedure: `docs/OPERATOR_DEPLOYMENT.md`, including dedicated operator-client TLS CA, server SAN requirements, Windows PFX/browser setup, token file handling, negative mTLS/CSRF tests and emergency semantics.
 - Frontend dependency resolution is additionally pinned fail-closed: exact Node `24.20.0` / npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95` verified before `npm ci --ignore-scripts`.
-- These release-engineering changes are not a version bump by themselves; `0.1.0-dev.14` is reserved for the complete release candidate that will be deployed and accepted.
+- Version metadata is now `0.1.0-dev.14`; the release candidate must pass exact-head CI before deployment.
 
 ## Current phase
 
-The accepted security core remains `0.1.0-dev.13` and the real acceptance environment remains fail-closed at epoch 3. The operator UI code surface is complete and the full browser/BFF checkpoint is CI-green. The remaining work is release engineering and real operator-boundary acceptance, not additional authority or backend feature expansion.
+`0.1.0-dev.14` is the active Operator UI release candidate. The previously accepted dev.13 execution/security core remains the deployed authority baseline and the real acceptance environment remains fail-closed at epoch 3. No new AI authority window is needed to install or inspect the UI.
 
 Do not open a new AI authority window merely to install or inspect the operator UI. Keep epoch 3 disabled until a controlled acceptance test explicitly requires authority. Operator mTLS, static/read-only UI paths and negative BFF boundary tests can be accepted while global AI authority remains disabled.
 
 ## Next steps
 
-1. Obtain an exact-head green CI run after the final deployment/docs/dependency-integrity cleanup.
-2. Review/update README and API/operator documentation so the release surface and security boundary are accurately described.
-3. Bump `VERSION`/build metadata to `0.1.0-dev.14` only when the release candidate is otherwise complete; then require green CI on that exact release HEAD.
-4. Build the exact dev.14 `sentinel-operator` binary and deploy it as a separate `tethys-operator` service on Control VM `10.169.2.210` using only loopback Control authority.
-5. Create a dedicated operator mTLS trust root, a server certificate matching the exact browser origin, and a password-protected operator client PFX for Windows. Do not reuse the SSH CA and do not leave CA/client private keys on the Sentinel host after transfer.
-6. Run `docs/OPERATOR_DEPLOYMENT.md` acceptance: no-client-cert TLS rejection, trusted-client UI access, server-certificate validation without insecure bypass, browser/BFF credential separation, CSRF/origin negatives, all eight UI workflows, and emergency revoke/re-enable/non-revival semantics.
-7. Record exact runtime hash, acceptance evidence and final authority state in this handoff. Only after acceptance decide the `wip/operator-ui` merge/release step.
-8. Preserve every accepted dev.13 security invariant; materially touched execution/credential boundaries require targeted infrastructure re-acceptance.
-9. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Require green CI on the exact final dev.14 release-metadata HEAD.
+2. Build the exact dev.14 `sentinel-operator` binary and record its SHA-256 before deployment.
+3. Deploy it as a separate `tethys-operator` service on Control VM `10.169.2.210` using only loopback Control authority.
+4. Create a dedicated operator mTLS trust root, a server certificate matching the exact browser origin, and a password-protected operator client PFX for Windows. Do not reuse the SSH CA and do not leave CA/client private keys on the Sentinel host after transfer.
+5. Run `docs/OPERATOR_DEPLOYMENT.md` acceptance: no-client-cert TLS rejection, trusted-client UI access, server-certificate validation without insecure bypass, browser/BFF credential separation, CSRF/origin negatives, all eight UI workflows, and emergency revoke/re-enable/non-revival semantics.
+6. Record exact runtime hash, acceptance evidence and final authority state in this handoff. Only after acceptance decide the `wip/operator-ui` merge/release step.
+7. Preserve every accepted dev.13 security invariant; materially touched execution/credential boundaries require targeted infrastructure re-acceptance.
+8. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
