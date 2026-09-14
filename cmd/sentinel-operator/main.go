@@ -16,6 +16,7 @@ import (
 
 	"github.com/kotaru34/tethys-sentinel/internal/buildinfo"
 	"github.com/kotaru34/tethys-sentinel/internal/operatorproxy"
+	"github.com/kotaru34/tethys-sentinel/internal/operatorweb"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 )
 
@@ -41,11 +42,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure operator proxy: %v", err)
 	}
+	webUI, err := operatorweb.New()
+	if err != nil {
+		log.Fatalf("load embedded operator UI: %v", err)
+	}
 
 	addr := env("SENTINEL_OPERATOR_LISTEN", ":8444")
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           proxy.Handler(),
+		Handler:           proxy.BrowserHandler(webUI),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
