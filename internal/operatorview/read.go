@@ -90,7 +90,7 @@ type Overview struct {
 	Authority      emergency.State    `json:"authority"`
 	Counts         OverviewCounts     `json:"counts"`
 	RecentFailures []executionjob.Job `json:"recent_failures"`
-	RecentAudit    []audit.Event       `json:"recent_audit"`
+	RecentAudit    []audit.Event      `json:"recent_audit"`
 }
 
 type GrantPage struct {
