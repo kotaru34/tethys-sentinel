@@ -127,11 +127,18 @@ func unpackArchive(archive []byte) (map[string]asset, error) {
 			return nil, errors.New("embedded operator archive has too many entries")
 		}
 
-		clean := path.Clean(hdr.Name)
-		if clean != hdr.Name || clean == "." || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "../") || !strings.HasPrefix(clean, "dist/") {
+		entryName := hdr.Name
+		if hdr.Typeflag == tar.TypeDir {
+			entryName = strings.TrimSuffix(entryName, "/")
+		}
+		clean := path.Clean(entryName)
+		if clean != entryName || clean == "." || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "../") || (clean != "dist" && !strings.HasPrefix(clean, "dist/")) {
 			return nil, fmt.Errorf("embedded operator archive contains unsafe path %q", hdr.Name)
 		}
 		if hdr.Typeflag == tar.TypeDir {
+			if clean != "dist" && clean != "dist/assets" {
+				return nil, fmt.Errorf("embedded operator archive contains unexpected directory %q", hdr.Name)
+			}
 			continue
 		}
 		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
