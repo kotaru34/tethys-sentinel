@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/kotaru34/tethys-sentinel/internal/approval"
+	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
 	"github.com/kotaru34/tethys-sentinel/internal/emergency"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
@@ -104,30 +105,34 @@ func (r *OperatorReader) Grants(ctx context.Context, options operatorview.ListOp
 	}
 
 	where := make([]string, 0, 3)
-	args := make([]any, 0, 4)
+	args := make([]any, 0, 5)
+	addArg := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
 	if options.Cursor != "" {
 		cursor, err := operatorview.DecodeTimeCursor(options.Cursor)
 		if err != nil {
 			return operatorview.GrantPage{}, err
 		}
-		args = append(args, cursor.Time, cursor.ID)
-		where = append(where, `(g.issued_at < $1 OR (g.issued_at = $1 AND g.id < $2))`)
-	}
-	addArg := func(value any) string {
-		args = append(args, value)
-		return fmt.Sprintf("$%d", len(args))
+		timeArg := addArg(cursor.Time)
+		idArg := addArg(cursor.ID)
+		where = append(where, `(g.issued_at < `+timeArg+` OR (g.issued_at = `+timeArg+` AND g.id < `+idArg+`))`)
 	}
 	if options.Status != "" {
-		epochArg := addArg(int64(authority.Epoch))
-		nowArg := addArg(now)
 		switch operatorview.GrantState(options.Status) {
 		case operatorview.GrantActive, operatorview.GrantDisabled:
+			nowArg := addArg(now)
+			epochArg := addArg(int64(authority.Epoch))
 			where = append(where, `g.revoked_at IS NULL AND g.expires_at > `+nowArg+` AND g.security_epoch = `+epochArg)
 		case operatorview.GrantStaleEpoch:
+			nowArg := addArg(now)
+			epochArg := addArg(int64(authority.Epoch))
 			where = append(where, `g.revoked_at IS NULL AND g.expires_at > `+nowArg+` AND g.security_epoch <> `+epochArg)
 		case operatorview.GrantRevoked:
 			where = append(where, `g.revoked_at IS NOT NULL`)
 		case operatorview.GrantExpired:
+			nowArg := addArg(now)
 			where = append(where, `g.revoked_at IS NULL AND g.expires_at <= `+nowArg)
 		}
 	}
@@ -135,8 +140,7 @@ func (r *OperatorReader) Grants(ctx context.Context, options operatorview.ListOp
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
-	limitArg := addArg(options.Limit + 1)
-	query += ` ORDER BY g.issued_at DESC, g.id DESC LIMIT ` + limitArg
+	query += ` ORDER BY g.issued_at DESC, g.id DESC LIMIT ` + addArg(options.Limit+1)
 
 	rows, err := r.repo.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -260,8 +264,7 @@ func (r *OperatorReader) Jobs(ctx context.Context, options operatorview.ListOpti
 	if options.Status != "" {
 		where = append(where, `status = `+addArg(options.Status))
 	}
-	predicate := strings.Join(where, ` AND `)
-	items, err := r.queryJobs(ctx, predicate, args, options.Limit+1)
+	items, err := r.queryJobs(ctx, strings.Join(where, ` AND `), args, options.Limit+1)
 	if err != nil {
 		return operatorview.JobPage{}, err
 	}
@@ -425,11 +428,12 @@ func scanOperatorJob(row rowScanner) (executionjob.Job, error) {
 	var status string
 	var resultSuccess *bool
 	var resultExitCode *int
+	var errorKind string
 	if err := row.Scan(
 		&job.ID, &job.RequestID, &job.GrantID, &job.Agent, &job.Target, &job.Argv, &commandHash, &approvalID,
 		&job.RiskCategory, &job.ScopeKey, &job.CreatedAt, &job.ExpiresAt, &status,
 		&job.ClaimedAt, &job.StartedAt, &job.CompletedAt, &resultSuccess, &resultExitCode,
-		&outputHash, &jobResultErrorKind(&job),
+		&outputHash, &errorKind,
 	); err != nil {
 		return executionjob.Job{}, err
 	}
@@ -441,15 +445,11 @@ func scanOperatorJob(row rowScanner) (executionjob.Job, error) {
 	if approvalID != nil {
 		job.ApprovalID = *approvalID
 	}
-	if resultSuccess != nil || resultExitCode != nil || len(outputHash) > 0 || job.Result != nil {
+	if resultSuccess != nil || resultExitCode != nil || len(outputHash) > 0 || errorKind != "" {
 		if resultSuccess == nil || resultExitCode == nil {
 			return executionjob.Job{}, errors.New("incomplete PostgreSQL execution result")
 		}
-		if job.Result == nil {
-			job.Result = &executionjob.Result{}
-		}
-		job.Result.Success = *resultSuccess
-		job.Result.ExitCode = *resultExitCode
+		job.Result = &executionjob.Result{Success: *resultSuccess, ExitCode: *resultExitCode, ErrorKind: errorKind}
 		if len(outputHash) > 0 {
 			if len(outputHash) != 32 {
 				return executionjob.Job{}, errors.New("invalid PostgreSQL output hash length")
@@ -460,30 +460,13 @@ func scanOperatorJob(row rowScanner) (executionjob.Job, error) {
 	return job, nil
 }
 
-// jobResultErrorKind returns a Scan destination while ensuring Result exists
-// only when the stored error kind is non-empty. A small temporary string keeps
-// the operator query free from claim-token columns.
-func jobResultErrorKind(job *executionjob.Job) any {
-	return &operatorErrorKind{job: job}
-}
-
-type operatorErrorKind struct {
-	job *executionjob.Job
-}
-
-func (o *operatorErrorKind) ScanText(value string) error {
-	if value != "" {
-		if o.job.Result == nil {
-			o.job.Result = &executionjob.Result{}
-		}
-		o.job.Result.ErrorKind = value
-	}
-	return nil
-}
-
 func operatorGrantView(grant domain.Grant, authority emergency.State, now time.Time) operatorview.GrantView {
 	grant.TokenHash = [32]byte{}
 	grant.Targets = append([]string(nil), grant.Targets...)
+	if grant.RevokedAt != nil {
+		t := *grant.RevokedAt
+		grant.RevokedAt = &t
+	}
 	return operatorview.GrantView{Grant: grant, State: operatorview.DeriveGrantState(grant, authority, now)}
 }
 
