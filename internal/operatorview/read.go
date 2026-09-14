@@ -3,6 +3,7 @@ package operatorview
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/approval"
 	"github.com/kotaru34/tethys-sentinel/internal/audit"
@@ -37,6 +38,37 @@ func (o ListOptions) Normalized() ListOptions {
 	return out
 }
 
+type GrantState string
+
+const (
+	GrantActive     GrantState = "active"
+	GrantDisabled   GrantState = "disabled"
+	GrantStaleEpoch GrantState = "stale_epoch"
+	GrantRevoked    GrantState = "revoked"
+	GrantExpired    GrantState = "expired"
+)
+
+type GrantView struct {
+	domain.Grant
+	State GrantState `json:"state"`
+}
+
+func DeriveGrantState(grant domain.Grant, authority emergency.State, now time.Time) GrantState {
+	if grant.RevokedAt != nil {
+		return GrantRevoked
+	}
+	if !now.Before(grant.ExpiresAt) {
+		return GrantExpired
+	}
+	if grant.SecurityEpoch != authority.Epoch {
+		return GrantStaleEpoch
+	}
+	if authority.Disabled {
+		return GrantDisabled
+	}
+	return GrantActive
+}
+
 type JobCounts struct {
 	Staged    int `json:"staged"`
 	Pending   int `json:"pending"`
@@ -62,8 +94,8 @@ type Overview struct {
 }
 
 type GrantPage struct {
-	Items      []domain.Grant `json:"items"`
-	NextCursor string         `json:"next_cursor,omitempty"`
+	Items      []GrantView `json:"items"`
+	NextCursor string      `json:"next_cursor,omitempty"`
 }
 
 type ApprovalPage struct {
@@ -88,7 +120,7 @@ type AuditPage struct {
 type Reader interface {
 	Overview(context.Context) (Overview, error)
 	Grants(context.Context, ListOptions) (GrantPage, error)
-	Grant(context.Context, string) (domain.Grant, bool, error)
+	Grant(context.Context, string) (GrantView, bool, error)
 	Approvals(context.Context, ListOptions) (ApprovalPage, error)
 	Jobs(context.Context, ListOptions) (JobPage, error)
 	Job(context.Context, string) (executionjob.Job, bool, error)
