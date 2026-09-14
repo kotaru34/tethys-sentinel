@@ -1,13 +1,10 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-14
-Current development version: `0.1.0-dev.14`
+Updated: 2026-09-15
+Current development version: `0.1.0-dev.15`
 Branch: `wip/operator-ui`
-Status: the accepted dev.13 security core remains deployed fail-closed at epoch 3. Operator UI v1 is now versioned `0.1.0-dev.14`: the eight-page browser surface, embedded frontend, hardened mTLS BFF boundary, build-integrity checks, dependency pinning, deployment artifacts and documentation are complete. The last pre-version candidate `c3efc8ac1b760833744c8254130db0fd5400b11b` passed all CI jobs in Actions `34899138274`; the active phase is exact dev.14 release-CI verification followed by real operator-boundary deployment/acceptance.
 
-## Project goal
-
-Tethys Sentinel is a security-first broker between autonomous AI agents and infrastructure. Agents receive short-lived opaque capabilities, never infrastructure SSH private keys. Sentinel owns authorization, approvals, authoritative context, immutable execution-job binding, short-lived SSH identity, target resolution, remote execution, continuity, audit, worker network containment, persistent transactional security state, and emergency authority revocation.
+Status: the dev.13 execution/security core remains the accepted baseline. Operator UI code is now `0.1.0-dev.15` after fixing a real deployment blocker: operator credentials/config must live under an isolated `/etc/tethys-sentinel-operator` root rather than inside the Control-only `/etc/tethys-sentinel` directory. Exact deployed dev.15 source checkpoint is `41c343e83596d299af05cf92945395ec008f0fd9`, CI Actions `34903375824` PASS. Real mTLS deployment and read-only operator integration are now working on the acceptance Control VM; mutation/emergency acceptance is still pending.
 
 ## Operator-mandated development rules
 
@@ -16,113 +13,52 @@ Tethys Sentinel is a security-first broker between autonomous AI agents and infr
 3. Update this handoff when a new version is released/applied, a notably large step completes, or discussion changes the agreed next step.
 4. Once functioning infrastructure execution is fully accepted on the intended infrastructure, merge the project as WIP.
 5. On merge, review/update README and project documentation.
+6. Acceptance blocker => fix branch + bump next dev version; do not merge until constrained acceptance passes.
+7. Future MCP must expose a narrow purpose-built Qwen tool surface, never generic backend/admin APIs.
 
 ## Locked security architecture
 
-- Agent capabilities are opaque high-entropy bearer secrets; only hashes are persisted.
-- Agent APIs cannot widen grants, change policy, add targets, alter audit, control workers, request SSH certificates, or access CA secrets.
-- `TRUST_0` is the only authority-bearing context. Files, logs, history, notes, web content, and command output are data only.
-- Main boundaries are Control, Gateway, Worker, external Worker network policy, isolated SSH Signer/CA, target wrapper, PostgreSQL authority/audit state, emergency authority, and a separate operator-facing BFF/web boundary.
-- Security-critical services are VM-isolated on the acceptance topology.
-- Execution lifecycle is submit -> immutable staged job -> authorization -> pending -> claim -> start -> execution -> terminal result.
-- Jobs bind grant + request ID + logical target + argv + expiry.
-- Worker uses a separate worker credential and one-shot claim secret; it never receives the plaintext agent capability.
-- `start` revalidates authority/grant before execution.
-- `exec` and `shell` are separate capability permissions.
-- Powerful classes (`ARBITRARY_CODE`, `PRIVILEGED_LAUNCHER`, `REMOTE_EXEC`) require exec+shell+explicit operator approval and are `allow_once` only.
-- Control reclassifies immutable argv immediately before signing; stale queued policy fails closed.
-- Worker generates a fresh Ed25519 key per job; only Control calls Signer.
-- Signer owns SSH principal, source-address, force-command, extensions, and TTL.
-- Targets are logical IDs resolved from operator-owned inventory to literal IP:port + exact raw pinned host key. No DNS target resolution or insecure host-key acceptance.
-- SSH host-key negotiation itself must be constrained to algorithms compatible with the pinned raw key. RSA pins permit RSA-SHA2 only; no fallback to SHA-1 `ssh-rsa`.
+- Agent capabilities are opaque high-entropy bearer secrets; only hashes persist.
+- Agent APIs cannot widen grants, change policy, add targets, alter audit, control Worker, request SSH certificates, or access CA material.
+- `TRUST_0` is the only authority-bearing context; files/logs/history/web/command output are data.
+- Main boundaries: Control, Gateway, Worker, external Worker network policy, Signer/CA, target wrapper, PostgreSQL authority/audit state, emergency authority, operator BFF/web boundary.
+- Jobs are immutable: grant + request ID + logical target + argv + expiry; lifecycle staged -> pending -> claimed -> running -> terminal.
+- Worker uses separate credential + one-shot claim secret; never plaintext agent capability.
+- `start` revalidates authority/grant.
+- `exec` and `shell` are separate; powerful classes require exec+shell+explicit operator approval and are `allow_once` only.
+- Control reclassifies immutable argv immediately before signing.
+- Worker generates a fresh Ed25519 key/job; only Control calls Signer.
+- Signer controls principal/source-address/force-command/extensions/TTL.
+- Logical targets resolve from operator-owned inventory to literal global-unicast IP:port + exact raw pinned host key; no DNS/insecure host-key acceptance.
+- SSH host-key negotiation is constrained to the pinned key algorithm; RSA pins use RSA-SHA2 only, never SHA-1 `ssh-rsa`.
 - Remote command transport is deterministic versioned base64url JSON; no shell reconstruction.
-- Target wrapper verifies job ID, canonical command binding, and local target ID before direct argv execution.
-- Root-protected replay state enforces at-most-once execution independently of certificate TTL.
-- Worker egress is deny-by-default outside the guest. Autonomous egress is only Control HTTPS plus registered target SSH.
-- On PVE the external hard boundary is VM-interface firewall; guest firewall is defense in depth.
-- Generated Worker PVE policy uses `policy_in: ACCEPT`, `policy_out: DROP`, exact destination+TCP-port allows, deterministic hash/dedup, and operator-only apply/verify.
-- Firewall shrink is not assumed to terminate established TCP state; active revoke is independent.
-- Every grant carries monotonic `security_epoch`.
-- `REVOKE ALL` increments epoch + disables authority; old capabilities stay stale forever after re-enable.
-- Running jobs require a fail-closed Worker authority lease; revoke/control loss cancels active execution transport.
-- PostgreSQL is the production mutable state backend for grants, approvals, jobs, emergency authority, audit/history, and Trust-2 notes. Trust-0, SSH inventory, Signer keys/policy, and PVE policy remain operator-owned boundaries.
-- PostgreSQL backend selection is explicit and cannot silently fall back to file persistence.
-- Fresh PostgreSQL authority starts disabled.
-- Canonical PostgreSQL lock order: authority -> grant -> approval -> job -> audit head.
-- Grant revoke, global revoke, approval decisions, allow-once consumption/job publication, claim/start/complete, and required audit events are transactional.
-- Browser/UI must never receive `SENTINEL_ADMIN_TOKEN`; `sentinel-operator` holds only the privileged local Control admin credential and receives no PostgreSQL, Worker, Signer/CA, SSH-target or PVE credentials.
-- Operator UI target/context inventory is read-only in v1; no browser route may widen targets, Trust-0, PVE egress or Signer authority.
-- Browser-supplied `Authorization` and operator identity are never trusted by the BFF. Operator identity is derived only from the verified client-certificate leaf and forwarded after mTLS authentication.
-- `sentinel-operator` uses an explicit route allowlist rather than a generic reverse proxy, rejects off-loopback Control upstreams, disables environment proxy use and redirect following, applies bounded request/response sizes, same-origin checks, CSRF protection for mutations, CSP/security headers and no-store behavior.
-- Browser frontend uses no localStorage/sessionStorage and no third-party runtime/CDN content. Generated HTML must remain compatible with strict self-only CSP.
-- Frontend source/build drift is fail-closed: CI rebuilds TypeScript/Preact/Vite output and compares the generated files against the digest-pinned embedded archive.
-- When MCP is added, expose a narrow purpose-built Qwen tool surface rather than generic backend/admin operations.
+- Target wrapper validates job ID, command hash/canonical command, target ID; root replay consume enforces at-most-once.
+- Worker PVE firewall is a hard deny-by-default egress boundary; guest nft is defense-in-depth.
+- Monotonic `security_epoch`; `REVOKE ALL` increments epoch + disables authority; older caps never revive.
+- Running jobs require fail-closed Worker authority lease; revoke/control loss cancels transport.
+- PostgreSQL is authoritative mutable production state; Trust0/inventory/Signer/PVE remain operator-owned separately.
+- PostgreSQL backend selection is explicit; no silent file fallback; fresh DB authority starts disabled.
+- Canonical lock order: authority -> grant -> approval -> job -> audit head; security transitions are transactional.
+- Browser never receives `SENTINEL_ADMIN_TOKEN`; `sentinel-operator` receives no PostgreSQL/Worker/Signer/PVE credentials.
+- Operator targets/context are read-only in v1.
+- Browser-supplied Authorization/operator identity are ignored; identity is derived from verified client-cert leaf.
+- BFF uses explicit route allowlist, loopback-only Control upstream, no proxy env, no redirects, bounded bodies/responses, same-origin+CSRF, strict CSP/no-store.
+- Browser frontend uses no localStorage/sessionStorage and no third-party runtime/CDN.
 
-## Version history
+## Accepted infrastructure baseline — dev.13
 
-### `0.1.0-dev.4` — execution-job protocol
-Accepted at `7d263af6bf6aa9699e2a770efc023e585ddbeb56`, Actions `34389191377`.
-
-### `0.1.0-dev.5` — isolated SSH Signer/CA
-Accepted at `750d5d8d0ba899ff2fe45e3b39c70a8969b6a469`, Actions `34392961793`.
-
-### `0.1.0-dev.6` — real SSH execution boundary
-Accepted at `9eaa16febd801b4082221e45e7b929969e91b72c`, Actions `34397117715`.
-
-### `0.1.0-dev.7` — powerful execution policy
-Accepted at `58318f7a1f0693941dce4d791ea97fac8e3d3519`, Actions `34401911162`.
-
-### `0.1.0-dev.8` — semantic operational risk
-Accepted at `4fcde4fa771f5008cbd696e4889ca51b564a9507`, Actions `34406118118`.
-
-### `0.1.0-dev.9` — external Worker egress enforcement
-Accepted at `6a14729036b3f8cafa8f79a1855b7f54ddc2b246`, Actions `34407900220`.
-
-### `0.1.0-dev.10` — revoke-all + active execution termination
-Accepted at `162d1f3c038ae905a4e27a419d9d4a61789466ae`, Actions `34411432011`.
-
-### `0.1.0-dev.11` — PostgreSQL transactional persistence
-- Schema v2 and least-privilege runtime role.
-- Atomic grant/revoke, approval, allow-once binding, job claim/start/complete, and audit semantics.
-- Code acceptance `2900a72098a410cb6d56c058c608d347e3ffd038`, Actions `34480201607`.
-- Versioned acceptance `d64e0ce2f4ff40377b37f71a05755cfa7cea7410`, Actions `34480805323`.
-- Final metadata validation `acc4b41e755f124a20fc1029b73a2ea122e95346`, Actions `34481032244`.
-
-### `0.1.0-dev.12` — preserve Worker inbound policy during PVE egress lockdown
-- PVE policy renderer explicitly emits `policy_in: ACCEPT` with deny-by-default outbound policy.
-- Release HEAD `c172effb4534828ada35f1a83a66986b850ab89a`.
-- Real PVE policy verification and packet-level positive/negative egress tests passed.
-
-### `0.1.0-dev.13` — pinned SSH host-key negotiation
-- Fix commit `dd996a6b08ce4fef5a3f00479961aac89739f832`: constrain negotiation to the pinned key algorithm; RSA pins use RSA-SHA2 algorithms only.
-- Regression test `ff1f85c9005213009faa9f928e3e493b270eefee` covers a multi-host-key server.
-- Release HEAD `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`.
-- CI Actions `34557197627`: Go test/vet/tidy/format plus PostgreSQL 15 and 18 jobs all passed.
-
-### `0.1.0-dev.14` — mTLS Operator UI v1
-- Backend/BFF checkpoint `f5d37bec113c35efebc72ecc639e275f50161a10`, Actions `34892851385`.
-- Complete eight-page browser/UI checkpoint `aaedad5518ad296426b01af856373672a1847f2d`, Actions `34898343292`, all Go/PostgreSQL/frontend checks PASS.
-- Pre-version release candidate `c3efc8ac1b760833744c8254130db0fd5400b11b`, Actions `34899138274`, including pinned frontend dependency graph, all PASS.
-- Version file bump `cdf422ef973d9a42ff3cafa6e6df2f918e99f3e9`; buildinfo version bump `286383e81ff359d97b63c14b880e82a8a5669dab`.
-- README version sync `2b32c46ea6df5ec88752e5d01d660ff4b4bf8281`.
-- Real mTLS deployment/acceptance is still pending; dev.14 is not yet infrastructure-accepted.
-
-## Accepted infrastructure checkpoint
-
-PVE node `ai-server`, VLAN 1520 / `10.169.2.0/24`:
+PVE `ai-server`, VLAN 1520 / `10.169.2.0/24`:
 
 - Control VM 1310 — `10.169.2.210`
 - Gateway VM 1320 — `10.169.2.211`
 - Worker VM 1330 — `10.169.2.212`
 - Signer VM 1340 — `10.169.2.213`
 - Target-test VM 1350 — `10.169.2.214`
-- external PostgreSQL — `10.169.2.6:5432`, PostgreSQL 18.6, TLS verify-full, schema v2.
+- PostgreSQL — `10.169.2.6:5432`, PostgreSQL 18.6, TLS verify-full, schema v2
 
 Signer CA fingerprint: `SHA256:pIfrpoGeNiKBtZrqzhOaFdIQknQrPsmIP3NiysW7opI`.
-
 Target host-key fingerprint: `SHA256:cfRNJVXjQWQhmNCnLaIQtMZIxYrZoJ7zWlWPU0HAmGM`.
-
-Worker PVE policy is `policy_in: ACCEPT`, `policy_out: DROP`, allowing only Control `10.169.2.210:9091/tcp` and target `10.169.2.214:22/tcp` for normal runtime traffic; negative packet tests passed.
+Worker PVE policy: `policy_in: ACCEPT`, `policy_out: DROP`, normal runtime egress only to Control `10.169.2.210:9091/tcp` and target `10.169.2.214:22/tcp`.
 
 Accepted dev.13 runtime hashes:
 
@@ -134,104 +70,87 @@ Accepted dev.13 runtime hashes:
 - consume `4ff50ff3c8b8db429efb952e2a8a418d1e16dae22cfd9174a4ac371adc2ef140`
 - exec `7ce5909e362cc937d992cc5f4b8bbae8e19e7f92d0aaf5672dd5ae59190dd0c4`
 
-## dev.13 infrastructure acceptance PASS
+Real dev.13 acceptance proved harmless end-to-end execution, target at-most-once replay, allow-once non-reuse, individual/global active revoke, stale-epoch non-revival, PostgreSQL persistence/fail-closed behavior, external Worker egress containment, Worker secret separation/mTLS, pinned SSH algorithm negotiation, target wrapper and transactional audit/job evidence.
 
-The accepted checkpoint proved on real infrastructure:
+PR #1 merged the accepted security core to `main` at `478009b1310b782db7dc20c629bada475c3f3d63`.
 
-- harmless Gateway -> Control -> PostgreSQL -> Worker -> Signer -> pinned SSH -> target wrapper execution;
-- target at-most-once replay state;
-- `allow_once` approval consumption/non-reuse;
-- individual active revoke terminating a live SSH execution as `execution_authority_lost`;
-- global `REVOKE ALL` advancing the epoch and terminating a live execution;
-- stale-epoch non-revival after re-enable;
-- PostgreSQL state persistence across restart;
-- PostgreSQL-unavailable startup fail-closed with no listener/file fallback;
-- external Worker PVE egress containment and no IPv6 bypass;
-- Worker secret separation/unprivileged service identity/mTLS boundary;
-- exact SSH host-key pin + algorithm negotiation;
-- target forced wrapper/replay and isolated Signer CA;
-- transactional audit/job evidence.
+## Authority final baseline
 
-PR #1 merged the accepted security core into `main` with merge commit `478009b1310b782db7dc20c629bada475c3f3d63`. The final pre-merge CI run `34560756474` passed Go checks/unit tests and PostgreSQL 15/18 integration.
-
-## Acceptance authority window CLOSED
-
-After the WIP merge and with no controlled test running, final operator `REVOKE ALL` advanced authority at `2026-09-14T19:17:03.84825Z` from epoch 2 to:
+Final dev.13 `REVOKE ALL` at `2026-09-14T19:17:03.84825Z` left:
 
 - `epoch=3`
 - `disabled=true`
 - reason `dev.13 acceptance complete; first WIP merge finished`
 
-The immediate final-state read matched exactly. The acceptance environment is intentionally fail-closed and idle; every capability from epochs 0, 1 and 2 is permanently stale.
+Epochs 0/1/2 are permanently stale. Do not enable authority merely to install or inspect Operator UI.
 
-## Operator UI v1 phase
+## Operator UI implementation
 
-Branch `wip/operator-ui` was created from the accepted `main` checkpoint after the acceptance window was closed.
+UI contract: `docs/OPERATOR_UI.md`.
+Primary views: Overview, Approvals, Grants, Jobs, Audit, Targets, Context, Security. Global `REVOKE ALL` is always reachable. One-time capability reveal is RAM-only. Polling-first.
 
-The UI contract is defined in `docs/OPERATOR_UI.md`, initial spec commit `98df6ffdab272dd7806c54965a1fb96bb069ea16`.
+Backend/BFF milestones:
 
-Locked v1 direction:
+- operator read model for overview/grants/approvals/jobs/audit/targets/context;
+- cert-derived operator identity propagation for audit-producing mutations;
+- explicit browser route allowlist and same-origin CSRF;
+- loopback-only privileged Control upstream;
+- embedded digest-pinned frontend archive SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`;
+- exact Node `24.20.0`, npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95` in CI.
 
-- separate `sentinel-operator` Go BFF/web service;
-- operator-facing HTTPS + client-certificate authentication;
-- browser never receives the Control admin token;
-- operator service talks only to the privileged Control admin surface and has no direct PostgreSQL/Signer/PVE authority;
-- embedded browser frontend with no deployed Node runtime and no third-party runtime/CDN content;
-- primary views: Overview, Approvals, Grants, Jobs, Audit, Targets, Context, Security;
-- global `REVOKE ALL` reachable from every page;
-- Targets and Trust-0 Context read-only in v1;
-- exact argv displayed structurally, no shell reconstruction;
-- one-time capability reveal only after grant issuance, never persisted in browser storage;
-- simple polling first; no new streaming security protocol until the operator read model is stable;
-- strict CSP/origin/CSRF behavior and no optimistic security mutations;
-- operator identity derived from authenticated client cert and propagated to audit-producing admin mutations.
+Important checkpoints:
 
-### Completed operator backend/BFF milestone
+- backend/BFF `f5d37bec113c35efebc72ecc639e275f50161a10`, Actions `34892851385`
+- complete UI `aaedad5518ad296426b01af856373672a1847f2d`, Actions `34898343292`
+- dev.14 release candidate `15513074c4ae30edbbd74b7c676562d2fb5c0e77`, Actions `34900078873`
+- dev.15 deployment-boundary fix source `41c343e83596d299af05cf92945395ec008f0fd9`, Actions `34903375824` PASS
 
-- Backend-neutral operator read interfaces and admin GET routes exist for overview, grants, approvals, jobs, audit, targets and Trust-0 context with secret-exclusion/bounded-query coverage.
-- Targets and Trust-0 context are exposed to the operator surface from read-only snapshots without changing the accepted execution/credential path.
-- Authenticated operator identity propagation is implemented for audit-producing admin mutations. Malformed/spoofed identity is not parsed before admin authentication, and non-operator audit actors are not rewritten.
-- `sentinel-operator` BFF core is implemented with explicit route allowlisting, verified-client-certificate identity, server-side admin credential replacement, mutation CSRF + same-origin checks, bounded bodies/responses, CSP/security headers and no-store behavior.
-- BFF -> Control transport is restricted to loopback HTTP, does not use proxy environment settings, and does not follow redirects, preventing privileged admin credentials from leaving the local boundary through proxy/redirect behavior.
-- Runnable `cmd/sentinel-operator` is implemented as mTLS-only. Its admin token is loaded from a strict root/service-owned regular file boundary; unsafe file permissions and symlink-based secret paths are rejected.
-- Exact checkpoint `f5d37bec113c35efebc72ecc639e275f50161a10`, Actions run `34892851385`: Go module/format/vet/unit checks and PostgreSQL 15/18 jobs all PASS.
-- No version bump yet: this was a backend/BFF milestone, not a complete operator UI release.
+## dev.15 real deployment checkpoint
 
-### Completed browser UI milestone
+Acceptance found a real dev.14 deployment blocker: `/etc/tethys-sentinel` is correctly `0750 root:sentinel-control`, so `tethys-operator` could not traverse it. The correct fix is an isolated operator config root, not weakening Control permissions or adding the operator account to the Control group.
 
-- All eight v1 views are implemented: Overview, Approvals, Grants, Jobs, Audit, Targets, Context and Security.
-- Global `REVOKE ALL` is reachable from every page and all security mutations wait for authoritative server confirmation.
-- Overview fails closed to `AUTHORITY STATE UNKNOWN` if current authority data cannot be refreshed.
-- Approval UI renders exact argv as structured arguments, separates agent reason from Sentinel policy reason, and never renders reusable session approval when policy forbids it.
-- Grant issuance uses the protected target inventory and exposes the plaintext capability only in the immediate in-memory reveal state. The UI does not persist the capability in browser storage.
-- Grant revoke, job lifecycle/result inspection, verified audit browsing, read-only target inventory and read-only Trust-0 context are implemented through the allowlisted BFF only.
-- `sentinel-operator` serves the frontend from a digest-pinned embedded archive. Archive parsing rejects traversal, unexpected directories/files, symlinks/non-regular entries, duplicate paths and oversized content.
-- Current embedded frontend archive SHA-256: `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`.
-- CI typechecks and builds the Preact/TypeScript/Vite frontend, rejects localStorage/sessionStorage usage and inline script/style under the configured CSP, and verifies generated files exactly match the embedded archive content.
-- Operatorweb tests discover generated hashed JS/CSS assets through the index rather than hardcoding stale Vite content hashes.
-- Complete UI code checkpoint `aaedad5518ad296426b01af856373672a1847f2d`, Actions `34898343292`: Go tidy/format/vet/race tests, frontend typecheck/build/security/embed-parity checks, and PostgreSQL 15/18 integration all PASS.
+Deployed layout on Control VM:
 
-### Deployment/release artifacts
+- `/etc/tethys-sentinel` remains `0750 root:sentinel-control` and inaccessible to `tethys-operator`.
+- `/etc/tethys-sentinel-operator` is `0750 root:tethys-operator`.
+- `operator-admin.token` is `0400 tethys-operator:tethys-operator`.
+- `operator-server.key` is `0400 tethys-operator:tethys-operator`.
+- public server cert/client-CA/env are root-owned, group-readable by `tethys-operator`.
+- `sentinel-operator.service` uses `/etc/tethys-sentinel-operator/operator.env`.
 
-- Hardened systemd unit: `config/systemd/sentinel-operator.service`; separate unprivileged `tethys-operator` account, empty capability sets, restrictive systemd sandbox, no production DB/Worker/Signer/PVE credentials.
-- Runtime template: `config/operator.env.example`; Control upstream remains loopback-only.
-- Deployment and real acceptance procedure: `docs/OPERATOR_DEPLOYMENT.md`, including dedicated operator-client TLS CA, server SAN requirements, Windows PFX/browser setup, token file handling, negative mTLS/CSRF tests and emergency semantics.
-- Frontend dependency resolution is additionally pinned fail-closed: exact Node `24.20.0` / npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95` verified before `npm ci --ignore-scripts`.
-- Version metadata is now `0.1.0-dev.14`; the release candidate must pass exact-head CI before deployment.
+Dedicated Operator TLS PKI:
 
-## Current phase
+- CA SHA-256 cert fingerprint `07:BA:71:23:DB:7A:4A:1D:B1:02:F5:A4:6E:36:EA:6A:BF:89:1A:8D:F8:31:4B:02:B6:C8:10:1B:43:F6:F5:C4`
+- server SHA-256 fingerprint `CE:A9:15:CC:E1:B8:9F:2C:67:7B:CC:84:88:FB:5E:54:4D:B5:FF:F8:D8:4B:0F:F1:1B:38:F6:8F:F3:8E:5C:B3`
+- operator client SHA-256 fingerprint `3A:69:61:86:70:6E:DF:71:0D:9D:AC:52:72:84:6E:5C:CC:05:B9:51:47:E3:52:8E:3E:98:A3:DA:11:C9:AF:1C`
+- server SAN is IP `10.169.2.210`; client cert subject `CN=Kotaru Tethys Operator`, EKU clientAuth.
+- CA/client private material was removed from Control after verified Windows import; only server key + public certificates remain.
 
-`0.1.0-dev.14` is the active Operator UI release candidate. The previously accepted dev.13 execution/security core remains the deployed authority baseline and the real acceptance environment remains fail-closed at epoch 3. No new AI authority window is needed to install or inspect the UI.
+Exact deployed dev.15 binaries:
 
-Do not open a new AI authority window merely to install or inspect the operator UI. Keep epoch 3 disabled until a controlled acceptance test explicitly requires authority. Operator mTLS, static/read-only UI paths and negative BFF boundary tests can be accepted while global AI authority remains disabled.
+- `sentinel-operator`: `ea50c402b93d39e592f18106b3340b8615ede04e94e9957eb2f27abde236956c`
+- `sentinel-control`: `b1c3b648305a1992b442f9b01980f0fa3556adb1e62bfe63e7c252ecb4397dc6`
 
-## Next steps
+Control upgrade preserved listener topology (`127.0.0.1:8081` admin, `10.169.2.210:9091` internal) and preserved authority exactly at epoch 3 disabled. A verified dev.13 rollback binary was staged before the upgrade.
 
-1. Require green CI on the exact final dev.14 release-metadata HEAD.
-2. Build the exact dev.14 `sentinel-operator` binary and record its SHA-256 before deployment.
-3. Deploy it as a separate `tethys-operator` service on Control VM `10.169.2.210` using only loopback Control authority.
-4. Create a dedicated operator mTLS trust root, a server certificate matching the exact browser origin, and a password-protected operator client PFX for Windows. Do not reuse the SSH CA and do not leave CA/client private keys on the Sentinel host after transfer.
-5. Run `docs/OPERATOR_DEPLOYMENT.md` acceptance: no-client-cert TLS rejection, trusted-client UI access, server-certificate validation without insecure bypass, browser/BFF credential separation, CSRF/origin negatives, all eight UI workflows, and emergency revoke/re-enable/non-revival semantics.
-6. Record exact runtime hash, acceptance evidence and final authority state in this handoff. Only after acceptance decide the `wip/operator-ui` merge/release step.
-7. Preserve every accepted dev.13 security invariant; materially touched execution/credential boundaries require targeted infrastructure re-acceptance.
-8. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+mTLS/browser acceptance completed so far:
+
+- request without client cert fails TLS 1.3 with `certificate required` (`curl` exit 56);
+- trusted Windows client cert reaches UI with HTTP 200 and no insecure bypass;
+- browser cert picker shows `Kotaru Tethys Operator` issued by dedicated Operator CA;
+- response headers include self-only CSP, HSTS 31536000, `nosniff`, `no-referrer`, restrictive Permissions-Policy;
+- Overview now reads real Control/PostgreSQL state after Control dev.15 upgrade;
+- Overview shows authority disabled at epoch 3, pending approvals 1, active grants 0, active jobs 0, failed jobs 4, and real audit/failure history.
+
+`sentinel-operator` remains running but boot-disabled during acceptance. AI authority remains fail-closed at epoch 3.
+
+## Current phase / next steps
+
+1. Complete read-only UI acceptance while authority stays disabled: Targets, Context, Audit, Jobs, Grants/Approvals read views, and credential/process boundary checks.
+2. Run negative browser/BFF tests: missing/mismatched CSRF, cross-origin mutation, spoofed Authorization/operator identity.
+3. Only then open a controlled authority window for mutation workflows that genuinely require it: grant issue/revoke, approval deny/allow_once/session policy, emergency revoke/re-enable/non-revival.
+4. End acceptance with an explicit final authority state, preferably disabled, and record exact epoch/reason.
+5. Fix remaining deployment documentation examples to the isolated `/etc/tethys-sentinel-operator` root before merge.
+6. Only after constrained acceptance passes, decide merge/release of `wip/operator-ui`.
+7. Preserve every accepted dev.13 execution/credential invariant; materially touched execution paths require targeted re-acceptance.
+8. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
