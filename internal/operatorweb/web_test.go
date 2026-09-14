@@ -16,6 +16,16 @@ func TestEmbeddedOperatorUI(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	jsPath := assetPathByContentType(t, handler, "text/javascript; charset=utf-8")
+	cssPath := assetPathByContentType(t, handler, "text/css; charset=utf-8")
+	index := string(handler.assets["/"].body)
+	if !strings.Contains(index, jsPath) {
+		t.Fatalf("index does not reference embedded JavaScript asset %q", jsPath)
+	}
+	if !strings.Contains(index, cssPath) {
+		t.Fatalf("index does not reference embedded stylesheet asset %q", cssPath)
+	}
+
 	tests := []struct {
 		method      string
 		path        string
@@ -24,10 +34,10 @@ func TestEmbeddedOperatorUI(t *testing.T) {
 		bodyNeedle  string
 	}{
 		{http.MethodGet, "/", http.StatusOK, "text/html; charset=utf-8", "Tethys Sentinel"},
-		{http.MethodGet, "/index.html", http.StatusOK, "text/html; charset=utf-8", "/assets/index-Bma5TWeK.js"},
-		{http.MethodGet, "/assets/index-Bma5TWeK.js", http.StatusOK, "text/javascript; charset=utf-8", "REVOKE ALL"},
-		{http.MethodGet, "/assets/index-CLfZQTNe.css", http.StatusOK, "text/css; charset=utf-8", ".authority-banner"},
-		{http.MethodHead, "/assets/index-Bma5TWeK.js", http.StatusOK, "text/javascript; charset=utf-8", ""},
+		{http.MethodGet, "/index.html", http.StatusOK, "text/html; charset=utf-8", jsPath},
+		{http.MethodGet, jsPath, http.StatusOK, "text/javascript; charset=utf-8", "REVOKE ALL"},
+		{http.MethodGet, cssPath, http.StatusOK, "text/css; charset=utf-8", ".authority-banner"},
+		{http.MethodHead, jsPath, http.StatusOK, "text/javascript; charset=utf-8", ""},
 		{http.MethodGet, "/does-not-exist", http.StatusNotFound, "", ""},
 		{http.MethodPost, "/", http.StatusMethodNotAllowed, "", ""},
 	}
@@ -51,6 +61,24 @@ func TestEmbeddedOperatorUI(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assetPathByContentType(t *testing.T, handler *Handler, contentType string) string {
+	t.Helper()
+	var found string
+	for assetPath, item := range handler.assets {
+		if item.contentType != contentType {
+			continue
+		}
+		if found != "" {
+			t.Fatalf("multiple embedded assets have content type %q", contentType)
+		}
+		found = assetPath
+	}
+	if found == "" {
+		t.Fatalf("no embedded asset has content type %q", contentType)
+	}
+	return found
 }
 
 func TestUnpackArchiveRejectsUnsafeEntries(t *testing.T) {
