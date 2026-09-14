@@ -4,7 +4,7 @@ Updated: 2026-09-15
 Current development version: `0.1.0-dev.15`
 Branch: `wip/operator-ui`
 
-Status: the dev.13 execution/security core remains the accepted baseline. Operator UI code is now `0.1.0-dev.15` after fixing a real deployment blocker: operator credentials/config must live under an isolated `/etc/tethys-sentinel-operator` root rather than inside the Control-only `/etc/tethys-sentinel` directory. Exact deployed dev.15 source checkpoint is `41c343e83596d299af05cf92945395ec008f0fd9`, CI Actions `34903375824` PASS. Real mTLS deployment and read-only operator integration are now working on the acceptance Control VM; mutation/emergency acceptance is still pending.
+Status: the dev.13 execution/security core remains the accepted baseline. Operator UI code is `0.1.0-dev.15` after fixing the real deployment blocker that operator credentials/config must live under an isolated `/etc/tethys-sentinel-operator` root rather than inside Control-only `/etc/tethys-sentinel`. Exact deployed runtime source checkpoint is `41c343e83596d299af05cf92945395ec008f0fd9`, CI Actions `34903375824` PASS. Real mTLS deployment, Control/BFF integration, read-only UI acceptance, credential-boundary acceptance and CSRF/origin/spoofing negative acceptance now pass. Controlled mutation/emergency acceptance remains pending.
 
 ## Operator-mandated development rules
 
@@ -89,21 +89,15 @@ Epochs 0/1/2 are permanently stale. Do not enable authority merely to install or
 UI contract: `docs/OPERATOR_UI.md`.
 Primary views: Overview, Approvals, Grants, Jobs, Audit, Targets, Context, Security. Global `REVOKE ALL` is always reachable. One-time capability reveal is RAM-only. Polling-first.
 
-Backend/BFF milestones:
-
-- operator read model for overview/grants/approvals/jobs/audit/targets/context;
-- cert-derived operator identity propagation for audit-producing mutations;
-- explicit browser route allowlist and same-origin CSRF;
-- loopback-only privileged Control upstream;
-- embedded digest-pinned frontend archive SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`;
-- exact Node `24.20.0`, npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95` in CI.
-
 Important checkpoints:
 
 - backend/BFF `f5d37bec113c35efebc72ecc639e275f50161a10`, Actions `34892851385`
 - complete UI `aaedad5518ad296426b01af856373672a1847f2d`, Actions `34898343292`
 - dev.14 release candidate `15513074c4ae30edbbd74b7c676562d2fb5c0e77`, Actions `34900078873`
-- dev.15 deployment-boundary fix source `41c343e83596d299af05cf92945395ec008f0fd9`, Actions `34903375824` PASS
+- dev.15 deployment-boundary fix/runtime source `41c343e83596d299af05cf92945395ec008f0fd9`, Actions `34903375824` PASS
+
+Embedded frontend archive SHA-256: `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`.
+Frontend CI pins Node `24.20.0`, npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95`.
 
 ## dev.15 real deployment checkpoint
 
@@ -133,24 +127,52 @@ Exact deployed dev.15 binaries:
 
 Control upgrade preserved listener topology (`127.0.0.1:8081` admin, `10.169.2.210:9091` internal) and preserved authority exactly at epoch 3 disabled. A verified dev.13 rollback binary was staged before the upgrade.
 
-mTLS/browser acceptance completed so far:
+## dev.15 acceptance evidence so far
+
+mTLS/browser:
 
 - request without client cert fails TLS 1.3 with `certificate required` (`curl` exit 56);
 - trusted Windows client cert reaches UI with HTTP 200 and no insecure bypass;
 - browser cert picker shows `Kotaru Tethys Operator` issued by dedicated Operator CA;
-- response headers include self-only CSP, HSTS 31536000, `nosniff`, `no-referrer`, restrictive Permissions-Policy;
-- Overview now reads real Control/PostgreSQL state after Control dev.15 upgrade;
-- Overview shows authority disabled at epoch 3, pending approvals 1, active grants 0, active jobs 0, failed jobs 4, and real audit/failure history.
+- response headers include self-only CSP, HSTS 31536000, `nosniff`, `no-referrer`, restrictive Permissions-Policy.
+
+Credential/process boundary:
+
+- `sentinel-operator` runs as `tethys-operator:tethys-operator`;
+- process environment contains only operator config paths/origin/listen/upstream and no PostgreSQL, Worker, Signer, PVE or admin bearer secret;
+- Control config root remains inaccessible to `tethys-operator`;
+- Control upstream is exactly `http://127.0.0.1:8081`;
+- exact runtime hashes match the recorded dev.15 binaries above.
+
+Read-only UI/API acceptance:
+
+- Overview, Grants, Approvals, Jobs, Audit, Targets, Context and emergency state all return successfully through the mTLS BFF;
+- Overview/emergency both report `epoch=3 disabled=true`;
+- observed read model: grants 6, approvals 2, jobs 6, audit events 50, targets 1;
+- Trust0 context top-level fields are `version, trust_level, policy, instructions, hosts, runbooks`;
+- Overview renders real PostgreSQL-backed state/history rather than the pre-upgrade 404.
+
+Security-negative acceptance:
+
+- `/api/v1/session` returns identity exactly `cert-sha256:3a696186706edf710d9dac5272846e5ccc05b95147e3528e3e98a3da11c9af1c`, derived from the verified client cert;
+- spoofed browser `Authorization` and `X-Tethys-Operator-Identity` do not alter that identity;
+- missing CSRF cookie/token, missing CSRF header, mismatched token, wrong Origin and `Sec-Fetch-Site: cross-site` each return HTTP 403;
+- valid same-origin CSRF passes the CSRF gate, while intentionally invalid resource ID is stopped safely at HTTP 400 before mutation;
+- unknown browser API route returns 404, confirming no generic proxy;
+- authority remained exactly `epoch=3 disabled=true` before and after all negative tests.
+
+Note: the first PowerShell helper printed a descriptive line and returned the numeric HTTP code on the pipeline, so its assertion variables became two-element arrays and produced misleading local comparison exceptions. The actual recorded HTTP statuses above were correct, and final authority verification independently confirmed no mutation occurred.
 
 `sentinel-operator` remains running but boot-disabled during acceptance. AI authority remains fail-closed at epoch 3.
 
 ## Current phase / next steps
 
-1. Complete read-only UI acceptance while authority stays disabled: Targets, Context, Audit, Jobs, Grants/Approvals read views, and credential/process boundary checks.
-2. Run negative browser/BFF tests: missing/mismatched CSRF, cross-origin mutation, spoofed Authorization/operator identity.
-3. Only then open a controlled authority window for mutation workflows that genuinely require it: grant issue/revoke, approval deny/allow_once/session policy, emergency revoke/re-enable/non-revival.
-4. End acceptance with an explicit final authority state, preferably disabled, and record exact epoch/reason.
-5. Fix remaining deployment documentation examples to the isolated `/etc/tethys-sentinel-operator` root before merge.
-6. Only after constrained acceptance passes, decide merge/release of `wip/operator-ui`.
-7. Preserve every accepted dev.13 execution/credential invariant; materially touched execution paths require targeted re-acceptance.
-8. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
+1. Open one controlled authority window only for mutation workflows that genuinely require it.
+2. Exercise grant issue -> one-time capability reveal -> dismiss/no browser persistence -> revoke.
+3. Exercise approval deny and allow-once; verify reusable session approval is exposed only where policy permits it.
+4. Exercise emergency re-enable/revoke-all and prove current-epoch semantics plus non-revival of older capabilities.
+5. End acceptance with an explicit final authority state, preferably disabled, and record exact epoch/reason.
+6. Fix remaining deployment documentation/README examples to dev.15 and isolated `/etc/tethys-sentinel-operator` before merge.
+7. Only after constrained acceptance passes, decide merge/release of `wip/operator-ui`.
+8. Preserve every accepted dev.13 execution/credential invariant; materially touched execution paths require targeted re-acceptance.
+9. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
