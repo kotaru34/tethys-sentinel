@@ -94,6 +94,37 @@ jobs:
             exit 1
           fi
 
+      - name: Verify embedded frontend is the exact build
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            -C internal/operatorweb -cf - dist | gzip -n -9 > /tmp/operator-dist-built.tar.gz
+          cat internal/operatorweb/operator-dist.b64.* | tr -d '[:space:]' | base64 -d > /tmp/operator-dist-embedded.tar.gz
+          echo 'built:'
+          sha256sum /tmp/operator-dist-built.tar.gz
+          echo 'embedded:'
+          sha256sum /tmp/operator-dist-embedded.tar.gz
+          cmp /tmp/operator-dist-built.tar.gz /tmp/operator-dist-embedded.tar.gz
+          test "$(sha256sum /tmp/operator-dist-embedded.tar.gz | cut -d' ' -f1)" = \
+            'db0870731d0d23340c5a1e9e962411023afbcc8b1429040fe34a0aaf7e3213c6'
+
+      - name: Assert CSP-compatible generated HTML
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -q '<style' internal/operatorweb/dist/index.html
+          while IFS= read -r line; do
+            case "$line" in
+              *'<script'* )
+                case "$line" in
+                  *' src='* ) ;;
+                  * ) echo "inline script is forbidden: $line"; exit 1 ;;
+                esac
+                ;;
+            esac
+          done < internal/operatorweb/dist/index.html
+
       - name: Upload reproducible frontend output
         uses: actions/upload-artifact@v4
         with:
@@ -103,6 +134,7 @@ jobs:
           path: |
             web/operator/package-lock.json
             internal/operatorweb/dist
+            /tmp/operator-dist-built.tar.gz
 
   postgres-schema:
     runs-on: ubuntu-latest
