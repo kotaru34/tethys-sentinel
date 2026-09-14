@@ -61,6 +61,50 @@ jobs:
       - name: Unit tests
         run: go test -race ./...
 
+  operator-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: false
+
+      - name: Install pinned frontend dependencies
+        working-directory: web/operator
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck operator UI
+        working-directory: web/operator
+        run: npm run typecheck
+
+      - name: Build operator UI
+        working-directory: web/operator
+        run: npm run build
+
+      - name: Assert browser secret-storage policy
+        shell: bash
+        run: |
+          if grep -R -n -E 'localStorage|sessionStorage' web/operator/src; then
+            echo 'Browser-persistent storage is forbidden for the operator UI.'
+            exit 1
+          fi
+
+      - name: Upload reproducible frontend output
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-frontend-build
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            web/operator/package-lock.json
+            internal/operatorweb/dist
+
   postgres-schema:
     runs-on: ubuntu-latest
     strategy:
