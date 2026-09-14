@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	archiveSHA256     = "db0870731d0d23340c5a1e9e962411023afbcc8b1429040fe34a0aaf7e3213c6"
+	archiveSHA256     = "9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711"
 	maxArchiveFile    = 4 << 20
 	maxArchiveTotal   = 8 << 20
 	maxArchiveEntries = 64
 )
 
-//go:embed operator-dist.b64.01 operator-dist.b64.02 operator-dist.b64.03 operator-dist.b64.04
+//go:embed operator-dist.b64.01 operator-dist.b64.02 operator-dist.b64.03 operator-dist.b64.04 operator-dist.b64.05 operator-dist.b64.06 operator-dist.b64.07 operator-dist.b64.08
 var archiveParts embed.FS
 
 type asset struct {
@@ -85,6 +85,10 @@ func decodeArchive() ([]byte, error) {
 		"operator-dist.b64.02",
 		"operator-dist.b64.03",
 		"operator-dist.b64.04",
+		"operator-dist.b64.05",
+		"operator-dist.b64.06",
+		"operator-dist.b64.07",
+		"operator-dist.b64.08",
 	} {
 		part, err := archiveParts.ReadFile(name)
 		if err != nil {
