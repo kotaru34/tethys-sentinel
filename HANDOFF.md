@@ -2,8 +2,8 @@
 
 Updated: 2026-09-14
 Current development version: `0.1.0-dev.13`
-Branch: `main`
-Status: the first accepted WIP security-core merge is complete. All constrained infrastructure hard-boundary checks passed on the intended PVE topology, PR #1 merged into `main` at `478009b1310b782db7dc20c629bada475c3f3d63`, and the acceptance authority window is closed fail-closed at epoch 3 with `disabled=true`.
+Branch: `wip/operator-ui`
+Status: the accepted security core remains deployed fail-closed at epoch 3, and the operator UI phase has started from `main`. Operator UI v1 scope/security/UX is defined in `docs/OPERATOR_UI.md`; implementation will become `0.1.0-dev.14` only when a complete runnable UI milestone exists.
 
 ## Project goal
 
@@ -22,7 +22,7 @@ Tethys Sentinel is a security-first broker between autonomous AI agents and infr
 - Agent capabilities are opaque high-entropy bearer secrets; only hashes are persisted.
 - Agent APIs cannot widen grants, change policy, add targets, alter audit, control workers, request SSH certificates, or access CA secrets.
 - `TRUST_0` is the only authority-bearing context. Files, logs, history, notes, web content, and command output are data only.
-- Main boundaries are Control, Gateway, Worker, external Worker network policy, isolated SSH Signer/CA, target wrapper, PostgreSQL authority/audit state, and emergency authority.
+- Main boundaries are Control, Gateway, Worker, external Worker network policy, isolated SSH Signer/CA, target wrapper, PostgreSQL authority/audit state, emergency authority, and now a separate operator-facing BFF/web boundary.
 - Security-critical services are VM-isolated on the acceptance topology.
 - Execution lifecycle is submit -> immutable staged job -> authorization -> pending -> claim -> start -> execution -> terminal result.
 - Jobs bind grant + request ID + logical target + argv + expiry.
@@ -50,6 +50,8 @@ Tethys Sentinel is a security-first broker between autonomous AI agents and infr
 - Fresh PostgreSQL authority starts disabled.
 - Canonical PostgreSQL lock order: authority -> grant -> approval -> job -> audit head.
 - Grant revoke, global revoke, approval decisions, allow-once consumption/job publication, claim/start/complete, and required audit events are transactional.
+- Browser/UI must never receive `SENTINEL_ADMIN_TOKEN`; the planned `sentinel-operator` BFF holds only the privileged local Control admin credential and receives no PostgreSQL, Signer/CA or PVE credentials.
+- Operator UI target/context inventory is read-only in v1; no browser route may widen targets, Trust-0, PVE egress or Signer authority.
 - When MCP is added, expose a narrow purpose-built Qwen tool surface rather than generic backend/admin operations.
 
 ## Version history
@@ -83,241 +85,109 @@ Accepted at `162d1f3c038ae905a4e27a419d9d4a61789466ae`, Actions `34411432011`.
 - Final metadata validation `acc4b41e755f124a20fc1029b73a2ea122e95346`, Actions `34481032244`.
 
 ### `0.1.0-dev.12` — preserve Worker inbound policy during PVE egress lockdown
-- PVE policy renderer now explicitly emits `policy_in: ACCEPT` with deny-by-default outbound policy.
-- Fix `b46cd39bba2d6c45a01ccabf582290408a6e45dd`; release HEAD `c172effb4534828ada35f1a83a66986b850ab89a`.
-- CI Actions `34553761523` passed.
+- PVE policy renderer explicitly emits `policy_in: ACCEPT` with deny-by-default outbound policy.
+- Release HEAD `c172effb4534828ada35f1a83a66986b850ab89a`.
 - Real PVE policy verification and packet-level positive/negative egress tests passed.
 
 ### `0.1.0-dev.13` — pinned SSH host-key negotiation
-- First real dev.12 SSH execution reached target but failed before auth with `ssh_handshake_failed: host key mismatch`.
-- Target advertised RSA, ECDSA, and Ed25519 host keys while inventory correctly pinned Ed25519. `ssh.FixedHostKey` validated the negotiated key but the client did not constrain host-key algorithm negotiation, allowing a different advertised server key to be selected.
 - Fix commit `dd996a6b08ce4fef5a3f00479961aac89739f832`: constrain negotiation to the pinned key algorithm; RSA pins use RSA-SHA2 algorithms only.
-- Regression test commit `ff1f85c9005213009faa9f928e3e493b270eefee`: multi-host-key test server proves a pinned Ed25519 key succeeds even when another host key is also advertised.
-- Version bump commits `55acd72967cf08413307ab441239e53a81557300` and release HEAD `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`.
+- Regression test `ff1f85c9005213009faa9f928e3e493b270eefee` covers a multi-host-key server.
+- Release HEAD `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`.
 - CI Actions `34557197627`: Go test/vet/tidy/format plus PostgreSQL 15 and 18 jobs all passed.
 
-## Acceptance infrastructure
+## Accepted infrastructure checkpoint
 
-PVE node: `ai-server`, PVE `9.2.0`, `pve-manager 9.2.11`.
+PVE node `ai-server`, VLAN 1520 / `10.169.2.0/24`:
 
-VLAN 1520 / `10.169.2.0/24`:
-- VM 1310 `sentinel-control` — `10.169.2.210`
-- VM 1320 `sentinel-gateway` — `10.169.2.211`
-- VM 1330 `sentinel-worker` — `10.169.2.212`
-- VM 1340 `sentinel-signer` — `10.169.2.213`
-- VM 1350 `sentinel-target-test` — `10.169.2.214`
-
-External PostgreSQL: `10.169.2.6:5432`, PostgreSQL `18.6`, dedicated database/roles, TLS `verify-full`, source-restricted runtime HBA, schema version 2. TLS certificate SHA-256 DER: `733d9274729649aa90fdad3e2a642108010e9cf8be98da8ff9bc98ba5aefa755`.
+- Control VM 1310 — `10.169.2.210`
+- Gateway VM 1320 — `10.169.2.211`
+- Worker VM 1330 — `10.169.2.212`
+- Signer VM 1340 — `10.169.2.213`
+- Target-test VM 1350 — `10.169.2.214`
+- external PostgreSQL — `10.169.2.6:5432`, PostgreSQL 18.6, TLS verify-full, schema v2.
 
 Signer CA fingerprint: `SHA256:pIfrpoGeNiKBtZrqzhOaFdIQknQrPsmIP3NiysW7opI`.
 
-Target host key pin:
-`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJiGpu8vIyouJXQvM0vGHY+ZAeImWtyK6Pplcjpur+tb`
-Fingerprint: `SHA256:cfRNJVXjQWQhmNCnLaIQtMZIxYrZoJ7zWlWPU0HAmGM`.
+Target host-key fingerprint: `SHA256:cfRNJVXjQWQhmNCnLaIQtMZIxYrZoJ7zWlWPU0HAmGM`.
 
-Worker PVE firewall on VMID 1330:
-- `policy_in: ACCEPT`
-- `policy_out: DROP`
-- allow Control `10.169.2.210:9091/tcp`
-- allow target `10.169.2.214:22/tcp`
-- Internet, DNS, unlisted Control/target ports blocked in packet tests.
+Worker PVE policy is `policy_in: ACCEPT`, `policy_out: DROP`, allowing only Control `10.169.2.210:9091/tcp` and target `10.169.2.214:22/tcp` for normal runtime traffic; negative packet tests passed.
 
-## dev.13 deployed artifact hashes
+Accepted dev.13 runtime hashes:
 
-Built from exact release HEAD `bd6796aae2ee192fd9d007bab39a40ab6870dbcc` with Go `1.27.1`, `CGO_ENABLED=0`, `-trimpath`:
+- control `3c1fd0b317ee43d7ee4e1bee1173f1daa3cd9681f152165bdd1a6844ca253ad7`
+- egress `ff2a23a60460c55420f580dd5f71a6a742bed8847faedc54b6de0ac079568cb6`
+- gateway `89078f3173029fcd4c809e25ef3c9a7f4aacf7381356ac41b8294276667ba3c3`
+- signer `06805994530b497247525a6fd061e7a65d80a96cac02b0f6c04749eba0c32feb`
+- worker `f7a49c35b04ba832480cc7a36c8b54964d69593553fad1066c5f5036c4a042f6`
+- consume `4ff50ff3c8b8db429efb952e2a8a418d1e16dae22cfd9174a4ac371adc2ef140`
+- exec `7ce5909e362cc937d992cc5f4b8bbae8e19e7f92d0aaf5672dd5ae59190dd0c4`
 
-- `sentinel-control` — `3c1fd0b317ee43d7ee4e1bee1173f1daa3cd9681f152165bdd1a6844ca253ad7`
-- `sentinel-egress-policy` — `ff2a23a60460c55420f580dd5f71a6a742bed8847faedc54b6de0ac079568cb6`
-- `sentinel-gateway` — `89078f3173029fcd4c809e25ef3c9a7f4aacf7381356ac41b8294276667ba3c3`
-- `sentinel-signer` — `06805994530b497247525a6fd061e7a65d80a96cac02b0f6c04749eba0c32feb`
-- `sentinel-worker` — `f7a49c35b04ba832480cc7a36c8b54964d69593553fad1066c5f5036c4a042f6`
-- `tethys-sentinel-consume` — `4ff50ff3c8b8db429efb952e2a8a418d1e16dae22cfd9174a4ac371adc2ef140`
-- `tethys-sentinel-exec` — `7ce5909e362cc937d992cc5f4b8bbae8e19e7f92d0aaf5672dd5ae59190dd0c4`
+## dev.13 infrastructure acceptance PASS
 
-Control, Gateway, Worker, Signer, and both target helpers are installed at these exact dev.13 hashes. Services report `0.1.0-dev.13` and are active. Control -> Signer authenticated mTLS health check passes.
+The accepted checkpoint proved on real infrastructure:
 
-## dev.12 blocker and epoch transition
+- harmless Gateway -> Control -> PostgreSQL -> Worker -> Signer -> pinned SSH -> target wrapper execution;
+- target at-most-once replay state;
+- `allow_once` approval consumption/non-reuse;
+- individual active revoke terminating a live SSH execution as `execution_authority_lost`;
+- global `REVOKE ALL` advancing the epoch and terminating a live execution;
+- stale-epoch non-revival after re-enable;
+- PostgreSQL state persistence across restart;
+- PostgreSQL-unavailable startup fail-closed with no listener/file fallback;
+- external Worker PVE egress containment and no IPv6 bypass;
+- Worker secret separation/unprivileged service identity/mTLS boundary;
+- exact SSH host-key pin + algorithm negotiation;
+- target forced wrapper/replay and isolated Signer CA;
+- transactional audit/job evidence.
 
-The failed dev.12 harmless execution job was:
-- job `1d2dc244acedb4cc3cb1991dc4fcfcfa`
-- request `acceptance-true-0001`
-- terminal state `failed`
-- `result_success=false`, `result_exit_code=-1`, `error_kind=ssh_handshake_failed`
-- target replay state remained empty.
-
-Target and inventory Ed25519 pins matched exactly; target `sshd -T` advertised RSA + ECDSA + Ed25519, confirming the dev.13 negotiation fix was required.
-
-After finding the blocker, `REVOKE ALL` moved authority from epoch 0 to epoch 1 and disabled access:
-- time `2026-09-11T03:11:02.944644Z`
-- reason `dev.12 acceptance blocked by SSH host-key algorithm negotiation bug`
-
-The old epoch-0 dev.12 capability can never become valid again.
-
-Control was then restarted on dev.13 while authority remained `epoch=1, disabled=true`; PostgreSQL persisted that state exactly. This is positive restart-persistence evidence.
-
-## First real end-to-end execution PASS
-
-Authority was re-enabled at epoch 1 for dev.13 acceptance. Fresh grant:
-- grant `3dc529728e7fef948aef780a43392093`
-- agent `acceptance-agent`
-- target `sentinel-target-test`
-- `exec=true`, `shell=false`
-- `security_epoch=1`
-- issued `2026-09-11T03:23:04.574940107Z`
-- bearer remained root-only and was not printed.
-
-Harmless command submission:
-- request `acceptance-true-dev13-0001`
-- argv `["true"]`
-- job `e27bc8b013c31670da2fa67294814bb9`
-- risk `DEFAULT`, decision `allow`
-- command SHA-256 `62c9522d29395105a7707ebc2409e70d07df940c80c490907b4770368bf7c288`
-
-Terminal PostgreSQL result:
-- status `succeeded`
-- claimed `2026-09-11 03:23:40.435864+00`
-- started `2026-09-11 03:23:40.452006+00`
-- completed `2026-09-11 03:23:41.068235+00`
-- `result_success=true`
-- `result_exit_code=0`
-- empty `error_kind`
-- output SHA-256 `b159a1103fa6908ab6b9eb8b048569e1e08e78b6e710564f55079fbd0572925e`
-
-Audit sequence 13-17 contains, in order:
-1. `execution.job_authorized`
-2. `execution.job_claimed`
-3. `execution.job_started`
-4. `ssh.certificate_issued`
-5. `execution.job_completed` with decision `succeeded`.
-
-Issued SSH certificate evidence includes:
-- serial `2743784816575149100`
-- CA fingerprint `SHA256:pIfrpoGeNiKBtZrqzhOaFdIQknQrPsmIP3NiysW7opI`
-- target `10.169.2.214:22`
-- ephemeral public-key fingerprint `SHA256:c3+0cwdLu/0KY+o7QB1atFeK72GKm3471i7lYh+dixY`.
-
-Target evidence:
-- sshd accepted `ED25519-CERT` from Worker `10.169.2.212`
-- certificate ID bound job + grant + target
-- CA fingerprint matched the isolated Signer CA
-- session opened and closed normally
-- root-only replay marker exists at `/var/lib/tethys-sentinel/executed/e27bc8b013c31670da2fa67294814bb9`.
-
-This proves the full intended path on real infrastructure:
-Gateway -> Control -> PostgreSQL authorization/job -> Worker claim/start -> Control current-authority revalidation -> Signer certificate -> pinned SSH negotiation -> target forced wrapper/replay consume -> direct command execution -> terminal PostgreSQL/audit completion.
-
-## allow_once non-reuse PASS
-
-Disposable target command `rm /tmp/sentinel-acceptance-delete-me` was classified as high-risk `FILESYSTEM_DELETE`, scope `argv-sha256:d60ae195eac9e520c07e8c1aece64b7c3f8fc66f45cfa1feb070c36b448ae4a2`.
-
-First request `acceptance-delete-dev13-0001` returned `approval_required` with approval `2e8e148052890690352befedcfe8420b`; the file remained present before operator decision. Control decided that approval as `allow_once`.
-
-Retrying the same request ID and identical argv created job `c3c1fad4270ec219afb3f605af84ab6a`, bound to that approval. PostgreSQL terminal result was `succeeded`, `result_success=true`, `result_exit_code=0`; target file was deleted and replay marker `/var/lib/tethys-sentinel/executed/c3c1fad4270ec219afb3f605af84ab6a` exists.
-
-Submitting the identical command with new request ID `acceptance-delete-dev13-0002` did not reuse the consumed approval. It returned `approval_required` and created a distinct approval `ecc19afad1b5f5a55bc6664fde1bfe35`. This proves `allow_once` cannot authorize a second job even for the same grant/target/category/scope.
-
-## Individual active revoke PASS
-
-The first manual timing attempt was inconclusive, not a product failure: job `574faf4d1aa82302b37f56fc95332273` reached its normal execution deadline at `03:36:15.572523+00`, while grant `86607a8f19e151b0ffb5d5159de13b86` was not revoked until `03:36:19.051428+00` because the operator round-trip through chat exceeded the 30-second job TTL.
-
-The timing-safe repeat used fresh grant `b5b4c5c32598fbd53149f7eaaf0e2e84` and job `859a427fb81fe7edcafd150441c32a11` (`sleep 20`) in one local Control-side script. Job entered `running` at `2026-09-11 03:40:36.748332+00`; the grant was revoked at `03:40:36.822632+00`, about 74 ms later and roughly 29 seconds before job expiry.
-
-Worker authority leasing detected the revoked grant and terminalized the job at `03:40:37.384472+00` as `failed`, `result_success=false`, `result_exit_code=-1`, `error_kind=execution_authority_lost`, about 0.56 seconds after revoke. Audit sequence 33-39 records grant issuance, authorization, claim, start, SSH certificate issue, `grant.revoked`, and failed completion in order.
-
-Target-side evidence independently confirms transport cancellation: sshd accepted the job-bound ED25519 certificate from Worker `10.169.2.212`, opened the `sentinel-ai` session at `03:40:36`, closed it at `03:40:37`, and no `sleep 20` process remained. This proves individual grant revoke terminates a live SSH execution rather than merely changing persistent job state.
-
-## Active global revoke + epoch non-revival PASS
-
-Fresh epoch-1 grant `700d683a6f94006204cf8006d50803bf` authorized job `04992256647d99d1d32d57ef9625c49c` (`sleep 20`). The job entered `running` at `2026-09-11 03:43:10.080491+00`. `REVOKE ALL` completed at `03:43:10.158259+00`, about 78 ms after start, atomically advancing authority from epoch 1 to epoch 2 and setting `disabled=true` with reason `dev.13 active global revoke acceptance`.
-
-Worker authority leasing terminated the running execution at `03:43:10.682553+00` as `failed`, `result_success=false`, `result_exit_code=-1`, `error_kind=execution_authority_lost`, about 0.52 seconds after the global revoke and almost 30 seconds before its normal deadline. Audit sequence 40-46 records grant issue, authorization, claim, start, SSH certificate issuance, `emergency.revoke_all` with epoch 2, then failed completion.
-
-For epoch non-revival, the pre-revoke grant remained unexpired (`expires_at=2026-09-11 03:48:10.008813+00`; DB time at check `03:45:18.200558+00`) and had no individual `revoked_at`. Authority was re-enabled without changing the epoch: state became `epoch=2, disabled=false` at `03:45:18.278034+00`.
-
-The still-unexpired epoch-1 bearer was then presented to the real Gateway bootstrap endpoint and received HTTP `401` with `{"error":"valid capability required"}`. A newly issued epoch-2 grant `a8438ebb57ce923a4f789dd794fdb464` immediately received HTTP `200` from the same endpoint. This is direct runtime proof that `REVOKE ALL` permanently invalidates earlier security epochs and that re-enable cannot resurrect old capabilities; rejection cannot be attributed to TTL expiry or global disabled state.
-
-## PostgreSQL-unavailable startup fail-closed PASS
-
-A second instance of the exact deployed Control binary (`sha256 3c1fd0b317ee43d7ee4e1bee1173f1daa3cd9681f152165bdd1a6844ca253ad7`) was launched with the live production process environment cloned without shell parsing, while only the PostgreSQL endpoint was replaced with unreachable `127.0.0.1:1`. The live production Control was left untouched throughout the test.
-
-The test instance exited with code `1` during persistence initialization and logged `open persistence backend: ping PostgreSQL: ... connect refused`. It never opened the dedicated test admin/internal listeners `127.0.0.1:28081` or `127.0.0.1:29091`.
-
-File-backend paths were deliberately redirected into a disposable trap directory, including a valid dummy job-auth key, so a silent backend fallback would have had everything needed to create file state. No grant, approval, audit, job, emergency, or note file was created. The original production `sentinel-control.service` remained `active` with the same PID. This is direct runtime proof that PostgreSQL-unavailable startup fails closed before serving APIs and cannot silently fall back to file persistence.
-
-## Worker sensitive-material, service-account, mTLS and IPv6 boundary PASS
-
-The running Worker binary matched the accepted dev.13 SHA-256 `f7a49c35b04ba832480cc7a36c8b54964d69593553fad1066c5f5036c4a042f6`.
-
-The process environment contained only Worker-owned Sentinel settings: Control URL/CA/name, Worker ID/token, Worker mTLS client cert/key, poll intervals, SSH dial timeout, and output limit. Negative checks found no admin token, PostgreSQL DSN/backend authority, Signer credentials/CA signing material, SSH target inventory, PVE credentials, agent capability, or mutable local authority-store variables. Files under `/etc/tethys-sentinel` were limited to root-only `service.env`, Worker client key/cert, and Control mTLS CA; no suspicious authority filenames were present.
-
-Worker IPv6 was link-local only (`fe80::/64` on `eth0`) with no global/ULA address and no IPv6 default route, so there is no uncontained IPv6 egress path.
-
-The live process ran as dedicated `sentinel-worker` UID 999/GID 988, whose login shell is `/usr/sbin/nologin`; it had no sudo/wheel membership and `CapInh`, `CapPrm`, `CapEff`, and `CapAmb` were all zero. The service account could read the Worker client key/cert and Control CA but could not read root-only `/etc/tethys-sentinel/service.env`.
-
-Authenticated mTLS from the Worker service account using the configured client certificate reached the real Control HTTP layer and returned HTTP 404 for an intentionally nonexistent internal path. Repeating the probe without a client certificate failed at TLS with curl exit 56. This independently proves the Control internal endpoint requires client-certificate authentication.
-
-## Documentation consistency PASS
-
-Acceptance and pre-merge documentation were synchronized after the infrastructure tests without changing runtime version:
-
-- `docs/WORKER_EGRESS.md` — `18c446cb2aa7bdbe0fb0f1f9582c07cb86325a30`: dev.12/dev.13 `policy_in: ACCEPT`, accepted packet-level behavior, current revoke semantics.
-- `docs/INFRASTRUCTURE_ACCEPTANCE_REMOTE_POSTGRES.md` — `66083103cf7eab0e3a07fe151b34418196fd23cb`: dev.13 remote PostgreSQL profile and safe non-shell DSN inspection.
-- `docs/INFRASTRUCTURE_ACCEPTANCE.md` — `a89554ec7261df5a2e9a6ebd13553c4efecc00de`: dev.13 release HEAD, global `PermitUserEnvironment no`, PVE inbound-preserve semantics, pinned host-key negotiation, timing-safe revoke tests, no-fallback PostgreSQL startup test and final Worker boundary procedure.
-- `README.md` — `01b4794f6119b79230b4efd6b25b4b4422b23ceb`: project status moved from stale dev.11/pre-acceptance language to dev.13 accepted WIP milestone.
-- `docs/SSH_EXECUTION.md` — `ba8a81c8965553648947421345c88ac337d3a0b8`: dev.13 host-key algorithm negotiation/RSA-SHA2 semantics and completed real-infrastructure acceptance.
-- `docs/POSTGRESQL_PERSISTENCE.md` — `5347ba55de5a74ad05fb3f24f4a6a79687c6f6c4`: records accepted PostgreSQL persistence/no-fallback infrastructure boundary instead of claiming it remains outstanding.
-- `docs/EXECUTION_PROTOCOL.md` — `78224f9e3c84796d9a7bbefbf461f6d7e6edd778`: execution protocol brought through PostgreSQL, active authority lease, epoch revocation and dev.13 pinned negotiation.
-- `docs/THREAT_MODEL.md` — `11748ffb9d575f9b30ee94897e507add56748a89`: removes pre-PostgreSQL assumptions, adds dev.13 negotiation, IPv6-bypass and current PVE semantics, and records accepted infrastructure status.
-- Pre-merge `HANDOFF.md` finalization — `44ace2905769c87e01b0fdef28f25cc39a5305d6`.
-
-The pre-merge branch review found `wip/bootstrap-security-core` ahead of `main` with no reverse divergence (`main`/merge base `325792ecde3e8e37349711823db035e99cf9f9a7`). Runtime binaries remain the exact accepted dev.13 release artifacts built from `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`; all later pre-merge commits were documentation/evidence only.
-
-PR #1 CI run `34560756474` passed on exact pre-merge head `44ace2905769c87e01b0fdef28f25cc39a5305d6`: module tidy, format, vet, unit tests, PostgreSQL 15 schema/privilege/integration, and PostgreSQL 18 schema/privilege/integration all succeeded.
-
-No version bump was required for these commits because they only align documentation with already-deployed and already-accepted dev.13 behavior.
-
-## First WIP merge PASS
-
-PR #1, `WIP: merge accepted Tethys Sentinel dev.13 security core`, was merged using a normal merge commit rather than squash so the complete dev.4 -> dev.13 implementation and acceptance history remains visible.
-
-- accepted PR head: `44ace2905769c87e01b0fdef28f25cc39a5305d6`
-- target: `main`
-- merge commit: `478009b1310b782db7dc20c629bada475c3f3d63`
-- accepted runtime release remains `0.1.0-dev.13` / `bd6796aae2ee192fd9d007bab39a40ab6870dbcc`
-
-The merge is a WIP/project checkpoint, not a declaration that dev.13 is a production release.
+PR #1 merged the accepted security core into `main` with merge commit `478009b1310b782db7dc20c629bada475c3f3d63`. The final pre-merge CI run `34560756474` passed Go checks/unit tests and PostgreSQL 15/18 integration.
 
 ## Acceptance authority window CLOSED
 
-The final operator `REVOKE ALL` was performed after the accepted WIP merge with no controlled test running.
-
-Before closure, authority was `epoch=2, disabled=false`, last enabled for the stale-capability non-revival check. At `2026-09-14T19:17:03.84825Z`, `REVOKE ALL` advanced authority to:
+After the WIP merge and with no controlled test running, final operator `REVOKE ALL` advanced authority at `2026-09-14T19:17:03.84825Z` from epoch 2 to:
 
 - `epoch=3`
 - `disabled=true`
 - reason `dev.13 acceptance complete; first WIP merge finished`
 
-The immediate final-state read returned the same epoch, disabled flag, timestamp and reason. The acceptance environment is therefore intentionally fail-closed and idle. Every capability issued in epochs 0, 1 or 2 is permanently stale and cannot revive after a later enable.
+The immediate final-state read matched exactly. The acceptance environment is intentionally fail-closed and idle; every capability from epochs 0, 1 and 2 is permanently stale.
+
+## Operator UI v1 phase
+
+Branch `wip/operator-ui` was created from the accepted `main` checkpoint after the acceptance window was closed.
+
+The UI contract is defined in `docs/OPERATOR_UI.md`, initial spec commit `98df6ffdab272dd7806c54965a1fb96bb069ea16`.
+
+Locked v1 direction:
+
+- separate `sentinel-operator` Go BFF/web service;
+- operator-facing HTTPS + client-certificate authentication;
+- browser never receives the Control admin token;
+- operator service talks only to the privileged Control admin surface and has no direct PostgreSQL/Signer/PVE authority;
+- embedded Preact + TypeScript + Vite-built frontend, no Node runtime on deployed hosts and no third-party runtime/CDN content;
+- primary views: Overview, Approvals, Grants, Jobs, Audit, Targets, Context, Security;
+- global `REVOKE ALL` reachable from every page;
+- Targets and Trust-0 Context read-only in v1;
+- exact argv displayed structurally, no shell reconstruction;
+- one-time capability reveal only after grant issuance, never persisted in browser storage;
+- simple polling first; no new streaming security protocol until the operator read model is stable;
+- strict CSP/origin/CSRF behavior and no optimistic security mutations;
+- operator identity derived from authenticated client cert and propagated to audit-producing admin mutations.
+
+The current Control admin API is insufficient for the UI because it is mutation-heavy. dev.14 needs a narrow backend-neutral operator read model for overview/grants/approvals/jobs/audit/targets/context while continuing to exclude token hashes, claim material, credentials and private keys.
 
 ## Current phase
 
-`0.1.0-dev.13` remains deployed across the complete acceptance runtime and every planned hard-boundary test passed on the intended infrastructure:
+The accepted security core remains `0.1.0-dev.13` and remains fail-closed at epoch 3. No UI runtime code has been released yet, therefore no version bump has occurred.
 
-- real harmless end-to-end SSH execution;
-- `allow_once` consumption/non-reuse;
-- individual active revoke with live SSH transport cancellation;
-- active global `REVOKE ALL` with epoch advancement and live transport cancellation;
-- stale epoch non-revival after re-enable;
-- PostgreSQL restart persistence;
-- PostgreSQL-unavailable startup fail-closed with no file fallback/listener;
-- external Worker PVE egress containment;
-- Worker sensitive-material separation, unprivileged service identity, required mTLS, and no IPv6 bypass;
-- pinned SSH host-key verification/negotiation, target forced wrapper, replay consumption, Signer isolation and audit evidence.
-
-The first security-core WIP merge and its acceptance cleanup are complete on `main`. The acceptance environment is idle at epoch 3 with global authority disabled. The next product phase may proceed from this accepted checkpoint; operator UI is the planned next major area, followed later by the deliberately narrow AI/MCP surface.
+The next implementation milestone is `0.1.0-dev.14 — Operator UI v1`. The first coding step is the Control-side operator read model/API because every useful UI screen depends on it and it can be covered independently before frontend work begins.
 
 ## Next steps
 
-1. Begin the operator UI phase from `main`, using a new development branch when implementation starts and bumping the version when new released functionality is introduced.
-2. Keep the accepted security boundaries above invariant; any change to them requires targeted CI and infrastructure re-acceptance.
-3. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Implement backend-neutral Control operator read interfaces and admin GET routes for overview, grants, approvals, jobs, audit, targets and context with bounded pagination and secret-exclusion tests.
+2. Add authenticated operator identity propagation for admin mutations without changing their authority semantics.
+3. Implement `sentinel-operator` TLS/mTLS BFF with origin/CSRF/security headers and no direct database/Signer/PVE access.
+4. Build Overview + Approvals + Security first, then Grants, Jobs/Audit, Targets and Context.
+5. Add frontend/build CI, deployment docs and targeted security tests; then bump to `0.1.0-dev.14`, deploy and run the UI acceptance checklist in `docs/OPERATOR_UI.md`.
+6. Preserve all accepted dev.13 security invariants; materially touched boundaries require targeted infrastructure re-acceptance.
+7. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
