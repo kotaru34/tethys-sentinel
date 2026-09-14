@@ -1,9 +1,9 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-11
+Updated: 2026-09-14
 Current development version: `0.1.0-dev.13`
 Branch: `main`
-Status: the first accepted WIP security-core merge is complete. All constrained infrastructure hard-boundary checks passed on the intended PVE topology, the pre-merge README/security-document review was completed, and PR #1 merged into `main` at `478009b1310b782db7dc20c629bada475c3f3d63`.
+Status: the first accepted WIP security-core merge is complete. All constrained infrastructure hard-boundary checks passed on the intended PVE topology, PR #1 merged into `main` at `478009b1310b782db7dc20c629bada475c3f3d63`, and the acceptance authority window is closed fail-closed at epoch 3 with `disabled=true`.
 
 ## Project goal
 
@@ -287,6 +287,18 @@ PR #1, `WIP: merge accepted Tethys Sentinel dev.13 security core`, was merged us
 
 The merge is a WIP/project checkpoint, not a declaration that dev.13 is a production release.
 
+## Acceptance authority window CLOSED
+
+The final operator `REVOKE ALL` was performed after the accepted WIP merge with no controlled test running.
+
+Before closure, authority was `epoch=2, disabled=false`, last enabled for the stale-capability non-revival check. At `2026-09-14T19:17:03.84825Z`, `REVOKE ALL` advanced authority to:
+
+- `epoch=3`
+- `disabled=true`
+- reason `dev.13 acceptance complete; first WIP merge finished`
+
+The immediate final-state read returned the same epoch, disabled flag, timestamp and reason. The acceptance environment is therefore intentionally fail-closed and idle. Every capability issued in epochs 0, 1 or 2 is permanently stale and cannot revive after a later enable.
+
 ## Current phase
 
 `0.1.0-dev.13` remains deployed across the complete acceptance runtime and every planned hard-boundary test passed on the intended infrastructure:
@@ -302,13 +314,10 @@ The merge is a WIP/project checkpoint, not a declaration that dev.13 is a produc
 - Worker sensitive-material separation, unprivileged service identity, required mTLS, and no IPv6 bypass;
 - pinned SSH host-key verification/negotiation, target forced wrapper, replay consumption, Signer isolation and audit evidence.
 
-The first security-core WIP merge is complete on `main`. The next product phase may proceed from this accepted checkpoint; operator UI is the planned next major area, followed later by the deliberately narrow AI/MCP surface.
-
-Authority on the acceptance environment was last observed enabled at epoch 2 after the stale-capability test. Fresh epoch-2 acceptance grant `a8438ebb57ce923a4f789dd794fdb464` worked during that test; pre-revoke epoch-1 capabilities are permanently stale. Close the controlled authority window with an operator `REVOKE ALL` before treating the acceptance environment as idle.
+The first security-core WIP merge and its acceptance cleanup are complete on `main`. The acceptance environment is idle at epoch 3 with global authority disabled. The next product phase may proceed from this accepted checkpoint; operator UI is the planned next major area, followed later by the deliberately narrow AI/MCP surface.
 
 ## Next steps
 
-1. Close the temporary acceptance authority window with `REVOKE ALL` when no further controlled test is running.
-2. Begin the operator UI phase from `main`, using a new development branch when implementation starts and bumping the version when new released functionality is introduced.
-3. Keep the accepted security boundaries above invariant; any change to them requires targeted CI and infrastructure re-acceptance.
-4. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
+1. Begin the operator UI phase from `main`, using a new development branch when implementation starts and bumping the version when new released functionality is introduced.
+2. Keep the accepted security boundaries above invariant; any change to them requires targeted CI and infrastructure re-acceptance.
+3. When MCP is implemented, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
