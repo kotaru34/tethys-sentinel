@@ -17,10 +17,10 @@ func (a *API) OperatorReadHandler(reader operatorview.Reader) http.Handler {
 	mux.HandleFunc("GET /admin/v1/overview", func(w http.ResponseWriter, r *http.Request) {
 		result, err := reader.Overview(r.Context())
 		if err != nil {
-			writeOperatorReadError(w, err)
+			writeOperatorReadError(w)
 			return
 		}
-		writeOperatorJSON(w, result)
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /admin/v1/grants", func(w http.ResponseWriter, r *http.Request) {
 		options, err := operatorListOptions(r)
@@ -30,22 +30,22 @@ func (a *API) OperatorReadHandler(reader operatorview.Reader) http.Handler {
 		}
 		result, err := reader.Grants(r.Context(), options)
 		if err != nil {
-			writeOperatorReadError(w, err)
+			writeOperatorReadError(w)
 			return
 		}
-		writeOperatorJSON(w, result)
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /admin/v1/grants/{id}", func(w http.ResponseWriter, r *http.Request) {
 		result, found, err := reader.Grant(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		if err != nil {
-			writeOperatorReadError(w, err)
+			writeOperatorReadError(w)
 			return
 		}
 		if !found {
 			writeError(w, http.StatusNotFound, "grant not found")
 			return
 		}
-		writeOperatorJSON(w, result)
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /admin/v1/approvals", func(w http.ResponseWriter, r *http.Request) {
 		options, err := operatorListOptions(r)
@@ -55,10 +55,10 @@ func (a *API) OperatorReadHandler(reader operatorview.Reader) http.Handler {
 		}
 		result, err := reader.Approvals(r.Context(), options)
 		if err != nil {
-			writeOperatorReadError(w, err)
+			writeOperatorReadError(w)
 			return
 		}
-		writeOperatorJSON(w, result)
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /admin/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
 		options, err := operatorListOptions(r)
@@ -68,22 +68,22 @@ func (a *API) OperatorReadHandler(reader operatorview.Reader) http.Handler {
 		}
 		result, err := reader.Jobs(r.Context(), options)
 		if err != nil {
-			writeOperatorReadError(w, err)
+			writeOperatorReadError(w)
 			return
 		}
-		writeOperatorJSON(w, result)
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /admin/v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		result, found, err := reader.Job(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		if err != nil {
-			writeOperatorReadError(w, err)
+			writeOperatorReadError(w)
 			return
 		}
 		if !found {
 			writeError(w, http.StatusNotFound, "job not found")
 			return
 		}
-		writeOperatorJSON(w, result)
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /admin/v1/audit", func(w http.ResponseWriter, r *http.Request) {
 		options, err := operatorListOptions(r)
@@ -93,12 +93,17 @@ func (a *API) OperatorReadHandler(reader operatorview.Reader) http.Handler {
 		}
 		result, err := reader.Audit(r.Context(), options)
 		if err != nil {
-			writeOperatorReadError(w, err)
+			writeOperatorReadError(w)
 			return
 		}
-		writeOperatorJSON(w, result)
+		writeJSON(w, http.StatusOK, result)
 	})
-	return a.requireAdmin(mux)
+
+	authenticated := a.requireAdmin(mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		authenticated.ServeHTTP(w, r)
+	})
 }
 
 func operatorListOptions(r *http.Request) (operatorview.ListOptions, error) {
@@ -116,12 +121,6 @@ func operatorListOptions(r *http.Request) (operatorview.ListOptions, error) {
 	return options.Normalized(), nil
 }
 
-func writeOperatorJSON(w http.ResponseWriter, value any) {
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, value)
-}
-
-func writeOperatorReadError(w http.ResponseWriter, err error) {
-	w.Header().Set("Cache-Control", "no-store")
-	writeError(w, http.StatusInternalServerError, "operator read failed: "+err.Error())
+func writeOperatorReadError(w http.ResponseWriter) {
+	writeError(w, http.StatusInternalServerError, "operator read failed")
 }
