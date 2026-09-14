@@ -36,9 +36,15 @@ Security-first AI infrastructure access broker for granting AI agents narrow, te
 
 ## Status
 
-The accepted infrastructure/security core is `0.1.0-dev.13` — pinned SSH host-key negotiation + constrained infrastructure acceptance milestone.
+The accepted execution/security baseline is `0.1.0-dev.13`. The Operator UI integration is `0.1.0-dev.15` and has passed constrained real-infrastructure acceptance on the intended PVE topology.
 
-The `wip/operator-ui` branch is now versioned `0.1.0-dev.14` and contains the complete Operator UI v1 release-candidate surface. Code/CI acceptance is complete; real mTLS deployment and operator-boundary acceptance are still required before dev.14 is considered infrastructure-accepted.
+The exact deployed dev.15 runtime source checkpoint is `41c343e83596d299af05cf92945395ec008f0fd9`; CI Actions run `34903375824` passed. The accepted deployment uses:
+
+- `sentinel-control` dev.15 with SHA-256 `b1c3b648305a1992b442f9b01980f0fa3556adb1e62bfe63e7c252ecb4397dc6`;
+- `sentinel-operator` dev.15 with SHA-256 `ea50c402b93d39e592f18106b3340b8615ede04e94e9957eb2f27abde236956c`;
+- the previously accepted dev.13 Gateway/Worker/Signer/execution path unchanged except where the dev.15 Control read/operator surface is required.
+
+Operator acceptance covered dedicated browser mTLS, certificate-derived operator identity, strict security headers, credential separation, read-only state views, CSRF/origin/spoofing negatives, one-time capability reveal, grant issue/revoke, emergency enable/revoke-all, approval deny/allow-once/session-policy semantics, allow-once non-reuse, and a real approved job completing through Worker -> Signer -> pinned SSH -> target. Final authority is intentionally fail-closed at **security epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`.
 
 The Control Plane requires an explicit persistence backend:
 
@@ -68,9 +74,11 @@ submit -> staged authorization -> pending -> claim -> start
 
 Powerful execution classes such as shells/interpreters, privilege launchers, remote pivots, mutable container workload execution/start/build, namespace execution and guest/jail exec paths require both `exec=true` and `shell=true`. They remain `allow_once` only.
 
-### Operator UI v1 — dev.14 release candidate
+### Operator UI v1 — dev.15 accepted WIP
 
 `sentinel-operator` is a separate privileged BFF/web process intended to run on the Control host. The browser authenticates with a dedicated operator TLS client certificate. The service replaces any browser-supplied authority with its own local Control admin credential and forwards only an identity derived from the verified client-certificate leaf.
+
+The operator service uses its own `/etc/tethys-sentinel-operator` configuration root. It is deliberately not granted traversal of `/etc/tethys-sentinel`, which remains the `sentinel-control` security boundary.
 
 The embedded UI provides:
 
@@ -83,11 +91,11 @@ The embedded UI provides:
 - read-only `TRUST_0` context/runbooks;
 - emergency Security controls, with global `REVOKE ALL` reachable from every page.
 
-The complete browser/BFF code checkpoint is `aaedad5518ad296426b01af856373672a1847f2d`; Actions run `34898343292` passed Go race tests, PostgreSQL 15/18, TypeScript/Vite build, CSP/storage checks, and frontend embed parity. The final pre-version candidate `c3efc8ac1b760833744c8254130db0fd5400b11b` also passed the pinned frontend dependency gate plus all Go/PostgreSQL/UI checks. Deployment and acceptance are documented in `docs/OPERATOR_DEPLOYMENT.md`.
+The complete browser/UI code checkpoint is `aaedad5518ad296426b01af856373672a1847f2d`; the deployed dev.15 runtime source checkpoint is `41c343e83596d299af05cf92945395ec008f0fd9`. Deployment and the accepted boundary are documented in `docs/OPERATOR_DEPLOYMENT.md` and `HANDOFF.md`.
 
 ### Real-infrastructure acceptance
 
-The first constrained PVE acceptance for dev.13 has passed on the intended isolated topology. Direct evidence recorded in `HANDOFF.md` covers:
+The constrained PVE acceptance has passed on the intended isolated topology. Direct evidence recorded in `HANDOFF.md` covers:
 
 - deny-by-default external Worker egress with only Control HTTPS and registered target SSH allowed;
 - real Gateway -> Control -> PostgreSQL -> Worker -> Signer -> pinned SSH -> target wrapper/replay -> terminal audit execution;
@@ -96,9 +104,10 @@ The first constrained PVE acceptance for dev.13 has passed on the intended isola
 - active global `REVOKE ALL`, security epoch advancement, and old-epoch non-revival after re-enable;
 - PostgreSQL state persistence and unavailable-database startup fail-closed with no file fallback/API listener;
 - Worker sensitive-material separation, unprivileged service account, required Control mTLS, and no IPv6 bypass;
-- exact pinned host-key negotiation against a target advertising multiple host keys.
+- exact pinned host-key negotiation against a target advertising multiple host keys;
+- browser mTLS/operator identity, CSRF/origin boundaries, one-time capability reveal and operator grant/approval/emergency mutation workflows.
 
-`0.1.0-dev.14` remains a **development/WIP release candidate, not a production release**. The accepted dev.13 environment stays intentionally disabled at security epoch 3 until the Operator UI mTLS boundary is deployed and accepted.
+`0.1.0-dev.15` remains a **development/WIP release**, not a production release. The accepted environment is intentionally left at security epoch 5 with AI authority disabled.
 
 ## Documentation
 
@@ -106,7 +115,7 @@ The first constrained PVE acceptance for dev.13 has passed on the intended isola
 - `docs/THREAT_MODEL.md` — attacker assumptions, threats and invariants
 - `docs/API.md` — current development API surface
 - `docs/OPERATOR_UI.md` — Operator UI v1 product/security contract and acceptance criteria
-- `docs/OPERATOR_DEPLOYMENT.md` — mTLS operator deployment, systemd boundary and real acceptance procedure
+- `docs/OPERATOR_DEPLOYMENT.md` — mTLS operator deployment, isolated configuration boundary and real acceptance procedure
 - `docs/EXECUTION_PROTOCOL.md` — staged/claim/start/complete semantics, idempotency and revocation behavior
 - `docs/EXECUTION_POLICY.md` — `exec`/`shell` capability split, powerful execution classes and approval semantics
 - `docs/OPERATIONAL_RISK.md` — semantic administrator mutation/read-only routing
