@@ -28,7 +28,7 @@ func main() {
 		log.Fatal("SENTINEL_OPERATOR_PUBLIC_ORIGIN is required")
 	}
 
-	adminTokenPath := env("SENTINEL_OPERATOR_ADMIN_TOKEN_FILE", "/etc/tethys-sentinel/operator-admin.token")
+	adminTokenPath := env("SENTINEL_OPERATOR_ADMIN_TOKEN_FILE", "/etc/tethys-sentinel-operator/operator-admin.token")
 	adminToken, err := readAdminToken(adminTokenPath)
 	if err != nil {
 		log.Fatalf("read operator admin token: %v", err)
@@ -59,9 +59,9 @@ func main() {
 	}
 
 	tlsCfg, err := tlsutil.ServerMTLS(
-		env("SENTINEL_OPERATOR_TLS_CERT", "/etc/tethys-sentinel/operator-server.crt"),
-		env("SENTINEL_OPERATOR_TLS_KEY", "/etc/tethys-sentinel/operator-server.key"),
-		env("SENTINEL_OPERATOR_CLIENT_CA", "/etc/tethys-sentinel/operator-client-ca.crt"),
+		env("SENTINEL_OPERATOR_TLS_CERT", "/etc/tethys-sentinel-operator/operator-server.crt"),
+		env("SENTINEL_OPERATOR_TLS_KEY", "/etc/tethys-sentinel-operator/operator-server.key"),
+		env("SENTINEL_OPERATOR_CLIENT_CA", "/etc/tethys-sentinel-operator/operator-client-ca.crt"),
 	)
 	if err != nil {
 		log.Fatalf("configure operator mTLS: %v", err)
