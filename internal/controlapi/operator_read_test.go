@@ -14,6 +14,8 @@ import (
 
 type fakeOperatorReader struct {
 	overview operatorview.Overview
+	targets  []operatorview.TargetView
+	context  operatorview.ContextView
 	err      error
 	seen     operatorview.ListOptions
 }
@@ -42,6 +44,12 @@ func (f *fakeOperatorReader) Job(context.Context, string) (executionjob.Job, boo
 func (f *fakeOperatorReader) Audit(_ context.Context, options operatorview.ListOptions) (operatorview.AuditPage, error) {
 	f.seen = options
 	return operatorview.AuditPage{}, f.err
+}
+func (f *fakeOperatorReader) Targets(context.Context) ([]operatorview.TargetView, error) {
+	return f.targets, f.err
+}
+func (f *fakeOperatorReader) Context(context.Context) (operatorview.ContextView, error) {
+	return f.context, f.err
 }
 
 func TestOperatorReadRequiresAdminAndNoStore(t *testing.T) {
@@ -93,6 +101,28 @@ func TestOperatorReadBoundsListOptions(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("invalid limit status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestOperatorReadStaticViews(t *testing.T) {
+	a := testAPI(t)
+	reader := &fakeOperatorReader{
+		targets: []operatorview.TargetView{{Name: "dns01", Address: "10.0.0.53:22"}},
+		context: operatorview.ContextView{Version: "abc", TrustLevel: "TRUST_0", Policy: "policy"},
+	}
+	h := a.OperatorReadHandler(reader)
+
+	for _, path := range []string{"/admin/v1/targets", "/admin/v1/context"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+testAdminToken)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, rr.Code, rr.Body.String())
+		}
+		if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("%s Cache-Control=%q", path, got)
+		}
 	}
 }
 
