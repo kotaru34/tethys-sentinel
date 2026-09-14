@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 )
@@ -77,6 +78,10 @@ func decodeCursor(value string, out any) error {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
 		return errors.New("invalid operator cursor payload")
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("invalid operator cursor trailing payload")
 	}
 	return nil
 }
