@@ -96,13 +96,13 @@ func TestIntegrationOperatorReaderListsApprovalsAndJobsWithoutClaimMaterial(t *t
 	}
 
 	approvalItem, _, err := repo.Approvals().Request(ctx, approval.Request{
-		GrantID: issued.ID,
-		Agent: issued.Agent,
-		Target: "dns01",
-		Argv: []string{"systemctl", "restart", "pdns"},
-		Category: "SERVICE_RESTART",
-		RiskLevel: "medium",
-		ScopeKey: "service:dns01:pdns",
+		GrantID:    issued.ID,
+		Agent:      issued.Agent,
+		Target:     "dns01",
+		Argv:       []string{"systemctl", "restart", "pdns"},
+		Category:   "SERVICE_RESTART",
+		RiskLevel:  "medium",
+		ScopeKey:   "service:dns01:pdns",
 		RiskReason: "operator read integration",
 	})
 	if err != nil {
@@ -111,10 +111,10 @@ func TestIntegrationOperatorReaderListsApprovalsAndJobsWithoutClaimMaterial(t *t
 
 	job, _, err := repo.Jobs().Enqueue(ctx, executionjob.EnqueueInput{
 		RequestID: "operator-reader-job-001",
-		GrantID: issued.ID,
-		Agent: issued.Agent,
-		Target: "dns01",
-		Argv: []string{"true"},
+		GrantID:   issued.ID,
+		Agent:     issued.Agent,
+		Target:    "dns01",
+		Argv:      []string{"true"},
 		ExpiresAt: time.Now().UTC().Add(time.Minute),
 	})
 	if err != nil {
