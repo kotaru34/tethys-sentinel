@@ -20,7 +20,7 @@ func (a *API) GrantHandler(grants controlops.GrantLifecycle) http.Handler {
 	mux.HandleFunc("POST /admin/v1/grants/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
 		a.revokeGrantWithLifecycle(w, r, grants)
 	})
-	return a.requireAdmin(mux)
+	return a.requireAdmin(withOperatorIdentity(mux))
 }
 
 func (a *API) issueGrantWithLifecycle(w http.ResponseWriter, r *http.Request, grants controlops.GrantLifecycle) {
