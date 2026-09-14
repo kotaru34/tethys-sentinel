@@ -12,7 +12,7 @@ import (
 // OperatorReadHandler exposes the narrow read-only operator model under the
 // existing admin authentication boundary. The returned handler is intended to
 // be mounted only on the loopback Control admin listener.
-func (a *API) OperatorReadHandler(reader operatorview.Reader) http.Handler {
+func (a *API) OperatorReadHandler(reader operatorview.FullReader) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /admin/v1/overview", func(w http.ResponseWriter, r *http.Request) {
 		result, err := reader.Overview(r.Context())
@@ -92,6 +92,22 @@ func (a *API) OperatorReadHandler(reader operatorview.Reader) http.Handler {
 			return
 		}
 		result, err := reader.Audit(r.Context(), options)
+		if err != nil {
+			writeOperatorReadError(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("GET /admin/v1/targets", func(w http.ResponseWriter, r *http.Request) {
+		result, err := reader.Targets(r.Context())
+		if err != nil {
+			writeOperatorReadError(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": result})
+	})
+	mux.HandleFunc("GET /admin/v1/context", func(w http.ResponseWriter, r *http.Request) {
+		result, err := reader.Context(r.Context())
 		if err != nil {
 			writeOperatorReadError(w)
 			return
