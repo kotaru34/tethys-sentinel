@@ -65,7 +65,16 @@ func New(cfg Config) (*Proxy, error) {
 	}
 	client := cfg.Client
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{
+			Transport: &http.Transport{
+				Proxy:             nil,
+				ForceAttemptHTTP2: false,
+			},
+			Timeout: 10 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 	random := cfg.Random
 	if random == nil {
