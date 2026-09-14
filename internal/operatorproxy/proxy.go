@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	csrfCookieName = "__Host-tethys_csrf"
-	csrfHeaderName = "X-Tethys-CSRF-Token"
-	maxRequestBody = 1 << 20
+	csrfCookieName  = "__Host-tethys_csrf"
+	csrfHeaderName  = "X-Tethys-CSRF-Token"
+	maxRequestBody  = 1 << 20
 	maxResponseBody = 8 << 20
 )
 
