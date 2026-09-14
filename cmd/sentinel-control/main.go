@@ -95,7 +95,7 @@ func main() {
 	adminMux.Handle("GET /admin/v1/audit", operatorRead)
 	adminMux.Handle("GET /admin/v1/targets", operatorRead)
 	adminMux.Handle("GET /admin/v1/context", operatorRead)
-	adminMux.Handle("/admin/v1/emergency/", emergencyAPI.AdminHandler())
+	adminMux.Handle("/admin/v1/emergency/", emergencyAPI.OperatorAdminHandler())
 	adminMux.Handle("/admin/v1/grants", grantAdmin)
 	adminMux.Handle("/admin/v1/grants/", grantAdmin)
 	adminMux.Handle("/admin/v1/approvals/", approvalAdmin)
