@@ -16,7 +16,9 @@ sentinel-operator :8444
 sentinel-control 127.0.0.1:8081
 ```
 
-`sentinel-operator` should run on the Control host as a separate unprivileged systemd service. The public AI Gateway does not receive any operator routes.
+`sentinel-operator` runs on the Control host as a separate unprivileged systemd service. The public AI Gateway does not receive operator routes.
+
+The accepted dev.15 deployment keeps operator configuration under a separate `/etc/tethys-sentinel-operator` root. Do **not** grant the operator service traversal of `/etc/tethys-sentinel`; that directory belongs to the `sentinel-control` security boundary.
 
 ## Credential boundary
 
@@ -42,19 +44,28 @@ The browser never receives the Control admin credential. Browser mutations use a
 
 The deployed host does not need Node.js.
 
-The browser source lives in `web/operator` and is built with TypeScript, Preact and Vite. CI verifies that the generated files match the frontend archive embedded into the Go binary.
+The browser source lives in `web/operator` and is built with TypeScript, Preact and Vite. CI verifies that generated files match the frontend archive embedded into the Go binary.
 
-Build the release binary from the exact accepted commit:
+Build from the exact accepted source checkpoint:
 
 ```bash
+git checkout 41c343e83596d299af05cf92945395ec008f0fd9
+cat VERSION
+# expected: 0.1.0-dev.15
+
 go test ./internal/operatorweb ./internal/operatorproxy ./cmd/sentinel-operator
 CGO_ENABLED=0 go build -trimpath -o sentinel-operator ./cmd/sentinel-operator
-./sentinel-operator --help 2>/dev/null || true
+```
+
+The accepted dev.15 `sentinel-operator` binary built with Go 1.27.1 has SHA-256:
+
+```text
+ea50c402b93d39e592f18106b3340b8615ede04e94e9957eb2f27abde236956c
 ```
 
 `sentinel-operator` intentionally has no runtime dependency on a checkout, `node_modules`, npm or Vite.
 
-## Service account and binary
+## Service account and isolated configuration root
 
 On the Control host:
 
@@ -70,16 +81,29 @@ sudo install -o root -g root -m 0755 \
   ./sentinel-operator \
   /usr/local/sbin/sentinel-operator
 
-sudo install -d -o root -g root -m 0755 /etc/tethys-sentinel
+sudo install -d \
+  -o root \
+  -g tethys-operator \
+  -m 0750 \
+  /etc/tethys-sentinel-operator
 ```
 
 Install `config/systemd/sentinel-operator.service` as `/etc/systemd/system/sentinel-operator.service`.
+
+The accepted Control directory remains separately protected, for example:
+
+```text
+/etc/tethys-sentinel          0750 root:sentinel-control
+/etc/tethys-sentinel-operator 0750 root:tethys-operator
+```
+
+Do not add `tethys-operator` to the `sentinel-control` group and do not weaken `/etc/tethys-sentinel` permissions.
 
 ## Control admin token file
 
 Do not print the token and do not place it in the browser-facing environment.
 
-If Control already has the token in its process environment, copy it directly into the operator-only file on the same host:
+If Control already has the token in its process environment, copy it directly into the isolated operator-only file on the same host:
 
 ```bash
 sudo bash <<'EOF'
@@ -93,9 +117,9 @@ ADMIN_TOKEN="$(
 )"
 
 test -n "$ADMIN_TOKEN"
-printf '%s\n' "$ADMIN_TOKEN" > /etc/tethys-sentinel/operator-admin.token
-chown tethys-operator:tethys-operator /etc/tethys-sentinel/operator-admin.token
-chmod 0400 /etc/tethys-sentinel/operator-admin.token
+printf '%s\n' "$ADMIN_TOKEN" > /etc/tethys-sentinel-operator/operator-admin.token
+chown tethys-operator:tethys-operator /etc/tethys-sentinel-operator/operator-admin.token
+chmod 0400 /etc/tethys-sentinel-operator/operator-admin.token
 unset ADMIN_TOKEN
 EOF
 ```
@@ -104,72 +128,85 @@ Do not use `cat`, `set -x`, shell tracing, or command-line arguments that expose
 
 ## Dedicated operator TLS trust root
 
-Do not reuse the Sentinel SSH user CA or any other infrastructure CA.
+Do not reuse the Sentinel SSH user CA or another infrastructure CA.
 
-Create a dedicated TLS CA for operator browser authentication. Keep its private key offline after certificates are issued. Only the CA certificate belongs on the Control host.
+Create a dedicated TLS CA for operator browser authentication. Keep its private key off the Sentinel runtime hosts after certificates are issued. Only the CA certificate belongs on the Control host.
 
 The server certificate must contain the exact DNS name or IP address used by the browser in `SENTINEL_OPERATOR_PUBLIC_ORIGIN`.
 
-For the accepted Control address example `10.169.2.210`, a server certificate therefore needs an IP SAN for `10.169.2.210` if the browser URL is:
+For the accepted Control address `10.169.2.210`, the server certificate therefore needs IP SAN `10.169.2.210` when the browser URL is:
 
 ```text
 https://10.169.2.210:8444
 ```
 
-The operator client certificate should have client-auth EKU. Export the client key/certificate as a password-protected PKCS#12/PFX for import into the Windows certificate store/browser.
+The operator client certificate must have client-auth EKU. Export the client key/certificate as a password-protected PKCS#12/PFX for import into the Windows certificate store/browser.
 
-After transfer to the operator workstation, remove any temporary plaintext client private key from the Control host. The dedicated operator CA private key should likewise not remain on the Sentinel host.
+After verified workstation import, remove temporary client private-key material and the operator CA private key from the Control host.
 
 Install only these TLS files for the service:
 
 ```text
-/etc/tethys-sentinel/operator-server.crt
-/etc/tethys-sentinel/operator-server.key
-/etc/tethys-sentinel/operator-client-ca.crt
+/etc/tethys-sentinel-operator/operator-server.crt
+/etc/tethys-sentinel-operator/operator-server.key
+/etc/tethys-sentinel-operator/operator-client-ca.crt
 ```
 
-Recommended permissions:
+Accepted permissions:
 
 ```bash
-sudo chown root:root /etc/tethys-sentinel/operator-server.crt
-sudo chmod 0444 /etc/tethys-sentinel/operator-server.crt
+sudo chown tethys-operator:tethys-operator \
+  /etc/tethys-sentinel-operator/operator-server.key
+sudo chmod 0400 \
+  /etc/tethys-sentinel-operator/operator-server.key
 
-sudo chown tethys-operator:tethys-operator /etc/tethys-sentinel/operator-server.key
-sudo chmod 0400 /etc/tethys-sentinel/operator-server.key
-
-sudo chown root:root /etc/tethys-sentinel/operator-client-ca.crt
-sudo chmod 0444 /etc/tethys-sentinel/operator-client-ca.crt
+sudo chown root:tethys-operator \
+  /etc/tethys-sentinel-operator/operator-server.crt \
+  /etc/tethys-sentinel-operator/operator-client-ca.crt
+sudo chmod 0440 \
+  /etc/tethys-sentinel-operator/operator-server.crt \
+  /etc/tethys-sentinel-operator/operator-client-ca.crt
 ```
+
+The accepted dedicated Operator PKI fingerprints are recorded in `HANDOFF.md`.
 
 ## Runtime configuration
 
-Copy `config/operator.env.example` to `/etc/tethys-sentinel/operator.env` and set the exact management address/origin. For the accepted Control VM example:
+Copy `config/operator.env.example` to `/etc/tethys-sentinel-operator/operator.env` and set the exact management address/origin. For the accepted Control VM:
 
 ```ini
 SENTINEL_OPERATOR_PUBLIC_ORIGIN=https://10.169.2.210:8444
 SENTINEL_OPERATOR_LISTEN=10.169.2.210:8444
 SENTINEL_OPERATOR_CONTROL_URL=http://127.0.0.1:8081
-SENTINEL_OPERATOR_ADMIN_TOKEN_FILE=/etc/tethys-sentinel/operator-admin.token
-SENTINEL_OPERATOR_TLS_CERT=/etc/tethys-sentinel/operator-server.crt
-SENTINEL_OPERATOR_TLS_KEY=/etc/tethys-sentinel/operator-server.key
-SENTINEL_OPERATOR_CLIENT_CA=/etc/tethys-sentinel/operator-client-ca.crt
+SENTINEL_OPERATOR_ADMIN_TOKEN_FILE=/etc/tethys-sentinel-operator/operator-admin.token
+SENTINEL_OPERATOR_TLS_CERT=/etc/tethys-sentinel-operator/operator-server.crt
+SENTINEL_OPERATOR_TLS_KEY=/etc/tethys-sentinel-operator/operator-server.key
+SENTINEL_OPERATOR_CLIENT_CA=/etc/tethys-sentinel-operator/operator-client-ca.crt
 ```
 
 The public origin must be an HTTPS origin with no path/query/fragment and must exactly match the browser Origin header. The binary rejects a non-loopback Control URL.
 
-The environment file contains no secret and can remain root-owned/readable:
+The environment file contains no secret but is still kept within the operator-only boundary:
 
 ```bash
-sudo chown root:root /etc/tethys-sentinel/operator.env
-sudo chmod 0644 /etc/tethys-sentinel/operator.env
+sudo chown root:tethys-operator /etc/tethys-sentinel-operator/operator.env
+sudo chmod 0440 /etc/tethys-sentinel-operator/operator.env
 ```
 
 ## Start
 
+For staged acceptance, start the service without enabling it at boot:
+
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now sentinel-operator.service
+sudo systemctl start sentinel-operator.service
 sudo systemctl status --no-pager sentinel-operator.service
+```
+
+After acceptance and an explicit deployment decision, enabling at boot may be done separately:
+
+```bash
+sudo systemctl enable sentinel-operator.service
 ```
 
 Do not dump the full process environment while troubleshooting. Logs must never include the admin token or issued capabilities.
@@ -178,13 +215,13 @@ Do not dump the full process environment while troubleshooting. Logs must never 
 
 Allow TCP/8444 only from the intended operator/management network where practical.
 
-The service itself is still fail-closed by mTLS even when the TCP listener is reachable. No HTTP listener is provided. The only upstream destination permitted by application validation is a loopback HTTP Control URL.
+The service itself is fail-closed by mTLS even when the TCP listener is reachable. No HTTP listener is provided. The only upstream destination permitted by application validation is a loopback HTTP Control URL.
 
 No new route from the Worker, Gateway or target networks to operator authority is required.
 
 ## Windows browser client certificate
 
-Import the password-protected operator PFX into the current user's Personal certificate store. Import the dedicated operator CA certificate into the appropriate trusted root store only if it is not already trusted through another approved mechanism.
+Import the password-protected operator PFX into the current user's Personal certificate store. Import the dedicated operator CA certificate into the trusted root store only through the intended administrator workflow.
 
 Navigate to the exact HTTPS origin configured in `SENTINEL_OPERATOR_PUBLIC_ORIGIN`. The browser should prompt for/select the operator client certificate when necessary.
 
@@ -192,7 +229,7 @@ Do not import or distribute the operator CA private key.
 
 ## Acceptance checklist
 
-Run acceptance against the exact release candidate binary and record the commit SHA.
+Run acceptance against the exact release candidate binary and record the source commit SHA and binary hashes.
 
 ### TLS / browser boundary
 
@@ -206,8 +243,9 @@ Run acceptance against the exact release candidate binary and record the commit 
 
 - Browser requests never contain the Control admin bearer token.
 - `sentinel-operator` process environment contains no PostgreSQL DSN/password, Worker secret, Signer token, PVE credential or SSH CA private material.
-- The operator admin token file is mode `0400` and readable only by the service account/root.
-- The Control URL is loopback.
+- The operator admin token and server private key are mode `0400` and readable only by `tethys-operator`/root.
+- `/etc/tethys-sentinel` remains inaccessible to `tethys-operator`.
+- The Control URL is exactly loopback.
 
 ### CSRF/origin
 
@@ -215,22 +253,34 @@ Run acceptance against the exact release candidate binary and record the commit 
 - Missing/mismatched CSRF token is rejected.
 - Cross-origin mutation is rejected.
 - A spoofed browser `Authorization` or forwarded operator identity cannot replace server-side authority/identity.
+- Unknown browser API routes return 404; there is no generic admin proxy.
 
 ### Functional
 
 - Overview reflects current authority state/counts.
 - A pending approval can be denied and allowed once; reusable session approval appears only when policy permits it.
+- Powerful execution categories show one-shot-only policy and cannot receive reusable session approval.
+- A consumed `allow_once` cannot authorize a second request ID with the same risk scope.
 - A grant can be issued and its plaintext capability appears only in the immediate reveal state.
 - Dismissing the reveal removes the token from application state; it is not in localStorage/sessionStorage.
 - A grant can be revoked.
 - Jobs expose immutable command binding, timestamps and terminal result without inventing raw stdout/stderr.
 - Audit, Targets and Trust-0 Context are readable and remain non-mutable in the browser.
+- Mutation audit actor is derived from the verified client certificate.
 
 ### Emergency semantics
 
 - `REVOKE ALL` is reachable globally and, after confirmation, advances the epoch and disables AI authority.
-- A running execution loses authority promptly, preserving the already-accepted active-revoke semantics.
+- A running execution loses authority promptly, preserving the accepted active-revoke semantics.
 - `Enable AI access` requires an explicit human reason/confirmation.
 - Re-enable preserves the current epoch and does not revive an older capability.
 
-Leave production authority in the intended final state after acceptance. Never use an expired/revoked/stale acceptance capability for later operations.
+The accepted dev.15 run completed grant and approval mutation acceptance and ended with:
+
+```text
+security epoch: 5
+disabled: true
+reason: dev.15 approval workflow acceptance complete
+```
+
+Epochs 0 through 4 are permanently stale. Leave authority in the intended fail-closed state after acceptance and never reuse an expired/revoked/stale acceptance capability.
