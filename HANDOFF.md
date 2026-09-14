@@ -3,7 +3,7 @@
 Updated: 2026-09-14
 Current development version: `0.1.0-dev.13`
 Branch: `wip/operator-ui`
-Status: the accepted security core remains deployed fail-closed at epoch 3, and the operator UI phase has started from `main`. Operator UI v1 scope/security/UX is defined in `docs/OPERATOR_UI.md`; implementation will become `0.1.0-dev.14` only when a complete runnable UI milestone exists.
+Status: the accepted security core remains deployed fail-closed at epoch 3. Operator UI v1 backend read model, authenticated operator attribution, and the mTLS `sentinel-operator` BFF security boundary are implemented and CI-green; the next milestone is the embedded browser UI. The implementation becomes `0.1.0-dev.14` only when a complete runnable UI milestone exists.
 
 ## Project goal
 
@@ -50,8 +50,10 @@ Tethys Sentinel is a security-first broker between autonomous AI agents and infr
 - Fresh PostgreSQL authority starts disabled.
 - Canonical PostgreSQL lock order: authority -> grant -> approval -> job -> audit head.
 - Grant revoke, global revoke, approval decisions, allow-once consumption/job publication, claim/start/complete, and required audit events are transactional.
-- Browser/UI must never receive `SENTINEL_ADMIN_TOKEN`; the planned `sentinel-operator` BFF holds only the privileged local Control admin credential and receives no PostgreSQL, Signer/CA or PVE credentials.
+- Browser/UI must never receive `SENTINEL_ADMIN_TOKEN`; `sentinel-operator` holds only the privileged local Control admin credential and receives no PostgreSQL, Signer/CA or PVE credentials.
 - Operator UI target/context inventory is read-only in v1; no browser route may widen targets, Trust-0, PVE egress or Signer authority.
+- Browser-supplied `Authorization` and operator identity are never trusted by the BFF. Operator identity is derived only from the verified client-certificate leaf and forwarded after mTLS authentication.
+- `sentinel-operator` uses an explicit route allowlist rather than a generic reverse proxy, rejects off-loopback Control upstreams, disables environment proxy use and redirect following, applies bounded request/response sizes, same-origin checks, CSRF protection for mutations, CSP/security headers and no-store behavior.
 - When MCP is added, expose a narrow purpose-built Qwen tool surface rather than generic backend/admin operations.
 
 ## Version history
@@ -69,7 +71,7 @@ Accepted at `9eaa16febd801b4082221e45e7b929969e91b72c`, Actions `34397117715`.
 Accepted at `58318f7a1f0693941dce4d791ea97fac8e3d3519`, Actions `34401911162`.
 
 ### `0.1.0-dev.8` — semantic operational risk
-Accepted at `4fcde4fa771f5008cbd696e4889ca51b564a9507`, Actions `34406118118`.
+Accepted at `4fcde4fa771f5008cafa8f79a1855b7f54ddc2b246`, Actions `34407900220`.
 
 ### `0.1.0-dev.9` — external Worker egress enforcement
 Accepted at `6a14729036b3f8cafa8f79a1855b7f54ddc2b246`, Actions `34407900220`.
@@ -164,7 +166,7 @@ Locked v1 direction:
 - operator-facing HTTPS + client-certificate authentication;
 - browser never receives the Control admin token;
 - operator service talks only to the privileged Control admin surface and has no direct PostgreSQL/Signer/PVE authority;
-- embedded Preact + TypeScript + Vite-built frontend, no Node runtime on deployed hosts and no third-party runtime/CDN content;
+- embedded browser frontend with no deployed Node runtime and no third-party runtime/CDN content;
 - primary views: Overview, Approvals, Grants, Jobs, Audit, Targets, Context, Security;
 - global `REVOKE ALL` reachable from every page;
 - Targets and Trust-0 Context read-only in v1;
@@ -174,20 +176,29 @@ Locked v1 direction:
 - strict CSP/origin/CSRF behavior and no optimistic security mutations;
 - operator identity derived from authenticated client cert and propagated to audit-producing admin mutations.
 
-The current Control admin API is insufficient for the UI because it is mutation-heavy. dev.14 needs a narrow backend-neutral operator read model for overview/grants/approvals/jobs/audit/targets/context while continuing to exclude token hashes, claim material, credentials and private keys.
+### Completed operator backend/BFF milestone
+
+- Backend-neutral operator read interfaces and admin GET routes exist for overview, grants, approvals, jobs, audit, targets and Trust-0 context with secret-exclusion/bounded-query coverage.
+- Targets and Trust-0 context are exposed to the operator surface from read-only snapshots without changing the accepted execution/credential path.
+- Authenticated operator identity propagation is implemented for audit-producing admin mutations. Malformed/spoofed identity is not parsed before admin authentication, and non-operator audit actors are not rewritten.
+- `sentinel-operator` BFF core is implemented with explicit route allowlisting, verified-client-certificate identity, server-side admin credential replacement, mutation CSRF + same-origin checks, bounded bodies/responses, CSP/security headers and no-store behavior.
+- BFF -> Control transport is restricted to loopback HTTP, does not use proxy environment settings, and does not follow redirects, preventing privileged admin credentials from leaving the local boundary through proxy/redirect behavior.
+- Runnable `cmd/sentinel-operator` is implemented as mTLS-only. Its admin token is loaded from a strict root/service-owned regular file boundary; unsafe file permissions and symlink-based secret paths are rejected.
+- Exact checkpoint `f5d37bec113c35efebc72ecc639e275f50161a10`, Actions run `34892851385`: Go module/format/vet/unit checks and PostgreSQL 15/18 jobs all PASS.
+- No version bump yet: this is a backend/BFF milestone, not a complete operator UI release.
 
 ## Current phase
 
-The accepted security core remains `0.1.0-dev.13` and remains fail-closed at epoch 3. No UI runtime code has been released yet, therefore no version bump has occurred.
+The accepted security core remains `0.1.0-dev.13` and remains fail-closed at epoch 3. Operator backend read surfaces, identity attribution and runnable BFF are implemented and green, but the browser UI has not yet reached a complete runnable release milestone.
 
-The next implementation milestone is `0.1.0-dev.14 — Operator UI v1`. The first coding step is the Control-side operator read model/API because every useful UI screen depends on it and it can be covered independently before frontend work begins.
+The active implementation step is the embedded browser UI. Build Overview + Approvals + Security first against the allowlisted BFF, then complete Grants, Jobs/Audit, Targets and Context. Preserve server-side authority: no optimistic mutations, no admin credential exposure, no browser-controlled operator identity, and no generic proxy escape hatch.
 
 ## Next steps
 
-1. Implement backend-neutral Control operator read interfaces and admin GET routes for overview, grants, approvals, jobs, audit, targets and context with bounded pagination and secret-exclusion tests.
-2. Add authenticated operator identity propagation for admin mutations without changing their authority semantics.
-3. Implement `sentinel-operator` TLS/mTLS BFF with origin/CSRF/security headers and no direct database/Signer/PVE access.
-4. Build Overview + Approvals + Security first, then Grants, Jobs/Audit, Targets and Context.
-5. Add frontend/build CI, deployment docs and targeted security tests; then bump to `0.1.0-dev.14`, deploy and run the UI acceptance checklist in `docs/OPERATOR_UI.md`.
+1. Add the embedded static operator frontend shell and first screens: Overview, Approvals and Security, including global `REVOKE ALL` access and structural argv rendering.
+2. Add focused browser-surface tests for CSP/static serving, CSRF token handling, mutation confirmation/error states and absence of secret/browser-storage persistence.
+3. Complete Grants, Jobs/Audit, Targets and Context views while keeping Targets/Trust-0 read-only.
+4. Add frontend/build CI and deployment/systemd documentation for `sentinel-operator`.
+5. When the operator UI is complete and runnable, bump to `0.1.0-dev.14`, update release metadata/HANDOFF, deploy on the intended operator boundary, and run the UI acceptance checklist in `docs/OPERATOR_UI.md`.
 6. Preserve all accepted dev.13 security invariants; materially touched boundaries require targeted infrastructure re-acceptance.
 7. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents; never expose general backend/admin APIs.
