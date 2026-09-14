@@ -71,7 +71,7 @@ Accepted at `9eaa16febd801b4082221e45e7b929969e91b72c`, Actions `34397117715`.
 Accepted at `58318f7a1f0693941dce4d791ea97fac8e3d3519`, Actions `34401911162`.
 
 ### `0.1.0-dev.8` — semantic operational risk
-Accepted at `4fcde4fa771f5008cafa8f79a1855b7f54ddc2b246`, Actions `34407900220`.
+Accepted at `4fcde4fa771f5008cbd696e4889ca51b564a9507`, Actions `34406118118`.
 
 ### `0.1.0-dev.9` — external Worker egress enforcement
 Accepted at `6a14729036b3f8cafa8f79a1855b7f54ddc2b246`, Actions `34407900220`.
