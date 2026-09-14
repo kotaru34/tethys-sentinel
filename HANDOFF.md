@@ -4,7 +4,7 @@ Updated: 2026-09-15
 Current development version: `0.1.0-dev.15`
 Branch: `main` (Operator UI WIP merged from `wip/operator-ui` via PR #2)
 
-Status: dev.15 Operator UI acceptance is complete on the intended infrastructure and the accepted WIP has been merged to `main`. Exact deployed runtime source remains frozen at `41c343e83596d299af05cf92945395ec008f0fd9`; deployed binary hashes are recorded below. Documentation-complete branch head `6aaf813e87f8ed84ae062b7d5dcc95b73bdff986` passed push CI `34910290003` and PR CI `34910423543`; PR #2 merged as `0cbe1e4dbb2d7beb0feb751ca1e42872064578ea`. Real mTLS deployment, Control/BFF integration, credential separation, read-only UI, CSRF/origin/spoofing negatives, grant issue/reveal/revoke, emergency controls, approval deny/allow-once/session-policy, one-shot non-reuse, and a real approved execution all pass. Final authority is fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`.
+Status: dev.15 Operator UI acceptance is complete on the intended infrastructure and the accepted WIP has been merged to `main`. Exact deployed runtime source remains frozen at `41c343e83596d299af05cf92945395ec008f0fd9`; deployed binary hashes are recorded below. Documentation-complete branch head `6aaf813e87f8ed84ae062b7d5dcc95b73bdff986` passed push CI `34910290003` and PR CI `34910423543`; PR #2 merged as `0cbe1e4dbb2d7beb0feb751ca1e42872064578ea`; post-merge `main` CI `34910609193` passed. Real mTLS deployment, Control/BFF integration, credential separation, read-only UI, CSRF/origin/spoofing negatives, grant issue/reveal/revoke, emergency controls, approval deny/allow-once/session-policy, one-shot non-reuse, and a real approved execution all pass. `sentinel-operator.service` is now enabled at boot. Final authority remains fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`.
 
 ## Operator-mandated development rules
 
@@ -82,6 +82,7 @@ PR #1 merged the accepted core to `main` at `478009b1310b782db7dc20c629bada475c3
 - final push CI: Actions `34910290003` PASS
 - PR #2 CI: Actions `34910423543` PASS
 - PR #2 merge commit: `0cbe1e4dbb2d7beb0feb751ca1e42872064578ea`
+- post-merge `main` CI: Actions `34910609193` PASS
 - embedded frontend archive SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`
 - CI pins Node `24.20.0`, npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95`
 
@@ -109,7 +110,7 @@ Exact deployed dev.15 binaries:
 - `sentinel-control`: `b1c3b648305a1992b442f9b01980f0fa3556adb1e62bfe63e7c252ecb4397dc6`
 - Gateway remains accepted dev.13: `89078f3173029fcd4c809e25ef3c9a7f4aacf7381356ac41b8294276667ba3c3`
 
-Control listeners: `127.0.0.1:8081` admin + `10.169.2.210:9091` internal. Operator UI: `10.169.2.210:8444` mTLS. Gateway: `10.169.2.211:8443` with public CA validation. `sentinel-operator` remained boot-disabled during acceptance.
+Control listeners: `127.0.0.1:8081` admin + `10.169.2.210:9091` internal. Operator UI: `10.169.2.210:8444` mTLS. Gateway: `10.169.2.211:8443` with public CA validation. `sentinel-operator.service` is enabled at boot after successful acceptance.
 
 ## dev.15 acceptance evidence
 
@@ -170,9 +171,8 @@ Epochs 0/1/2/3/4 capabilities are permanently stale after the epoch-5 revoke. Do
 
 ## Current phase / next steps
 
-1. Verify CI on the post-merge `main` handoff/documentation commit; no runtime rebuild or authority change is required for docs-only commits.
+1. Continue all new development from `main`; create a new branch and bump the development version when the next implemented feature warrants a release version.
 2. Keep production authority fail-closed at epoch 5 unless a future explicitly controlled operation requires enablement.
-3. Decide separately whether `sentinel-operator.service` should be enabled at boot; acceptance deliberately left it running but boot-disabled.
+3. `sentinel-operator.service` is enabled at boot and is part of the accepted deployed baseline.
 4. Preserve accepted dev.13 execution/credential invariants; materially touched execution paths require targeted re-acceptance.
-5. Future Operator UI work should start from `main` with a new branch/version as appropriate.
-6. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
+5. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
