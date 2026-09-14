@@ -17,7 +17,9 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/contextstore"
 	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
 	"github.com/kotaru34/tethys-sentinel/internal/emergencyapi"
+	"github.com/kotaru34/tethys-sentinel/internal/operatorview"
 	"github.com/kotaru34/tethys-sentinel/internal/resourceapi"
+	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 )
 
@@ -42,6 +44,14 @@ func main() {
 	contextStore, err := contextstore.New(env("SENTINEL_CONTEXT_FILE", "/etc/tethys-sentinel/context.json"))
 	if err != nil {
 		log.Fatalf("open authoritative context: %v", err)
+	}
+	operatorTargets, err := sshtarget.Open(env("SENTINEL_SSH_TARGETS_FILE", "/etc/tethys-sentinel/ssh-targets.json"))
+	if err != nil {
+		log.Fatalf("open operator SSH target snapshot: %v", err)
+	}
+	operatorReader, err := operatorview.NewService(persistence.operator, contextStore, operatorTargets)
+	if err != nil {
+		log.Fatalf("configure operator read service: %v", err)
 	}
 
 	caps := persistence.caps
@@ -74,8 +84,18 @@ func main() {
 	}
 	grantAdmin := api.GrantHandler(persistence.grants)
 	approvalAdmin := api.ApprovalHandler(persistence.approvalOps)
+	operatorRead := api.OperatorReadHandler(operatorReader)
 	adminMux := http.NewServeMux()
-	adminMux.Handle("/admin/v1/emergency/", emergencyAPI.AdminHandler())
+	adminMux.Handle("GET /admin/v1/overview", operatorRead)
+	adminMux.Handle("GET /admin/v1/grants", operatorRead)
+	adminMux.Handle("GET /admin/v1/grants/{id}", operatorRead)
+	adminMux.Handle("GET /admin/v1/approvals", operatorRead)
+	adminMux.Handle("GET /admin/v1/jobs", operatorRead)
+	adminMux.Handle("GET /admin/v1/jobs/{id}", operatorRead)
+	adminMux.Handle("GET /admin/v1/audit", operatorRead)
+	adminMux.Handle("GET /admin/v1/targets", operatorRead)
+	adminMux.Handle("GET /admin/v1/context", operatorRead)
+	adminMux.Handle("/admin/v1/emergency/", emergencyAPI.OperatorAdminHandler())
 	adminMux.Handle("/admin/v1/grants", grantAdmin)
 	adminMux.Handle("/admin/v1/grants/", grantAdmin)
 	adminMux.Handle("/admin/v1/approvals/", approvalAdmin)

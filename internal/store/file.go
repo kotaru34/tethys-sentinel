@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -64,7 +65,7 @@ func (s *FileGrantStore) GrantByTokenHash(_ context.Context, hash [32]byte) (dom
 	if !ok {
 		return domain.Grant{}, ErrNotFound
 	}
-	return grant, nil
+	return copyGrant(grant), nil
 }
 
 func (s *FileGrantStore) GrantByID(_ context.Context, id string) (domain.Grant, error) {
@@ -74,7 +75,26 @@ func (s *FileGrantStore) GrantByID(_ context.Context, id string) (domain.Grant, 
 	if !ok {
 		return domain.Grant{}, ErrNotFound
 	}
-	return s.byHash[hash], nil
+	return copyGrant(s.byHash[hash]), nil
+}
+
+// ListGrants returns a deterministic factual snapshot for trusted operator read
+// models. It does not evaluate current authority; callers derive active/stale/
+// disabled state from the authoritative emergency epoch.
+func (s *FileGrantStore) ListGrants() []domain.Grant {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]domain.Grant, 0, len(s.byID))
+	for _, hash := range s.byID {
+		out = append(out, copyGrant(s.byHash[hash]))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IssuedAt.Equal(out[j].IssuedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].IssuedAt.After(out[j].IssuedAt)
+	})
+	return out
 }
 
 func (s *FileGrantStore) RevokeGrant(_ context.Context, id string, at time.Time) error {
@@ -165,4 +185,14 @@ func (s *FileGrantStore) persistLocked() error {
 		_ = d.Close()
 	}
 	return nil
+}
+
+func copyGrant(in domain.Grant) domain.Grant {
+	out := in
+	out.Targets = append([]string(nil), in.Targets...)
+	if in.RevokedAt != nil {
+		t := *in.RevokedAt
+		out.RevokedAt = &t
+	}
+	return out
 }

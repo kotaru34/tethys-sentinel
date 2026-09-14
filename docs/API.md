@@ -1,6 +1,13 @@
 # API surface (development)
 
-This document describes the intentionally small API surface for `0.1.0-dev.11`. It is not yet a stable public contract.
+This document describes the current development API surface through the `0.1.0-dev.14` Operator UI v1 release candidate. It is not yet a stable public contract.
+
+Sentinel deliberately has several different API boundaries. They are not interchangeable:
+
+- the **AI Gateway** accepts agent capability tokens and exposes only capability-scoped agent operations;
+- the **Control admin API** is privileged, loopback-only, and authenticated with `SENTINEL_ADMIN_TOKEN`;
+- **`sentinel-operator`** is the browser-facing HTTPS+mTLS BFF with an explicit route allowlist; it is not a generic reverse proxy;
+- internal Gateway/Worker/Signer APIs are service-to-service boundaries with their own credentials and transport restrictions.
 
 ## Trust semantics
 
@@ -96,25 +103,54 @@ allow_session
 
 PostgreSQL schema version 2 durably binds a consumed one-shot approval to `consumed_by_job_id`. Consumption, that binding, `staged -> pending` publication and the authorization audit event commit in one transaction. A consumed one-shot approval cannot authorize another job in the same scope.
 
-## Admin API
+## Control admin API
 
-The current admin API is loopback-only and requires:
+The Control admin API is intended to remain loopback-only and requires:
 
 ```text
 Authorization: Bearer <SENTINEL_ADMIN_TOKEN>
 ```
 
+The admin bearer credential is full operator authority. It must never be exposed to the browser or AI Gateway.
+
+### Operator-safe read model
+
+The read model is backend-neutral and returns only sanitized operator state. It does not expose capability hashes, worker claim hashes/secrets, database credentials, bearer credentials, private keys, or Signer CA private material.
+
 Routes:
+
+```text
+GET /admin/v1/overview
+GET /admin/v1/grants?limit=...&cursor=...&status=...
+GET /admin/v1/grants/{id}
+GET /admin/v1/approvals?limit=...&cursor=...&status=...
+GET /admin/v1/jobs?limit=...&cursor=...&status=...
+GET /admin/v1/jobs/{id}
+GET /admin/v1/audit?limit=...&cursor=...&status=...
+GET /admin/v1/targets
+GET /admin/v1/context
+GET /admin/v1/emergency/state
+```
+
+List limits are bounded server-side. Persistence implementations own cursor semantics.
+
+`GET /admin/v1/targets` exposes the protected SSH target snapshot read-only: logical name, literal endpoint, Unix user, host-key algorithm/fingerprint and raw public host-key pin. There is no browser target mutation route in v1.
+
+`GET /admin/v1/context` exposes a read-only Trust-0 snapshot for operator inspection. There is no browser Trust-0 mutation route in v1.
+
+### State-changing admin routes
 
 ```text
 POST /admin/v1/grants
 POST /admin/v1/grants/{id}/revoke
-GET  /admin/v1/approvals
 POST /admin/v1/approvals/{id}/decision
-GET  /admin/v1/emergency/state
 POST /admin/v1/emergency/revoke-all
 POST /admin/v1/emergency/enable
 ```
+
+Calls made directly with the admin bearer credential audit as the default operator actor unless an authenticated privileged caller supplies valid accountability metadata.
+
+`X-Tethys-Operator-Identity` is accepted only after admin authentication on this already-privileged channel. It is accountability metadata, never an independent authorization mechanism. `sentinel-operator` derives this value from the verified client-certificate leaf; browser-supplied identity headers are not trusted.
 
 ### Issue grant
 
@@ -150,7 +186,7 @@ In PostgreSQL mode, grant insertion/targets/audit use a semantic transaction and
 
 ### Individual revoke
 
-`POST /admin/v1/grants/{id}/revoke` revokes the grant, cancels its non-running executable jobs/claim material as applicable, and records the required audit event transactionally in PostgreSQL.
+`POST /admin/v1/grants/{id}/revoke` revokes the grant, cancels its non-running executable jobs/claim material as applicable, and records the required audit event transactionally in PostgreSQL. Running jobs lose their authority lease through the already-accepted active-revoke path.
 
 ### Approval decision
 
@@ -172,8 +208,8 @@ Example:
 {
   "epoch": 3,
   "disabled": true,
-  "updated_at": "2026-09-10T12:00:00Z",
-  "reason": "operator maintenance"
+  "updated_at": "2026-09-14T19:17:03Z",
+  "reason": "dev.13 acceptance complete; first WIP merge finished"
 }
 ```
 
@@ -192,6 +228,68 @@ In PostgreSQL mode, one transaction increments epoch, disables global authority,
 ### `POST /admin/v1/emergency/enable`
 
 Requires currently disabled authority. Enable does not decrement epoch and therefore does not revive pre-revoke grants. PostgreSQL state/audit transitions commit atomically.
+
+## Browser operator BFF (`sentinel-operator`)
+
+The browser never talks to the Control admin listener directly.
+
+`sentinel-operator` serves the embedded static UI and an explicit same-origin API allowlist over HTTPS with required operator client-certificate authentication. The service itself stores the Control admin bearer credential server-side and is restricted to a loopback Control upstream.
+
+It is intentionally **not** a generic `/admin/*` proxy. Unknown API paths do not fall through to static/SPA content and unlisted Control routes are unreachable through the BFF.
+
+### Session and authentication
+
+```text
+GET /api/v1/session
+```
+
+A successful mTLS-authenticated response returns:
+
+- a stable operator identity derived from SHA-256 of the verified client-certificate leaf;
+- a fresh CSRF token.
+
+The matching CSRF cookie is Secure, HttpOnly and SameSite=Strict. The token returned to frontend JavaScript is held only in memory; Sentinel does not use localStorage/sessionStorage for operator secrets.
+
+Every browser response is protected by the configured CSP/security headers. API/security responses use `Cache-Control: no-store`.
+
+### Read routes
+
+```text
+GET /api/v1/overview
+GET /api/v1/grants
+GET /api/v1/grants/{id}
+GET /api/v1/approvals
+GET /api/v1/jobs
+GET /api/v1/jobs/{id}
+GET /api/v1/audit
+GET /api/v1/targets
+GET /api/v1/context
+GET /api/v1/emergency/state
+GET /healthz
+```
+
+Query strings for bounded list/filter operations are forwarded only to the corresponding fixed Control route.
+
+### Mutation routes
+
+```text
+POST /api/v1/grants
+POST /api/v1/grants/{id}/revoke
+POST /api/v1/approvals/{id}/decision
+POST /api/v1/emergency/revoke-all
+POST /api/v1/emergency/enable
+```
+
+Mutations additionally require:
+
+- exact configured HTTPS `Origin`;
+- `Sec-Fetch-Site` either absent or `same-origin`;
+- CSRF header matching the HttpOnly CSRF cookie;
+- verified operator client certificate.
+
+The BFF replaces browser-supplied `Authorization` and operator attribution with server-owned values before forwarding. Redirect following and environment proxy use are disabled so the admin credential cannot be redirected or proxied away from the loopback Control boundary.
+
+See `docs/OPERATOR_UI.md` and `docs/OPERATOR_DEPLOYMENT.md`.
 
 ## Internal Gateway-to-Control API
 
@@ -275,6 +373,8 @@ Not an agent API. Control Plane loads `SENTINEL_SSH_TARGETS_FILE` (default `/etc
 
 Each target contains logical name, global-unicast literal IP:port, Unix user and exact raw host-key pin. DNS, unspecified/multicast/loopback/link-local destinations, malformed endpoints, duplicate names, unknown fields and group/other-writable configuration are rejected.
 
+The Operator UI can inspect this registry through the sanitized read model but cannot mutate it.
+
 ## Persistence boundary
 
 Control Plane requires explicit selection:
@@ -288,11 +388,15 @@ SENTINEL_PERSISTENCE_BACKEND=postgres
 
 PostgreSQL schema version 2 is authoritative for mutable grants/targets, approvals, execution jobs/claim hashes, emergency authority, audit/history and Trust-2 notes. Trust-0 context, SSH target inventory, signer key/policy and external PVE worker-egress policy remain separate operator-owned boundaries.
 
+Gateway, Worker, Signer and `sentinel-operator` do not receive the PostgreSQL runtime credential.
+
 See `docs/POSTGRESQL_PERSISTENCE.md` and `docs/INFRASTRUCTURE_ACCEPTANCE.md`.
 
 ## See also
 
 - `docs/ARCHITECTURE.md`
+- `docs/OPERATOR_UI.md`
+- `docs/OPERATOR_DEPLOYMENT.md`
 - `docs/EXECUTION_PROTOCOL.md`
 - `docs/EXECUTION_POLICY.md`
 - `docs/OPERATIONAL_RISK.md`

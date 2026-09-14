@@ -451,6 +451,28 @@ func (s *Store) ByRequest(_ context.Context, grantID, requestID string) (Job, bo
 	return Job{}, false, nil
 }
 
+// List returns an integrity-verified factual snapshot, newest first. Claim-token
+// hashes and record MACs remain private implementation state and are never part
+// of Job, so callers cannot expose them accidentally.
+func (s *Store) List() ([]Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Job, 0, len(s.records))
+	for _, rec := range s.records {
+		if err := s.verifyRecord(rec); err != nil {
+			return nil, err
+		}
+		out = append(out, copyJob(rec.Job))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
 func validateInput(in EnqueueInput) error {
 	if len(in.RequestID) < 8 || len(in.RequestID) > 128 {
 		return errors.New("request_id must be between 8 and 128 characters")

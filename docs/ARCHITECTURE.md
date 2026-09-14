@@ -3,19 +3,28 @@
 ## Trust-boundary overview
 
 ```text
-                              Operator
-                                 |
-                         Admin UI / API
-                                 |
-                    +------------v------------+
-                    |      Control Plane      |
-                    | grants / policy         |
-                    | approvals / Trust-0     |
-                    | security epoch / kill   |
-                    | immutable job issuance  |
-                    | SSH target resolution   |
-                    | certificate gate        |
-                    +---+-----------+----------+
+                         Operator browser
+                               |
+                  HTTPS + operator mTLS
+                               |
+                    +----------v-----------+
+                    | sentinel-operator    |
+                    | BFF + embedded UI    |
+                    | CSRF / route allow   |
+                    +----------+-----------+
+                               |
+                 loopback-only admin API
+                 server-owned admin token
+                               |
+                    +----------v-----------+
+                    |      Control Plane   |
+                    | grants / policy      |
+                    | approvals / Trust-0  |
+                    | security epoch/kill  |
+                    | immutable job issue  |
+                    | SSH target resolve   |
+                    | certificate gate     |
+                    +---+-----------+------+
                         |           |
           PostgreSQL TLS|           | dedicated mTLS + signer credential
                         |           |
@@ -69,7 +78,9 @@
                  +-----------------------+
 ```
 
-`0.1.0-dev.11` adds PostgreSQL as the production-candidate persistence/transaction boundary. File-backed stores remain available only through explicit development selection. Trust-0 context, SSH target inventory, signer key/policy and external worker-egress policy deliberately remain separate operator-owned configuration boundaries.
+PostgreSQL is the production-candidate persistence/transaction boundary. File-backed stores remain available only through explicit development selection. Trust-0 context, SSH target inventory, signer key/policy and external worker-egress policy deliberately remain separate operator-owned configuration boundaries.
+
+Operator UI v1 adds another deliberate boundary rather than exposing the Control admin listener to a browser. `sentinel-operator` authenticates operators with a dedicated TLS client-certificate trust root, owns the browser CSRF/origin boundary, and forwards only an explicit operator route allowlist to loopback Control using a server-held admin credential. It receives no PostgreSQL, Worker, Signer/CA, target-key or PVE credential.
 
 ## Components
 
@@ -77,11 +88,32 @@
 
 Human/operator authority. Owns grant creation/revocation, global security epoch, emergency enable/disable, policy decisions, approvals, Trust-0 context/inventory, history filtering, immutable execution-job authorization, SSH target resolution, certificate eligibility and transactional audit integration.
 
-Only Control Plane receives PostgreSQL runtime credentials and only Control Plane may call SSH Signer. Gateway, Worker and Signer receive no database credential.
+Only Control Plane receives PostgreSQL runtime credentials and only Control Plane may call SSH Signer. Gateway, Worker, Signer and `sentinel-operator` receive no database credential.
 
 Production-candidate mutable state is opened through explicit `SENTINEL_PERSISTENCE_BACKEND=postgres`. Failure to connect, validate schema version or validate runtime role terminates startup; there is no fallback to file authority.
 
 Authoritative context comes from `SENTINEL_CONTEXT_FILE`. SSH transport resolution comes from `SENTINEL_SSH_TARGETS_FILE`; jobs contain only logical target IDs.
+
+### Operator BFF / browser boundary
+
+`sentinel-operator` is a separate process intended to run on the Control host under an unprivileged service account.
+
+Its authority is deliberately narrower than “browser gets the admin token”:
+
+- browser connection requires verified operator mTLS;
+- operator identity is derived from the verified client-certificate leaf, not from a browser header;
+- the Control admin bearer token stays server-side and is read from a strict local file boundary;
+- the upstream Control URL must be loopback HTTP;
+- environment proxy use and redirect following are disabled;
+- only fixed operator read/mutation routes are forwarded; it is not a generic reverse proxy;
+- state-changing browser requests require same-origin validation plus CSRF cookie/header agreement;
+- browser responses use strict CSP/security headers and no-store behavior;
+- frontend runtime contains no third-party/CDN content and persists no security token in localStorage/sessionStorage;
+- Targets and Trust-0 Context are inspection-only in v1.
+
+The same mTLS/security wrapper protects both the embedded static UI and its `/api/v1/*` BFF routes. Unknown `/api/` paths never fall through to static SPA content.
+
+See `docs/OPERATOR_UI.md` and `docs/OPERATOR_DEPLOYMENT.md`.
 
 ### PostgreSQL transaction boundary
 
@@ -122,7 +154,7 @@ See `docs/EMERGENCY_CONTROLS.md`.
 
 ### AI Gateway
 
-Public capability-facing boundary. Exposes bootstrap/context/history/notes and command submission. It has no grant creation, emergency mutation, approval mutation, worker control, target mutation, certificate signing, database credential, or CA-secret path.
+Public capability-facing boundary. Exposes bootstrap/context/history/notes and command submission. It has no grant creation, emergency mutation, approval mutation, worker control, target mutation, certificate signing, database credential, operator-BFF authority or CA-secret path.
 
 Gateway performs early capability/policy consistency checks for protocol behavior, but Control Plane remains authoritative.
 
@@ -154,7 +186,7 @@ See `docs/WORKER_EGRESS.md`.
 
 ### Execution Worker
 
-Worker never receives plaintext agent capability, database credentials, target inventory, signer credential/CA material, admin authority or PVE credentials.
+Worker never receives plaintext agent capability, database credentials, target inventory, signer credential/CA material, admin authority, operator BFF credential or PVE credentials.
 
 Current flow:
 
@@ -201,11 +233,13 @@ Target sshd/account independently disables PTY, forwarding, password/keyboard-in
 
 A grant contains opaque token/hash, grant/session identity, agent/purpose, logical targets, expiry/revocation state, security epoch, permissions and scoped history/notes access.
 
-It never contains infrastructure SSH private keys, SSH transport endpoint, host-key pin, CA authority, database authority, or ability to mutate its own scope/epoch.
+It never contains infrastructure SSH private keys, SSH transport endpoint, host-key pin, CA authority, database authority, operator admin bearer authority, or ability to mutate its own scope/epoch.
 
 ## Authoritative context
 
 Gateway exposes a read-only bundle generated by Control Plane. Trust-0 policy/capability/inventory/runbook/operator material is authoritative; history/notes remain Trust-2; files/logs/web/output remain non-authoritative data. Provenance is behavioral hardening, not authorization.
+
+The Operator UI may inspect the current Trust-0 snapshot but has no v1 mutation route for it.
 
 ## Risk approvals
 
@@ -253,5 +287,7 @@ See `docs/POSTGRESQL_PERSISTENCE.md`.
 16. Root/operator-owned forced wrapper with binding/target verification.
 17. Root-protected target at-most-once replay marker.
 18. Remote Unix permissions and narrow sudo/doas policy.
+19. Dedicated operator mTLS + BFF allowlist/CSRF boundary; no browser admin bearer token.
+20. Browser UI cannot mutate target inventory or Trust-0 context.
 
 No single layer is sufficient.

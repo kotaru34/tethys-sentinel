@@ -311,6 +311,7 @@ func (r *Repository) Enable(ctx context.Context, reason string) (AuthorityState,
 }
 
 func (r *Repository) appendAuditTx(ctx context.Context, tx pgx.Tx, at time.Time, input audit.Input) (audit.Event, error) {
+	input = audit.ResolveOperatorActor(ctx, input)
 	var lastSequence int64
 	var previousHash []byte
 	if err := tx.QueryRow(ctx, `

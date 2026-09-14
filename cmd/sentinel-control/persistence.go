@@ -17,6 +17,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/emergencyapi"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/notes"
+	"github.com/kotaru34/tethys-sentinel/internal/operatorview"
 	"github.com/kotaru34/tethys-sentinel/internal/postgresrepo"
 	"github.com/kotaru34/tethys-sentinel/internal/resourceapi"
 	"github.com/kotaru34/tethys-sentinel/internal/store"
@@ -38,6 +39,7 @@ type persistenceBundle struct {
 	jobs         jobPersistence
 	notes        resourceapi.NoteStore
 	emergency    emergencyapi.Controller
+	operator     operatorview.Reader
 	close        func()
 }
 
@@ -99,6 +101,7 @@ func openFilePersistence() (*persistenceBundle, error) {
 		jobs:         jobStore,
 		notes:        noteStore,
 		emergency:    emergencyapi.NewLegacyController(emergencyStore, jobStore, auditLog),
+		operator:     operatorview.NewFileReader(grantStore, approvalStore, jobStore, auditLog, emergencyStore),
 		close:        func() {},
 	}, nil
 }
@@ -127,6 +130,7 @@ func openPostgresPersistence(ctx context.Context) (*persistenceBundle, error) {
 		jobs:         repo.Jobs(),
 		notes:        repo.Notes(),
 		emergency:    repo.Emergency(),
+		operator:     repo.OperatorReader(),
 		close:        repo.Close,
 	}, nil
 }

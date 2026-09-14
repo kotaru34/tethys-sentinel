@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/kotaru34/tethys-sentinel/internal/controlops"
+	"github.com/kotaru34/tethys-sentinel/internal/operatoridentity"
 )
 
 // ApprovalHandler exposes state-changing approval operations through the
@@ -20,12 +21,12 @@ func (a *API) ApprovalHandler(approvals controlops.ApprovalLifecycle) http.Handl
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		item, err := approvals.Decide(r.Context(), r.PathValue("id"), req.Decision, "operator")
+		item, err := approvals.Decide(r.Context(), r.PathValue("id"), req.Decision, operatoridentity.Actor(r.Context()))
 		if err != nil {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, item)
 	})
-	return a.requireAdmin(mux)
+	return a.requireAdmin(withOperatorIdentity(mux))
 }
