@@ -94,18 +94,6 @@ jobs:
             exit 1
           fi
 
-      - name: Verify embedded frontend content matches the build
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat internal/operatorweb/operator-dist.b64.* | tr -d '[:space:]' | base64 -d > /tmp/operator-dist-embedded.tar.gz
-          test "$(sha256sum /tmp/operator-dist-embedded.tar.gz | cut -d' ' -f1)" = \
-            'db0870731d0d23340c5a1e9e962411023afbcc8b1429040fe34a0aaf7e3213c6'
-          rm -rf /tmp/operator-dist-embedded
-          mkdir -p /tmp/operator-dist-embedded
-          tar --no-same-owner -xzf /tmp/operator-dist-embedded.tar.gz -C /tmp/operator-dist-embedded
-          diff -ru --no-dereference /tmp/operator-dist-embedded/dist internal/operatorweb/dist
-
       - name: Assert CSP-compatible generated HTML
         shell: bash
         run: |
@@ -131,7 +119,18 @@ jobs:
           path: |
             web/operator/package-lock.json
             internal/operatorweb/dist
-            /tmp/operator-dist-embedded.tar.gz
+
+      - name: Verify embedded frontend content matches the build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat internal/operatorweb/operator-dist.b64.* | tr -d '[:space:]' | base64 -d > /tmp/operator-dist-embedded.tar.gz
+          test "$(sha256sum /tmp/operator-dist-embedded.tar.gz | cut -d' ' -f1)" = \
+            'db0870731d0d23340c5a1e9e962411023afbcc8b1429040fe34a0aaf7e3213c6'
+          rm -rf /tmp/operator-dist-embedded
+          mkdir -p /tmp/operator-dist-embedded
+          tar --no-same-owner -xzf /tmp/operator-dist-embedded.tar.gz -C /tmp/operator-dist-embedded
+          diff -ru --no-dereference /tmp/operator-dist-embedded/dist internal/operatorweb/dist
 
   postgres-schema:
     runs-on: ubuntu-latest
