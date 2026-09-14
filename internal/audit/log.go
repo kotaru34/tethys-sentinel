@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/kotaru34/tethys-sentinel/internal/operatoridentity"
 )
 
 type Event struct {
@@ -67,9 +69,12 @@ func Open(path string) (*Log, error) {
 	return l, nil
 }
 
-func (l *Log) Append(_ context.Context, in Input) (Event, error) {
+func (l *Log) Append(ctx context.Context, in Input) (Event, error) {
 	if in.Kind == "" {
 		return Event{}, errors.New("audit event kind is required")
+	}
+	if in.Actor == operatoridentity.DefaultActor {
+		in.Actor = operatoridentity.Actor(ctx)
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
