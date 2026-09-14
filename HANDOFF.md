@@ -4,7 +4,7 @@ Updated: 2026-09-15
 Current development version: `0.1.0-dev.15`
 Branch: `wip/operator-ui`
 
-Status: the dev.13 execution/security core remains the accepted baseline. Operator UI/runtime source is frozen at `41c343e83596d299af05cf92945395ec008f0fd9`, CI Actions `34903375824` PASS. Real mTLS deployment, Control/BFF integration, read-only UI acceptance, credential-boundary acceptance, CSRF/origin/spoofing negatives, grant issue/reveal/revoke, emergency enable/revoke-all, and approval deny/allow-once/session-policy acceptance now pass. Authority is fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`. Final docs cleanup and merge/release decision remain.
+Status: dev.15 Operator UI acceptance is complete on the intended infrastructure. Exact deployed runtime source is frozen at `41c343e83596d299af05cf92945395ec008f0fd9`, CI Actions `34903375824` PASS. Real mTLS deployment, Control/BFF integration, credential separation, read-only UI, CSRF/origin/spoofing negatives, grant issue/reveal/revoke, emergency controls, approval deny/allow-once/session-policy, one-shot non-reuse, and a real approved execution all pass. Final authority is fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`. README/deployment documentation has been synchronized; final branch CI/review and merge/release decision remain.
 
 ## Operator-mandated development rules
 
@@ -76,6 +76,8 @@ PR #1 merged the accepted core to `main` at `478009b1310b782db7dc20c629bada475c3
 - complete eight-page UI: `aaedad5518ad296426b01af856373672a1847f2d`, Actions `34898343292`
 - dev.14 RC: `15513074c4ae30edbbd74b7c676562d2fb5c0e77`, Actions `34900078873`
 - dev.15 deployment-boundary/runtime source: `41c343e83596d299af05cf92945395ec008f0fd9`, Actions `34903375824` PASS
+- README dev.15 acceptance sync: `32328c49c1a37463aa08af4940031f2ab30b3b8c`
+- deployment-guide isolated-root sync: `62ec7d53f60ba596d00c26737b193fbf230bf572`
 - embedded frontend archive SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`
 - CI pins Node `24.20.0`, npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95`
 
@@ -103,7 +105,7 @@ Exact deployed dev.15 binaries:
 - `sentinel-control`: `b1c3b648305a1992b442f9b01980f0fa3556adb1e62bfe63e7c252ecb4397dc6`
 - Gateway remains accepted dev.13: `89078f3173029fcd4c809e25ef3c9a7f4aacf7381356ac41b8294276667ba3c3`
 
-Control listeners: `127.0.0.1:8081` admin + `10.169.2.210:9091` internal. Operator UI: `10.169.2.210:8444` mTLS. Gateway: `10.169.2.211:8443` with public CA validation. `sentinel-operator` remains boot-disabled during acceptance.
+Control listeners: `127.0.0.1:8081` admin + `10.169.2.210:9091` internal. Operator UI: `10.169.2.210:8444` mTLS. Gateway: `10.169.2.211:8443` with public CA validation. `sentinel-operator` remained boot-disabled during acceptance.
 
 ## dev.15 acceptance evidence
 
@@ -149,21 +151,24 @@ Control listeners: `127.0.0.1:8081` admin + `10.169.2.210:9091` internal. Operat
 Epoch 4 was enabled only for this controlled acceptance window using grant agent `operator-ui-approval-acceptance`.
 
 - `FILESYSTEM_DELETE` request `allowonce-f130ae61d6bd8187` created approval `75a37ca3b0f57862e3117630740d657a`; UI correctly offered Deny / Allow once / Allow this session.
-- Operator chose `allow_once`; resubmitting the same immutable request returned HTTP 200, `accepted=true`, decision `accepted`, approval binding unchanged, and pending job `acc11c099b7a2cf09b519255beccc459`.
-- A new request ID with the same scope, `allowonce-reuse-7ba509bdde64650c`, did **not** reuse the consumed allow-once decision; it returned `approval_required` with a new approval `5bbc64acd76077bac8c22797e53da013`.
+- Operator chose `allow_once`; resubmitting the same immutable request returned HTTP 200, `accepted=true`, decision `accepted`, approval binding unchanged, and job `acc11c099b7a2cf09b519255beccc459`.
+- The approval read model later showed that record as `status=consumed`, `decision=allow_once`; the job completed successfully with `status=succeeded`, exit code 0.
+- A new request ID with the same scope, `allowonce-reuse-7ba509bdde64650c`, did **not** reuse the consumed allow-once decision; it returned `approval_required` with new approval `5bbc64acd76077bac8c22797e53da013`.
+- That new approval was subsequently denied while authority remained disabled; final readback showed `status=decided`, `decision=deny`, cert-derived decision actor.
 - `ARBITRARY_CODE` request `powerful-b6ed2a2888ba4c08` created approval `74152333bd78c150ba6eaf28ddb85f53`; UI correctly showed one-shot-only policy and did **not** offer session approval.
 - Operator denied the powerful request; resubmission returned HTTP 200 with `accepted=false`, decision `deny`, and no job receipt.
+- `session_approval_allowed=false` was confirmed for the powerful request, while `FILESYSTEM_DELETE` correctly reported it as true.
 - Gateway capability material was kept only in a `0600` temporary cache during retry and then removed.
 - Final `REVOKE ALL` completed with reason `dev.15 approval workflow acceptance complete`, advancing authority from epoch 4 to **epoch 5, disabled=true**.
+- Audit showed cert-derived operator actors for approval decisions/emergency transitions and the expected agent/worker actors for request, authorization, claim/start/certificate/completion events.
 
 Epochs 0/1/2/3/4 capabilities are permanently stale after the epoch-5 revoke. Do not enable authority casually.
 
 ## Current phase / next steps
 
-1. Verify final approval records/audit through the operator read API: allow-once record consumed, powerful request denied, new same-scope request separate, decision actors cert-derived, authority epoch 5 disabled.
-2. Fix remaining README/deployment documentation examples to dev.15 and `/etc/tethys-sentinel-operator`.
-3. Run final exact-head CI/review on docs/release metadata.
-4. Review whether any untested UI mutation path remains materially important; avoid reopening authority unless required.
-5. If acceptance remains clean, merge/release `wip/operator-ui` per the WIP merge rule and review README/docs on merge.
-6. Preserve accepted dev.13 execution/credential invariants; materially touched execution paths require targeted re-acceptance.
-7. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
+1. Run final CI/check review on the documentation-complete `wip/operator-ui` branch head.
+2. Confirm no material acceptance blocker or untested authority-changing UI path remains.
+3. Merge/release `wip/operator-ui` per the WIP merge rule if final CI/review is clean.
+4. After merge, record the merge commit and final authority state in this handoff/main documentation if needed.
+5. Preserve accepted dev.13 execution/credential invariants; materially touched execution paths require targeted re-acceptance.
+6. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
