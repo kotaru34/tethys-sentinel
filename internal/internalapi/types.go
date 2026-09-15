@@ -5,6 +5,7 @@ import (
 
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
+	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
 	"github.com/kotaru34/tethys-sentinel/internal/risk"
 )
 
@@ -42,20 +43,21 @@ type SubmitCommandResponse struct {
 }
 
 type AgentExecutionJob struct {
-	ID            string               `json:"id"`
-	RequestID     string               `json:"request_id"`
-	Target        string               `json:"target"`
-	Argv          []string             `json:"argv"`
-	CommandSHA256 string               `json:"command_sha256"`
-	ApprovalID    string               `json:"approval_id,omitempty"`
-	RiskCategory  string               `json:"risk_category,omitempty"`
-	CreatedAt     time.Time            `json:"created_at"`
-	ExpiresAt     time.Time            `json:"expires_at"`
-	Status        executionjob.Status  `json:"status"`
-	ClaimedAt     *time.Time           `json:"claimed_at,omitempty"`
-	StartedAt     *time.Time           `json:"started_at,omitempty"`
-	CompletedAt   *time.Time           `json:"completed_at,omitempty"`
-	Result        *executionjob.Result `json:"result,omitempty"`
+	ID            string                  `json:"id"`
+	RequestID     string                  `json:"request_id"`
+	Target        string                  `json:"target"`
+	Argv          []string                `json:"argv"`
+	CommandSHA256 string                  `json:"command_sha256"`
+	ApprovalID    string                  `json:"approval_id,omitempty"`
+	RiskCategory  string                  `json:"risk_category,omitempty"`
+	CreatedAt     time.Time               `json:"created_at"`
+	ExpiresAt     time.Time               `json:"expires_at"`
+	Status        executionjob.Status     `json:"status"`
+	ClaimedAt     *time.Time              `json:"claimed_at,omitempty"`
+	StartedAt     *time.Time              `json:"started_at,omitempty"`
+	CompletedAt   *time.Time              `json:"completed_at,omitempty"`
+	Result        *executionjob.Result    `json:"result,omitempty"`
+	Output        *executionoutput.Output `json:"output,omitempty"`
 }
 
 func AgentJob(job executionjob.Job) AgentExecutionJob {
@@ -118,9 +120,10 @@ type CheckExecutionAuthorityResponse struct {
 }
 
 type CompleteExecutionJobRequest struct {
-	WorkerID   string              `json:"worker_id"`
-	ClaimToken string              `json:"claim_token"`
-	Result     executionjob.Result `json:"result"`
+	WorkerID   string                 `json:"worker_id"`
+	ClaimToken string                 `json:"claim_token"`
+	Result     executionjob.Result    `json:"result"`
+	Output     executionoutput.Output `json:"output,omitempty"`
 }
 
 type CompleteExecutionJobResponse struct {
