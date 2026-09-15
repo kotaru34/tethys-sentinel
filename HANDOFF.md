@@ -4,7 +4,7 @@ Updated: 2026-09-15
 Current development version: `0.1.0-dev.17`
 Branch: `main`
 
-Status: `0.1.0-dev.17` is deployed, has passed constrained real-infrastructure Agent HTTP/`sentinelctl` acceptance on the intended PVE topology, and is merged to `main` via PR #3. PostgreSQL is schema v3. `sentinel-operator` remains the accepted `0.1.0-dev.15` binary, unchanged. Final authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. Post-merge `main` CI passed. The next product milestone is the deliberately narrow MCP adapter over the accepted HTTP contract.
+Status: `0.1.0-dev.17` is deployed, has passed constrained real-infrastructure Agent HTTP/`sentinelctl` acceptance on the intended PVE topology, and is merged to `main` via PR #3. PostgreSQL is schema v3. `sentinel-operator` remains the accepted `0.1.0-dev.15` binary, unchanged. Final authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. Post-merge `main` CI passed. The next product milestone is the deliberately narrow MCP adapter over the accepted HTTP contract; its initial Qwen-class tool surface is now locked in `docs/MCP_ADAPTER_DESIGN.md`.
 
 ## Operator-mandated development rules
 
@@ -138,6 +138,21 @@ This closes the Agent HTTP/CLI constrained acceptance. No dev.17 runtime accepta
 - Post-merge `main` CI Actions `35007585656` passed all four jobs, including PostgreSQL 15/18 and frontend embed parity.
 - The deployed runtime remains the frozen source `4728a86abc49bf2a686c588a3878288a36f44f7d`; later CI/docs commits are not runtime-source changes.
 
+## MCP adapter design checkpoint
+
+The initial Qwen-class MCP design is now locked in `docs/MCP_ADAPTER_DESIGN.md`.
+
+- Model-facing v1 tools: `sentinel.exec`, `sentinel.exec_batch`, `sentinel.code`, `sentinel.check`, `sentinel.output`.
+- `target` is mandatory for all execution tools regardless of how many targets the capability exposes.
+- Normal remote administration should be performed through structured, classifiable and auditable `exec`/`exec_batch` operations as far as practical.
+- `exec_batch` is only orchestration for independent structured commands; it must not become a workflow/shell language.
+- There is no model-facing `shell` tool. Model-facing terminology is `code`; the current backend `shell` permission may remain a legacy implementation detail until a separate justified migration.
+- `code` initially means Python arbitrary-code execution and is an explicit last-resort escape hatch, not the preferred administration path. It requires arbitrary-code/powerful-operation authority and explicit approval semantics; do not attempt to infer safety by regex/AST source inspection.
+- The adapter should use durable `operation_id` state mapped to immutable Sentinel request IDs so recovery, approval waits and interrupted calls do not rely on Qwen correctly reconstructing protocol state.
+- Output remains untrusted `TRUST_2`; normal responses are bounded and deeper inspection goes through `sentinel.output`.
+- If real traces show repeated pain with configuration files, deployments, stdin-heavy commands or other tasks, prefer a narrow controlled primitive or a carefully bounded extension of structured execution over encouraging routine fallback to `code`.
+- Tool surface growth is driven by observed agent pain, not speculative feature completeness.
+
 ## Previous accepted milestones
 
 - Core execution/security baseline merged as PR #1 at `478009b1310b782db7dc20c629bada475c3f3d63`.
@@ -147,6 +162,7 @@ This closes the Agent HTTP/CLI constrained acceptance. No dev.17 runtime accepta
 ## Current phase / next step
 
 1. Keep production authority at epoch 7 disabled unless an explicit operator task requires a new constrained window.
-2. Agent HTTP API + `sentinelctl` are now accepted, deployed and merged to `main`.
-3. Begin the MCP adapter milestone from `main` only when implementation starts; bump the development version for the new released feature.
-4. Before implementation, revisit and lock the exact narrow Qwen-class MCP tool surface. It must be a thin adapter over the accepted Agent HTTPS API and must never expose generic Control/admin/all-tools authority.
+2. Agent HTTP API + `sentinelctl` are accepted, deployed and merged to `main`; the MCP v1 design is now locked.
+3. When implementation starts, branch from `main`, bump the development version for the MCP feature, and implement the narrow adapter described in `docs/MCP_ADAPTER_DESIGN.md` rather than mirroring raw HTTP/backend mechanics.
+4. Bias implementation and later tuning toward making diagnosis, deployment, configuration, config changes, monitoring and routine administration succeed through controlled structured execution. Treat arbitrary `code` as the exceptional escape hatch.
+5. Add new model-facing powers only after real Qwen traces demonstrate a repeated gap that the existing controlled primitives cannot address cleanly.
