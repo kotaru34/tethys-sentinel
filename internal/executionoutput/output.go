@@ -13,6 +13,8 @@ import (
 
 const MaxStreamBytes = 256 << 10
 
+var ErrUnavailable = errors.New("execution output store unavailable")
+
 type Output struct {
 	Stdout          []byte `json:"stdout,omitempty"`
 	Stderr          []byte `json:"stderr,omitempty"`
