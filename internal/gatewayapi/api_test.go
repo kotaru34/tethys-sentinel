@@ -66,8 +66,8 @@ func TestBootstrapSubmitAndJobReadback(t *testing.T) {
 		Result: &executionjob.Result{Success: true, ExitCode: 0, OutputSHA256: strings.Repeat("b", 64)},
 	}
 	control := &fakeControl{
-		grant: grant,
-		jobs: map[string]internalapi.AgentExecutionJob{"job-1": job},
+		grant:    grant,
+		jobs:     map[string]internalapi.AgentExecutionJob{"job-1": job},
 		requests: map[string]internalapi.AgentExecutionJob{"req-00000001": job},
 	}
 	h := New(control).Handler()
