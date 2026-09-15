@@ -9,12 +9,18 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/audit"
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
+	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
 )
 
 type ExecutionLifecycle interface {
 	Claim(context.Context, string) (executionjob.Claim, error)
 	Start(context.Context, string, string, string) (executionjob.Job, error)
 	Complete(context.Context, string, string, string, executionjob.Result) (executionjob.Job, error)
+}
+
+type ExecutionOutputLifecycle interface {
+	ExecutionLifecycle
+	CompleteWithOutput(context.Context, string, string, string, executionjob.Result, executionoutput.Output) (executionjob.Job, error)
 }
 
 type ExecutionJobStore interface {
@@ -28,18 +34,24 @@ type ExecutionJobStore interface {
 // LegacyExecutionLifecycle preserves the file-backed development sequence. The
 // PostgreSQL implementation provides the same semantic operations atomically.
 type LegacyExecutionLifecycle struct {
-	caps  *capability.Service
-	jobs  ExecutionJobStore
-	audit AuditAppender
-	now   func() time.Time
+	caps   *capability.Service
+	jobs   ExecutionJobStore
+	audit  AuditAppender
+	output executionoutput.Store
+	now    func() time.Time
 }
 
-func NewLegacyExecutionLifecycle(caps *capability.Service, jobs ExecutionJobStore, auditLog AuditAppender) *LegacyExecutionLifecycle {
+func NewLegacyExecutionLifecycle(caps *capability.Service, jobs ExecutionJobStore, auditLog AuditAppender, outputStores ...executionoutput.Store) *LegacyExecutionLifecycle {
+	var output executionoutput.Store
+	if len(outputStores) > 0 {
+		output = outputStores[0]
+	}
 	return &LegacyExecutionLifecycle{
-		caps:  caps,
-		jobs:  jobs,
-		audit: auditLog,
-		now:   func() time.Time { return time.Now().UTC() },
+		caps:   caps,
+		jobs:   jobs,
+		audit:  auditLog,
+		output: output,
+		now:    func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -99,6 +111,21 @@ func (l *LegacyExecutionLifecycle) Start(ctx context.Context, id, claimToken, wo
 }
 
 func (l *LegacyExecutionLifecycle) Complete(ctx context.Context, id, claimToken, workerID string, result executionjob.Result) (executionjob.Job, error) {
+	return l.CompleteWithOutput(ctx, id, claimToken, workerID, result, executionoutput.Output{})
+}
+
+func (l *LegacyExecutionLifecycle) CompleteWithOutput(ctx context.Context, id, claimToken, workerID string, result executionjob.Result, output executionoutput.Output) (executionjob.Job, error) {
+	if err := executionoutput.Validate(output); err != nil {
+		return executionjob.Job{}, err
+	}
+	if !output.Empty() {
+		if l.output == nil {
+			return executionjob.Job{}, executionoutput.ErrUnavailable
+		}
+		if err := l.output.Put(ctx, id, output); err != nil {
+			return executionjob.Job{}, err
+		}
+	}
 	job, err := l.jobs.Complete(ctx, id, claimToken, result)
 	if err != nil {
 		return executionjob.Job{}, err
@@ -111,6 +138,8 @@ func (l *LegacyExecutionLifecycle) Complete(ctx context.Context, id, claimToken,
 			"job_id": job.ID, "request_id": job.RequestID, "command_sha256": job.CommandSHA256,
 			"success": strconv.FormatBool(result.Success), "exit_code": strconv.Itoa(result.ExitCode),
 			"output_sha256": result.OutputSHA256, "error_kind": result.ErrorKind,
+			"stdout_bytes": strconv.Itoa(len(output.Stdout)), "stderr_bytes": strconv.Itoa(len(output.Stderr)),
+			"stdout_truncated": strconv.FormatBool(output.StdoutTruncated), "stderr_truncated": strconv.FormatBool(output.StderrTruncated),
 		},
 	}); err != nil {
 		return job, err
