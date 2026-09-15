@@ -12,6 +12,8 @@ d9f688f5cd97bd932a4b9b99c243f0fb11361137
 
 CI Actions run `34920564170` passed on that exact source checkpoint: Go tidy/format/vet/race tests, PostgreSQL 15, PostgreSQL 18, frontend dependency verification/build and embedded archive parity.
 
+The canonical deployment bundle is produced by Actions run `34922039158`, artifact `tethys-sentinel-dev16-linux-amd64-d9f688f5`. The workflow checks out the frozen runtime SHA, uses Go 1.27.1, builds all four Linux/amd64 binaries twice outside the source tree and requires byte-for-byte equality before packaging. The bundle also contains the exact schema-v3 migration from the frozen source.
+
 Do not merge dev.16 before this runbook passes.
 
 ## Accepted starting state
@@ -43,31 +45,65 @@ Expected starting PostgreSQL schema:
 
 The accepted deployed binaries before this upgrade are recorded in `HANDOFF.md`. In particular, verify their hashes before overwriting anything.
 
-Do not enable authority during build, backup, schema migration or service deployment.
+Do not enable authority during artifact verification, backup, schema migration or service deployment.
 
-## 1. Freeze and build exact dev.16 source
+## 1. Obtain and verify the exact dev.16 bundle
 
-On a trusted build host:
+No separate build host is required for this acceptance. Download artifact `tethys-sentinel-dev16-linux-amd64-d9f688f5` from Actions run `34922039158`.
 
-```sh
-git clone https://github.com/kotaru34/tethys-sentinel.git tethys-sentinel-dev16
-cd tethys-sentinel-dev16
-git checkout d9f688f5cd97bd932a4b9b99c243f0fb11361137
+The artifact ZIP contains:
 
-test "$(git rev-parse HEAD)" = d9f688f5cd97bd932a4b9b99c243f0fb11361137
-test "$(cat VERSION)" = 0.1.0-dev.16
-test "$(go version | awk '{print $3}')" = go1.27.1
-
-mkdir -p out
-for name in sentinel-control sentinel-gateway sentinel-worker sentinelctl; do
-    CGO_ENABLED=0 go build -trimpath -buildvcs=true -o "out/$name" "./cmd/$name"
-done
-sha256sum out/* | tee out/SHA256SUMS
+```text
+tethys-sentinel-0.1.0-dev.16-linux-amd64-d9f688f5.tar.gz
+tethys-sentinel-0.1.0-dev.16-linux-amd64-d9f688f5.tar.gz.sha256
 ```
 
-Record all four SHA-256 values in the acceptance evidence. Do not rebuild from a later moving branch during this acceptance.
+Verify and unpack it on an operator-controlled machine:
 
-`sentinel-signer`, target wrappers and `sentinel-egress-policy` are not changed by dev.16 and must remain at their already accepted versions unless an acceptance failure proves otherwise.
+```sh
+sha256sum -c tethys-sentinel-0.1.0-dev.16-linux-amd64-d9f688f5.tar.gz.sha256
+
+rm -rf dev16-bundle
+mkdir dev16-bundle
+tar -xzf tethys-sentinel-0.1.0-dev.16-linux-amd64-d9f688f5.tar.gz \
+  -C dev16-bundle
+
+(
+  cd dev16-bundle
+  sha256sum -c SHA256SUMS
+  cat BUILDINFO
+)
+```
+
+Expected outer tar SHA-256:
+
+```text
+4336026365683215191520650157d4480f23d36d7ba6f2caa685b772e83424a6
+```
+
+Expected manifest:
+
+```text
+d9708e74b9e05124d2bd1304ee1736faf1e58b0e72fe8b0d1956337697ab1db2  sentinel-control
+a1971546ebe36ddfa07f88c07d48139f013fdc749a931e52547cc3ab37aa5fcb  sentinel-gateway
+014f0f22be23724cbd3de5a534323831acb5abfcfcd3a55749b42a31101ea9dd  sentinel-worker
+a2c67c056f5801f9719ead0d22d354f7bc5fc15ee860d0e452fdfe4c9a28d28f  sentinelctl
+813668ee447ba0c9767c6cab22535b28be6fbd8fa2e7062ffa9dc0d9650dbb99  db/migrations/0003_execution_output.sql
+```
+
+`BUILDINFO` must contain:
+
+```text
+version=0.1.0-dev.16
+source_sha=d9f688f5cd97bd932a4b9b99c243f0fb11361137
+go_version=go version go1.27.1 linux/amd64
+goos=linux
+goarch=amd64
+cgo=disabled
+build_flags=-trimpath -buildvcs=true
+```
+
+Do not rebuild from a later moving branch during this acceptance. `sentinel-signer`, target wrappers and `sentinel-egress-policy` are not changed by dev.16 and must remain at their already accepted versions unless an acceptance failure proves otherwise.
 
 ## 2. Fail-closed preflight
 
@@ -186,15 +222,21 @@ Do not overwrite existing rollback files unless their hashes match the accepted 
 
 ## 6. Apply only migration 0003 to the original database
 
-Copy the exact `db/migrations/0003_execution_output.sql` from the frozen dev.16 source to the database administration path.
+Use the exact bundled migration:
 
-Apply it with the deployment/migrator identity exactly once:
+```text
+dev16-bundle/db/migrations/0003_execution_output.sql
+```
+
+Its SHA-256 must already have passed the bundle manifest check above.
+
+Copy it to the database administration path and apply it with the deployment/migrator identity exactly once:
 
 ```sh
 PGPASSWORD="$DB_DEPLOY_PASS" \
 psql -X -v ON_ERROR_STOP=1 \
   -h <DB_ADMIN_ENDPOINT> -U sentinel_deploy -d tethys_sentinel \
-  -f db/migrations/0003_execution_output.sql
+  -f dev16-bundle/db/migrations/0003_execution_output.sql
 ```
 
 Do not loop over all migrations against the already initialized database.
@@ -234,37 +276,41 @@ If migration or these checks fail, do not start dev.16. Use the rollback procedu
 
 ## 7. Install exact dev.16 binaries while authority remains disabled
 
-Copy the four built artifacts to the appropriate hosts through the normal operator path.
+Copy the verified bundle files to the appropriate hosts through the normal operator path.
 
 Control:
 
 ```sh
-sudo install -o root -g root -m 0755 sentinel-control.dev16 /usr/local/bin/sentinel-control
+sudo install -o root -g root -m 0755 dev16-bundle/sentinel-control \
+  /usr/local/bin/sentinel-control
 sha256sum /usr/local/bin/sentinel-control
 ```
 
 Gateway:
 
 ```sh
-sudo install -o root -g root -m 0755 sentinel-gateway.dev16 /usr/local/bin/sentinel-gateway
+sudo install -o root -g root -m 0755 dev16-bundle/sentinel-gateway \
+  /usr/local/bin/sentinel-gateway
 sha256sum /usr/local/bin/sentinel-gateway
 ```
 
 Worker:
 
 ```sh
-sudo install -o root -g root -m 0755 sentinel-worker.dev16 /usr/local/bin/sentinel-worker
+sudo install -o root -g root -m 0755 dev16-bundle/sentinel-worker \
+  /usr/local/bin/sentinel-worker
 sha256sum /usr/local/bin/sentinel-worker
 ```
 
-Install the client on a trusted machine that can reach Gateway. Installing it on Gateway for the constrained acceptance is acceptable:
+Install the client on a trusted Linux machine that can reach Gateway. Installing it on Gateway for the constrained acceptance is acceptable:
 
 ```sh
-sudo install -o root -g root -m 0755 sentinelctl.dev16 /usr/local/bin/sentinelctl
+sudo install -o root -g root -m 0755 dev16-bundle/sentinelctl \
+  /usr/local/bin/sentinelctl
 sentinelctl --version
 ```
 
-The installed hashes must exactly match the frozen build host `SHA256SUMS`.
+The installed hashes must exactly match the bundled `SHA256SUMS` listed in section 1.
 
 No Signer, target wrapper, SSH host-key pin or PVE Worker firewall change is expected.
 
