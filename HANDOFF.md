@@ -4,7 +4,7 @@ Updated: 2026-09-15
 Current development version: `0.1.0-dev.16`
 Branch: `wip/agent-http-cli` from accepted `main` base `a4b30f0b418359e6a14c0fc271b464919aa07c66`
 
-Status: dev.15 Operator UI remains the accepted/deployed baseline; dev.16 Agent HTTP API + `sentinelctl` is implemented on the WIP branch and is preparing for constrained infrastructure acceptance. Production has **not** been migrated to dev.16: exact deployed runtime source remains `41c343e83596d299af05cf92945395ec008f0fd9`, PostgreSQL remains schema v2, and authority remains fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`. The dev.16 candidate adds capability-scoped job/request readback, bounded command output, schema v3, per-command timeout and a first-party secure CLI without changing Signer/target/PVE authority boundaries.
+Status: dev.15 Operator UI remains the accepted/deployed baseline; dev.16 Agent HTTP API + `sentinelctl` is implemented and documentation-complete on the WIP branch, with pre-acceptance CI `34920370513` PASS on exact checkpoint `6ff46102e10d86cbcc3035f4a2232a9f548321dc`. Production has **not** been migrated to dev.16: exact deployed runtime source remains `41c343e83596d299af05cf92945395ec008f0fd9`, PostgreSQL remains schema v2, and authority remains fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`. The next phase is constrained dev.16 infrastructure deployment/acceptance; do not merge before it passes.
 
 ## Operator-mandated development rules
 
@@ -202,19 +202,20 @@ Key dev.16 checkpoints:
 - output-store/Worker/PostgreSQL hardening checkpoint `69c1de20e3fdf7b81dcbc7524dafff5f43acffed`, Actions `34918635619` PASS;
 - human-safe CLI output and explicit permission-boundary tests added after that checkpoint;
 - PostgreSQL 15/18 runs on `e514d270821f7e35b7d524508395d4c15093cbee` both PASS, as did Go race tests; that CI run failed only in the independent frontend dependency-graph guard;
-- frontend drift diagnostic proved the reviewed graph change was only transitive `electron-to-chromium` `1.5.427 -> 1.5.428`; dev.16 reviewed graph SHA-256 is now `9b6d418cebaaed94c674ea66429e7d1c9e4f92f269eb53f2bea666109373b964`;
-- embedded Operator frontend archive remains pinned to SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`; CI still requires byte-for-byte generated UI parity;
+- frontend drift diagnostic proved the reviewed graph change was only transitive `electron-to-chromium` `1.5.427 -> 1.5.428`; dev.16 reviewed graph SHA-256 is `9b6d418cebaaed94c674ea66429e7d1c9e4f92f269eb53f2bea666109373b964`;
+- embedded Operator frontend archive remains pinned to SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`; final frontend build/parity guard passed unchanged;
+- documentation-complete pre-acceptance checkpoint `6ff46102e10d86cbcc3035f4a2232a9f548321dc`, Actions `34920370513` PASS across Go race/vet/tidy/format, PostgreSQL 15, PostgreSQL 18 and full frontend/embed checks;
 - API/CLI contract: `docs/AGENT_HTTP_CLI.md`;
 - schema-v3 development docs: `db/README.md`, `docs/POSTGRESQL_PERSISTENCE.md`;
-- README now distinguishes dev.16 candidate state from the still-deployed dev.15/schema-v2 baseline.
+- README distinguishes dev.16 candidate state from the still-deployed dev.15/schema-v2 baseline.
 
 The dev.16 candidate must not be merged merely because CI passes. It materially touches Control/Gateway/Worker/result persistence and therefore requires constrained real-infrastructure acceptance.
 
 ## Current phase / next steps
 
-1. Finish CI on the documentation-complete dev.16 branch head; all Go, PostgreSQL 15/18 and frontend/embed guards must be green.
+1. Begin constrained dev.16 infrastructure acceptance from the green checkpoint above; do not merge first.
 2. Keep production authority at epoch 5 disabled during deployment preparation.
-3. For constrained dev.16 acceptance, apply reviewed PostgreSQL migration `0003_execution_output.sql` first while authority remains disabled, then deploy exact dev.16 Control, Gateway and Worker binaries. Signer/target wrappers/PVE policy should remain unchanged unless evidence requires otherwise.
+3. Apply reviewed PostgreSQL migration `0003_execution_output.sql` first while authority remains disabled, verify schema/privileges, then deploy exact dev.16 Control, Gateway and Worker binaries. Signer/target wrappers/PVE policy should remain unchanged unless evidence requires otherwise.
 4. Prove both raw `curl` and `sentinelctl` against the real Gateway with CA verification: bootstrap, submit, job polling, request-ID recovery and terminal result.
 5. Use narrowly scoped acceptance grants to prove output hidden with `include_output=false`, visible with `include_output=true`, human terminal sanitization, JSON base64 contract, and one real `exec --wait` end-to-end execution.
 6. Recheck Operator UI after the Control/schema upgrade to ensure raw output did not leak into its job read model.
