@@ -138,8 +138,8 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 	}()
 
 	var (
-		result    executionjob.Result
-		output    executionoutput.Output
+		result     executionjob.Result
+		output     executionoutput.Output
 		executeErr error
 	)
 	if capturing, ok := r.Executor.(CapturingExecutor); ok {
