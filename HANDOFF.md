@@ -2,9 +2,9 @@
 
 Updated: 2026-09-15
 Current development version: `0.1.0-dev.17`
-Branch: `wip/dev17-completion-fix`
+Branch: `main`
 
-Status: `0.1.0-dev.17` is deployed and has passed constrained real-infrastructure Agent HTTP/`sentinelctl` acceptance on the intended PVE topology. PostgreSQL is schema v3. `sentinel-operator` remains the accepted `0.1.0-dev.15` binary, unchanged. Final authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. The next repository step is WIP PR/CI/merge to `main`; after merge, the next product milestone is the deliberately narrow MCP adapter over the accepted HTTP contract.
+Status: `0.1.0-dev.17` is deployed, has passed constrained real-infrastructure Agent HTTP/`sentinelctl` acceptance on the intended PVE topology, and is merged to `main` via PR #3. PostgreSQL is schema v3. `sentinel-operator` remains the accepted `0.1.0-dev.15` binary, unchanged. Final authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. Post-merge `main` CI passed. The next product milestone is the deliberately narrow MCP adapter over the accepted HTTP contract.
 
 ## Operator-mandated development rules
 
@@ -129,6 +129,15 @@ All acceptance was performed against the topology above with no insecure TLS byp
 
 This closes the Agent HTTP/CLI constrained acceptance. No dev.17 runtime acceptance blocker remains.
 
+## Merge checkpoint
+
+- PR #3 `WIP: Agent HTTP API + sentinelctl accepted as dev.17` passed PR CI Actions `35007376760` across Go test/vet/tidy/format, PostgreSQL 15, PostgreSQL 18 and Operator frontend checks.
+- The final pre-merge frontend graph drift was reviewed before changing the guard: only `baseline-browser-mapping` `2.11.23 -> 2.11.24` and `electron-to-chromium` `1.5.428 -> 1.5.429` changed. The reviewed graph SHA-256 is `7a60e35fc4ab70216dd4b7c2073d545f78c7f9f7ea2aabdf20b95e2a6a4981d2`.
+- The frontend job then rebuilt/typechecked successfully and verified the generated Operator UI remained byte-for-byte identical to embedded archive SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`.
+- PR #3 merged to `main` at `a8a3a31452739620a6f56817b933320f30b38919`.
+- Post-merge `main` CI Actions `35007585656` passed all four jobs, including PostgreSQL 15/18 and frontend embed parity.
+- The deployed runtime remains the frozen source `4728a86abc49bf2a686c588a3878288a36f44f7d`; later CI/docs commits are not runtime-source changes.
+
 ## Previous accepted milestones
 
 - Core execution/security baseline merged as PR #1 at `478009b1310b782db7dc20c629bada475c3f3d63`.
@@ -138,7 +147,6 @@ This closes the Agent HTTP/CLI constrained acceptance. No dev.17 runtime accepta
 ## Current phase / next step
 
 1. Keep production authority at epoch 7 disabled unless an explicit operator task requires a new constrained window.
-2. Update README/docs to describe dev.17 as the accepted Agent HTTP/CLI WIP baseline.
-3. Open a WIP PR from `wip/dev17-completion-fix` to `main`, require PR CI to pass, then merge according to the project workflow.
-4. After merge, verify post-merge `main` CI and update this handoff if the merge checkpoint materially changes repository state.
-5. Only then begin the MCP adapter milestone. Revisit and lock the exact narrow Qwen-class tool surface before implementation; never expose generic Control/admin/MemPalace-style all-tools authority.
+2. Agent HTTP API + `sentinelctl` are now accepted, deployed and merged to `main`.
+3. Begin the MCP adapter milestone from `main` only when implementation starts; bump the development version for the new released feature.
+4. Before implementation, revisit and lock the exact narrow Qwen-class MCP tool surface. It must be a thin adapter over the accepted Agent HTTPS API and must never expose generic Control/admin/all-tools authority.
