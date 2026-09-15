@@ -83,7 +83,7 @@ jobs:
           test "$(npm --version)" = '11.19.0'
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          expected='594d2ce5b419f8f35f3c37f3c3c05c6af4ff09745995488353421e9b4d25b5fd'
+          expected='7a60e35fc4ab70216dd4b7c2073d545f78c7f9f7ea2aabdf20b95e2a6a4981d2'
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [ "$actual" != "$expected" ]; then
             echo "frontend dependency graph drift: expected=${expected} actual=${actual}"
@@ -190,6 +190,8 @@ jobs:
 
       - name: Install PostgreSQL client
         shell: bash
+        env:
+          PGPASSWORD: sentinel-ci-postgres
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-client
