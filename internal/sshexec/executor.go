@@ -15,38 +15,46 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
+	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
 	"github.com/kotaru34/tethys-sentinel/internal/remotecommand"
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 	"github.com/kotaru34/tethys-sentinel/internal/workeridentity"
 )
 
 const (
-	defaultDialTimeout = 5 * time.Second
-	defaultOutputLimit = 4 << 20
+	defaultDialTimeout  = 5 * time.Second
+	defaultOutputLimit  = 4 << 20
+	defaultCaptureLimit = executionoutput.MaxStreamBytes
 )
 
 type Executor struct {
-	DialTimeout      time.Duration
-	OutputLimitBytes int64
+	DialTimeout       time.Duration
+	OutputLimitBytes  int64
+	CaptureLimitBytes int64
 }
 
 func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential workeridentity.Credential, target sshtarget.Spec) (executionjob.Result, error) {
+	result, _, err := e.ExecuteCaptured(ctx, job, credential, target)
+	return result, err
+}
+
+func (e Executor) ExecuteCaptured(ctx context.Context, job executionjob.Job, credential workeridentity.Credential, target sshtarget.Spec) (executionjob.Result, executionoutput.Output, error) {
 	if job.Status != executionjob.Running || !executionjob.VerifyBinding(job) {
-		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "invalid_running_job"}, errors.New("SSH executor requires a valid running job")
+		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "invalid_running_job"}, executionoutput.Output{}, errors.New("SSH executor requires a valid running job")
 	}
 	if credential.Signer == nil || credential.Certificate == nil {
-		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "invalid_ssh_credential"}, errors.New("SSH executor requires a bound certificate credential")
+		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "invalid_ssh_credential"}, executionoutput.Output{}, errors.New("SSH executor requires a bound certificate credential")
 	}
 	if target.Name != job.Target {
-		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "ssh_target_mismatch"}, errors.New("resolved SSH target does not match execution job")
+		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "ssh_target_mismatch"}, executionoutput.Output{}, errors.New("resolved SSH target does not match execution job")
 	}
 	pinnedKey, err := parsePinnedHostKey(target.HostKey)
 	if err != nil {
-		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "invalid_host_key_pin"}, err
+		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "invalid_host_key_pin"}, executionoutput.Output{}, err
 	}
 	command, err := remotecommand.Encode(job)
 	if err != nil {
-		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "remote_command_encoding_failed"}, err
+		return executionjob.Result{Success: false, ExitCode: -1, ErrorKind: "remote_command_encoding_failed"}, executionoutput.Output{}, err
 	}
 
 	dialTimeout := e.DialTimeout
@@ -57,9 +65,16 @@ func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential 
 	if limit <= 0 {
 		limit = defaultOutputLimit
 	}
+	captureLimit := e.CaptureLimitBytes
+	if captureLimit <= 0 {
+		captureLimit = defaultCaptureLimit
+	}
+	if captureLimit > executionoutput.MaxStreamBytes {
+		captureLimit = executionoutput.MaxStreamBytes
+	}
 	overflow := newOutputLimiter()
-	stdout := newDigestWriterWithLimiter(limit, overflow)
-	stderr := newDigestWriterWithLimiter(limit, overflow)
+	stdout := newCapturedDigestWriter(limit, captureLimit, overflow)
+	stderr := newCapturedDigestWriter(limit, captureLimit, overflow)
 
 	config := &ssh.ClientConfig{
 		User:              target.User,
@@ -70,7 +85,7 @@ func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential 
 	dialer := net.Dialer{Timeout: dialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", target.Address)
 	if err != nil {
-		return resultWithOutput(false, -1, "ssh_dial_failed", stdout, stderr), fmt.Errorf("SSH dial: %w", err)
+		return resultWithOutput(false, -1, "ssh_dial_failed", stdout, stderr), capturedOutput(stdout, stderr), fmt.Errorf("SSH dial: %w", err)
 	}
 	defer conn.Close()
 
@@ -79,27 +94,27 @@ func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential 
 		handshakeDeadline = deadline
 	}
 	if err := conn.SetDeadline(handshakeDeadline); err != nil {
-		return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), fmt.Errorf("set SSH handshake deadline: %w", err)
+		return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), capturedOutput(stdout, stderr), fmt.Errorf("set SSH handshake deadline: %w", err)
 	}
 	clientConn, chans, reqs, err := ssh.NewClientConn(conn, target.Address, config)
 	if err != nil {
-		return resultWithOutput(false, -1, "ssh_handshake_failed", stdout, stderr), fmt.Errorf("SSH handshake: %w", err)
+		return resultWithOutput(false, -1, "ssh_handshake_failed", stdout, stderr), capturedOutput(stdout, stderr), fmt.Errorf("SSH handshake: %w", err)
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := conn.SetDeadline(deadline); err != nil {
 			_ = clientConn.Close()
-			return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), fmt.Errorf("set SSH execution deadline: %w", err)
+			return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), capturedOutput(stdout, stderr), fmt.Errorf("set SSH execution deadline: %w", err)
 		}
 	} else if err := conn.SetDeadline(time.Time{}); err != nil {
 		_ = clientConn.Close()
-		return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), fmt.Errorf("clear SSH handshake deadline: %w", err)
+		return resultWithOutput(false, -1, "ssh_deadline_failed", stdout, stderr), capturedOutput(stdout, stderr), fmt.Errorf("clear SSH handshake deadline: %w", err)
 	}
 
 	client := ssh.NewClient(clientConn, chans, reqs)
 	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {
-		return resultWithOutput(false, -1, "ssh_session_open_failed", stdout, stderr), fmt.Errorf("open SSH session: %w", err)
+		return resultWithOutput(false, -1, "ssh_session_open_failed", stdout, stderr), capturedOutput(stdout, stderr), fmt.Errorf("open SSH session: %w", err)
 	}
 	defer session.Close()
 	session.Stdout = stdout
@@ -116,23 +131,23 @@ func (e Executor) Execute(ctx context.Context, job executionjob.Job, credential 
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			kind = "ssh_execution_timeout"
 		}
-		return resultWithOutput(false, -1, kind, stdout, stderr), ctx.Err()
+		return resultWithOutput(false, -1, kind, stdout, stderr), capturedOutput(stdout, stderr), ctx.Err()
 	case <-overflow.ch:
 		_ = client.Close()
 		<-errCh
-		return resultWithOutput(false, -1, "output_limit_exceeded", stdout, stderr), errors.New("SSH command output exceeded configured accounting limit")
+		return resultWithOutput(false, -1, "output_limit_exceeded", stdout, stderr), capturedOutput(stdout, stderr), errors.New("SSH command output exceeded configured accounting limit")
 	case runErr := <-errCh:
 		if stdout.Truncated() || stderr.Truncated() {
-			return resultWithOutput(false, -1, "output_limit_exceeded", stdout, stderr), errors.New("SSH command output exceeded configured accounting limit")
+			return resultWithOutput(false, -1, "output_limit_exceeded", stdout, stderr), capturedOutput(stdout, stderr), errors.New("SSH command output exceeded configured accounting limit")
 		}
 		if runErr == nil {
-			return resultWithOutput(true, 0, "", stdout, stderr), nil
+			return resultWithOutput(true, 0, "", stdout, stderr), capturedOutput(stdout, stderr), nil
 		}
 		var exitErr *ssh.ExitError
 		if errors.As(runErr, &exitErr) {
-			return resultWithOutput(false, exitErr.ExitStatus(), "remote_exit_nonzero", stdout, stderr), runErr
+			return resultWithOutput(false, exitErr.ExitStatus(), "remote_exit_nonzero", stdout, stderr), capturedOutput(stdout, stderr), runErr
 		}
-		return resultWithOutput(false, -1, "ssh_session_error", stdout, stderr), runErr
+		return resultWithOutput(false, -1, "ssh_session_error", stdout, stderr), capturedOutput(stdout, stderr), runErr
 	}
 }
 
@@ -174,21 +189,28 @@ func (l *outputLimiter) trigger() {
 }
 
 type digestWriter struct {
-	mu        sync.Mutex
-	h         hash.Hash
-	limit     int64
-	accounted int64
-	total     int64
-	truncated bool
-	overflow  *outputLimiter
+	mu               sync.Mutex
+	h                hash.Hash
+	limit            int64
+	accounted        int64
+	total            int64
+	truncated        bool
+	overflow         *outputLimiter
+	captureLimit     int64
+	capture          []byte
+	captureTruncated bool
 }
 
 func newDigestWriter(limit int64) *digestWriter {
-	return newDigestWriterWithLimiter(limit, nil)
+	return newCapturedDigestWriter(limit, 0, nil)
 }
 
 func newDigestWriterWithLimiter(limit int64, overflow *outputLimiter) *digestWriter {
-	return &digestWriter{h: sha256.New(), limit: limit, overflow: overflow}
+	return newCapturedDigestWriter(limit, 0, overflow)
+}
+
+func newCapturedDigestWriter(limit, captureLimit int64, overflow *outputLimiter) *digestWriter {
+	return &digestWriter{h: sha256.New(), limit: limit, captureLimit: captureLimit, overflow: overflow}
 }
 
 func (w *digestWriter) Write(p []byte) (int, error) {
@@ -206,6 +228,19 @@ func (w *digestWriter) Write(p []byte) (int, error) {
 	if w.total > w.limit {
 		w.truncated = true
 	}
+	if w.captureLimit > 0 {
+		captureRemaining := w.captureLimit - int64(len(w.capture))
+		if captureRemaining > 0 {
+			n := int64(len(p))
+			if n > captureRemaining {
+				n = captureRemaining
+			}
+			w.capture = append(w.capture, p[:int(n)]...)
+		}
+		if w.total > w.captureLimit {
+			w.captureTruncated = true
+		}
+	}
 	exceeded := w.truncated
 	w.mu.Unlock()
 	if exceeded {
@@ -218,6 +253,12 @@ func (w *digestWriter) snapshot() (string, int64, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return hex.EncodeToString(w.h.Sum(nil)), w.total, w.truncated
+}
+
+func (w *digestWriter) captureSnapshot() ([]byte, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.capture...), w.captureTruncated || w.truncated
 }
 
 func (w *digestWriter) Truncated() bool {
@@ -233,5 +274,14 @@ func resultWithOutput(success bool, exitCode int, errorKind string, stdout, stde
 	return executionjob.Result{
 		Success: success, ExitCode: exitCode, ErrorKind: errorKind,
 		OutputSHA256: hex.EncodeToString(h.Sum(nil)),
+	}
+}
+
+func capturedOutput(stdout, stderr *digestWriter) executionoutput.Output {
+	stdoutBytes, stdoutTruncated := stdout.captureSnapshot()
+	stderrBytes, stderrTruncated := stderr.captureSnapshot()
+	return executionoutput.Output{
+		Stdout: stdoutBytes, Stderr: stderrBytes,
+		StdoutTruncated: stdoutTruncated, StderrTruncated: stderrTruncated,
 	}
 }

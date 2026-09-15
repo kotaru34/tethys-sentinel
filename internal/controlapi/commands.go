@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/approval"
 	"github.com/kotaru34/tethys-sentinel/internal/controlops"
@@ -13,6 +14,8 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 	"github.com/kotaru34/tethys-sentinel/internal/risk"
 )
+
+const maxExecutionJobTTL = 15 * time.Minute
 
 func (a *API) CommandHandler(approvalOps controlops.ApprovalLifecycle, authorizer controlops.JobAuthorizer) http.Handler {
 	mux := http.NewServeMux()
@@ -36,6 +39,11 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 		return
 	}
 	req.RequestID = strings.TrimSpace(req.RequestID)
+	executionTTL, err := requestedExecutionTTL(req.TimeoutSeconds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	grant, err := a.grantFromHash(r, req.TokenHash)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid capability")
@@ -82,7 +90,7 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if currentRisk.Decision == risk.Allow {
-		a.stageAndAuthorizeResponse(w, r, grant, req, "", currentRisk, authorizer)
+		a.stageAndAuthorizeResponse(w, r, grant, req, "", currentRisk, executionTTL, authorizer)
 		return
 	}
 
@@ -102,7 +110,7 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
-		a.stageAndAuthorizeResponse(w, r, grant, req, matchedApproval.ID, currentRisk, authorizer)
+		a.stageAndAuthorizeResponse(w, r, grant, req, matchedApproval.ID, currentRisk, executionTTL, authorizer)
 		return
 	}
 
@@ -126,8 +134,8 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (a *API) stageAndAuthorizeResponse(w http.ResponseWriter, r *http.Request, grant domain.Grant, req internalapi.SubmitCommandRequest, approvalID string, currentRisk risk.Result, authorizer controlops.JobAuthorizer) {
-	expiresAt := a.now().Add(executionJobTTL)
+func (a *API) stageAndAuthorizeResponse(w http.ResponseWriter, r *http.Request, grant domain.Grant, req internalapi.SubmitCommandRequest, approvalID string, currentRisk risk.Result, executionTTL time.Duration, authorizer controlops.JobAuthorizer) {
+	expiresAt := a.now().Add(executionTTL)
 	if grant.ExpiresAt.Before(expiresAt) {
 		expiresAt = grant.ExpiresAt
 	}
@@ -180,4 +188,14 @@ func (a *API) authorizeStagedResponse(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "execution job authorization failed")
+}
+
+func requestedExecutionTTL(seconds int64) (time.Duration, error) {
+	if seconds == 0 {
+		return executionJobTTL, nil
+	}
+	if seconds < 1 || time.Duration(seconds)*time.Second > maxExecutionJobTTL {
+		return 0, errors.New("timeout_seconds must be between 1 and 900")
+	}
+	return time.Duration(seconds) * time.Second, nil
 }

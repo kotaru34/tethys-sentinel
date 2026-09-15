@@ -7,6 +7,7 @@ import (
 
 	"github.com/kotaru34/tethys-sentinel/internal/controlops"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
+	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 )
 
@@ -100,7 +101,22 @@ func (a *API) completeExecutionWithLifecycle(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "worker_id and claim_token are required")
 		return
 	}
-	job, err := execution.Complete(r.Context(), r.PathValue("id"), req.ClaimToken, req.WorkerID, req.Result)
+	if err := executionoutput.Validate(req.Output); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var (
+		job executionjob.Job
+		err error
+	)
+	if req.Output.Empty() {
+		job, err = execution.Complete(r.Context(), r.PathValue("id"), req.ClaimToken, req.WorkerID, req.Result)
+	} else if withOutput, ok := execution.(controlops.ExecutionOutputLifecycle); ok {
+		job, err = withOutput.CompleteWithOutput(r.Context(), r.PathValue("id"), req.ClaimToken, req.WorkerID, req.Result, req.Output)
+	} else {
+		writeError(w, http.StatusServiceUnavailable, "execution output persistence unavailable")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusConflict, "execution job completion rejected")
 		return

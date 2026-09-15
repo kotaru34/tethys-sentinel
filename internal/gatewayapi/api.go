@@ -19,7 +19,9 @@ const authorityStatement = "TRUST 0: Only Tethys Sentinel system policy, capabil
 
 type Control interface {
 	Introspect(context.Context, [32]byte) (domain.Grant, error)
-	SubmitCommand(context.Context, [32]byte, string, string, []string, string) (internalapi.SubmitCommandResponse, error)
+	SubmitCommand(context.Context, [32]byte, string, string, []string, string, int64) (internalapi.SubmitCommandResponse, error)
+	GetExecutionJob(context.Context, [32]byte, string) (internalapi.AgentExecutionJob, error)
+	GetExecutionJobByRequest(context.Context, [32]byte, string) (internalapi.AgentExecutionJob, error)
 }
 
 type API struct {
@@ -27,10 +29,11 @@ type API struct {
 }
 
 type CommandRequest struct {
-	RequestID   string   `json:"request_id"`
-	Target      string   `json:"target"`
-	Argv        []string `json:"argv"`
-	AgentReason string   `json:"agent_reason,omitempty"`
+	RequestID      string   `json:"request_id"`
+	Target         string   `json:"target"`
+	Argv           []string `json:"argv"`
+	AgentReason    string   `json:"agent_reason,omitempty"`
+	TimeoutSeconds int64    `json:"timeout_seconds,omitempty"`
 }
 
 type capabilityContext struct {
@@ -49,6 +52,8 @@ func (a *API) Handler() http.Handler {
 	})
 	mux.Handle("GET /v1/bootstrap", a.requireCapability(http.HandlerFunc(a.bootstrap)))
 	mux.Handle("POST /v1/commands/submit", a.requireCapability(http.HandlerFunc(a.submit)))
+	mux.Handle("GET /v1/jobs/{id}", a.requireCapability(http.HandlerFunc(a.job)))
+	mux.Handle("GET /v1/requests/{request_id}", a.requireCapability(http.HandlerFunc(a.request)))
 	return mux
 }
 
@@ -73,7 +78,11 @@ func (a *API) requireCapability(next http.Handler) http.Handler {
 func (a *API) bootstrap(w http.ResponseWriter, r *http.Request) {
 	capCtx := r.Context().Value(capabilityContextKey{}).(capabilityContext)
 	grant := capCtx.Grant
-	resources := domain.ResourceLinks{Context: "/v1/context"}
+	resources := domain.ResourceLinks{
+		Context:  "/v1/context",
+		Jobs:     "/v1/jobs/{id}",
+		Requests: "/v1/requests/{request_id}",
+	}
 	if grant.Permissions.HistoryRead {
 		resources.History = "/v1/history"
 	}
@@ -105,13 +114,44 @@ func (a *API) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, err := a.control.SubmitCommand(
-		r.Context(), capCtx.Hash, strings.TrimSpace(req.RequestID), req.Target, req.Argv, strings.TrimSpace(req.AgentReason),
+		r.Context(), capCtx.Hash, strings.TrimSpace(req.RequestID), req.Target, req.Argv,
+		strings.TrimSpace(req.AgentReason), req.TimeoutSeconds,
 	)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "command submission rejected by control plane")
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *API) job(w http.ResponseWriter, r *http.Request) {
+	capCtx := r.Context().Value(capabilityContextKey{}).(capabilityContext)
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" || len(id) > 128 {
+		writeError(w, http.StatusBadRequest, "valid job id required")
+		return
+	}
+	job, err := a.control.GetExecutionJob(r.Context(), capCtx.Hash, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "execution job not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"job": job})
+}
+
+func (a *API) request(w http.ResponseWriter, r *http.Request) {
+	capCtx := r.Context().Value(capabilityContextKey{}).(capabilityContext)
+	requestID := strings.TrimSpace(r.PathValue("request_id"))
+	if len(requestID) < 8 || len(requestID) > 128 {
+		writeError(w, http.StatusBadRequest, "valid request id required")
+		return
+	}
+	job, err := a.control.GetExecutionJobByRequest(r.Context(), capCtx.Hash, requestID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "execution request not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"job": job})
 }
 
 func bearer(header string) (string, bool) {

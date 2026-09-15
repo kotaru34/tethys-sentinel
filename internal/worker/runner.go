@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
+	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
 	"github.com/kotaru34/tethys-sentinel/internal/sshsigner"
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 	"github.com/kotaru34/tethys-sentinel/internal/workeridentity"
@@ -23,8 +24,16 @@ type Control interface {
 	Complete(context.Context, string, executionjob.Claim, executionjob.Result) (executionjob.Job, error)
 }
 
+type OutputControl interface {
+	CompleteWithOutput(context.Context, string, executionjob.Claim, executionjob.Result, executionoutput.Output) (executionjob.Job, error)
+}
+
 type Executor interface {
 	Execute(context.Context, executionjob.Job, workeridentity.Credential, sshtarget.Spec) (executionjob.Result, error)
+}
+
+type CapturingExecutor interface {
+	ExecuteCaptured(context.Context, executionjob.Job, workeridentity.Credential, sshtarget.Spec) (executionjob.Result, executionoutput.Output, error)
 }
 
 type Runner struct {
@@ -128,7 +137,16 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 		}
 	}()
 
-	result, executeErr := r.Executor.Execute(execCtx, started, credential, target)
+	var (
+		result     executionjob.Result
+		output     executionoutput.Output
+		executeErr error
+	)
+	if capturing, ok := r.Executor.(CapturingExecutor); ok {
+		result, output, executeErr = capturing.ExecuteCaptured(execCtx, started, credential, target)
+	} else {
+		result, executeErr = r.Executor.Execute(execCtx, started, credential, target)
+	}
 	stopMonitor()
 	<-monitorDone
 
@@ -150,7 +168,15 @@ func (r Runner) RunOnce(ctx context.Context) (bool, error) {
 			result.ErrorKind = "executor_error"
 		}
 	}
-	if _, err := r.Control.Complete(ctx, workerID, claim, result); err != nil {
+	if !output.Empty() {
+		completion, ok := r.Control.(OutputControl)
+		if !ok {
+			return true, errors.New("worker control does not support captured execution output")
+		}
+		if _, err := completion.CompleteWithOutput(ctx, workerID, claim, result, output); err != nil {
+			return true, err
+		}
+	} else if _, err := r.Control.Complete(ctx, workerID, claim, result); err != nil {
 		return true, err
 	}
 	return true, executeErr

@@ -83,8 +83,22 @@ jobs:
           test "$(npm --version)" = '11.19.0'
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          test "$(sha256sum package-lock.json | cut -d' ' -f1)" = \
-            '9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95'
+          expected='7a60e35fc4ab70216dd4b7c2073d545f78c7f9f7ea2aabdf20b95e2a6a4981d2'
+          actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
+          if [ "$actual" != "$expected" ]; then
+            echo "frontend dependency graph drift: expected=${expected} actual=${actual}"
+            node <<'NODE'
+          const lock = require('./package-lock.json');
+          const rows = Object.entries(lock.packages || {})
+            .filter(([path, meta]) => path && meta && meta.version)
+            .map(([path, meta]) => `${path}\t${meta.version}\t${meta.integrity || ''}`)
+            .sort();
+          console.log('----- resolved frontend graph -----');
+          console.log(rows.join('\n'));
+          console.log('----- end resolved frontend graph -----');
+          NODE
+            exit 1
+          fi
 
       - name: Install pinned frontend dependencies
         working-directory: web/operator

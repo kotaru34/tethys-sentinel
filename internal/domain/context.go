@@ -34,7 +34,9 @@ type AgentNote struct {
 }
 
 type ResourceLinks struct {
-	Context string `json:"context"`
-	History string `json:"history,omitempty"`
-	Notes   string `json:"notes,omitempty"`
+	Context  string `json:"context"`
+	History  string `json:"history,omitempty"`
+	Notes    string `json:"notes,omitempty"`
+	Jobs     string `json:"jobs,omitempty"`
+	Requests string `json:"requests,omitempty"`
 }

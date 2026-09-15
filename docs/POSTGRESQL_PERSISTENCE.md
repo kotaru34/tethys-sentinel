@@ -1,6 +1,6 @@
 # PostgreSQL persistence boundary
 
-This document defines the PostgreSQL persistence boundary introduced in `0.1.0-dev.11` and accepted on real constrained infrastructure in `0.1.0-dev.13`.
+This document defines the PostgreSQL persistence boundary introduced in `0.1.0-dev.11` and accepted on real constrained infrastructure in `0.1.0-dev.13`. The `0.1.0-dev.16` candidate extends that boundary with separately stored, bounded execution output for the Agent HTTP API.
 
 PostgreSQL is not a SQL mirror of the development JSON/JSONL stores. It is the authoritative **transaction engine** for mutable security state so security-sensitive transitions and their required audit records either commit together or do not commit at all.
 
@@ -11,6 +11,7 @@ PostgreSQL owns mutable runtime records for:
 - grants, token hashes, target/permission/history scope;
 - approval requests, decisions and one-shot consumption binding;
 - execution jobs and one-shot worker claim hashes;
+- bounded execution stdout/stderr captured separately from the job read model;
 - global emergency security epoch/state;
 - hash-chained audit events/history;
 - Trust-2 agent continuity notes.
@@ -43,7 +44,7 @@ Production PostgreSQL connections require TLS with server verification. `SENTINE
 
 If PostgreSQL is selected and DSN parsing, connectivity, schema-version validation or runtime-role validation fails, Control Plane exits. It never falls back to file-backed authority.
 
-The current schema version is **2**.
+The current development schema version is **3**. The accepted dev.15 infrastructure remains on schema version **2** until dev.16 is deliberately migrated and accepted; a dev.16 Control binary must not be started against schema v2.
 
 ## Schema and migrations
 
@@ -52,6 +53,7 @@ Reviewed migrations live under `db/migrations/` and are applied in zero-padded n
 ```text
 0001_core.sql
 0002_allow_once_job_binding.sql
+0003_execution_output.sql
 ```
 
 `0001` creates the core mutable schema and initializes global authority fail-closed:
@@ -62,6 +64,8 @@ disabled=true
 ```
 
 `0002` adds `approvals.consumed_by_job_id` and advances schema version to 2. That column is a security binding: a consumed `allow_once` approval is durably tied to exactly one execution job, so a second staged job cannot reuse the same one-shot authority.
+
+`0003` adds `sentinel.execution_job_output` and advances schema version to 3. The table is one-to-one with execution jobs, stores stdout/stderr as bytea, records independent truncation flags, and enforces a 256 KiB maximum for each stream. Raw output is deliberately absent from the general execution-job table/read model. Runtime `sentinel_control` receives only `SELECT`, `INSERT` and `UPDATE` on this table.
 
 Each migration checks the schema version it expects before advancing it. See `db/README.md` for bootstrap order.
 
@@ -99,6 +103,8 @@ The running service must never receive owner/migrator credentials.
 14. Completion can still record the factual result after a grant has been revoked; it does not pretend the already-started execution never happened.
 15. Audit append is serialized by `audit_head`, preserving deterministic sequence/hash-chain order.
 16. Database time is authoritative for transactional expiry/order checks.
+17. Raw execution output is non-authoritative data stored outside the job read model, bounded by database constraints, and returned to an agent only when that grant explicitly has `history.include_output=true`.
+18. In PostgreSQL mode, terminal job state, bounded output persistence and the required completion audit record commit together when output is present.
 
 ## Canonical lock order
 
@@ -180,11 +186,21 @@ Start locks/revalidates authority and grant before the job transition, verifies 
 
 Individual/global revoke therefore cannot slip between the authoritative grant check and the running transition without acquiring the same ordered locks.
 
-### Worker completion
+### Worker completion and bounded output
 
 Completion verifies the exact running job + claim hash, records terminal status/result, clears claim material, appends `execution.job_completed`, and commits atomically.
 
+For dev.16 captured execution, `CompleteWithOutput` additionally writes/upserts the bounded stdout/stderr record in `sentinel.execution_job_output` in that same transaction before the completion audit is committed. A database/audit failure therefore cannot leave a terminal job committed without the output that was part of that completion operation, or leave output committed for a completion that rolled back.
+
+Output bytes are not copied into the audit event. Audit metadata records bounded lengths/truncation/result digest so operators can reason about the event without promoting raw command output into the authority/audit path.
+
 Completion deliberately does not require the original grant to remain live: after emergency/revoke cancellation of the active transport, Sentinel still needs to record what actually happened. Replay fails because the prior job state/claim no longer matches.
+
+### Agent output readback
+
+Agent job lookup first authenticates the current capability and scopes the requested job to the same grant. Only after that isolation check, and only when `history.include_output=true`, may Control consult `execution_job_output` and attach a cloned output object to the agent-facing job response.
+
+The public JSON contract names the arbitrary byte streams `stdout_b64` and `stderr_b64`; Go JSON encoding serializes them as base64. Human-readable `sentinelctl` output decodes the bytes but escapes terminal control/format characters so remote output cannot directly inject ANSI/control sequences into the operator terminal.
 
 ### Audit
 
@@ -218,9 +234,11 @@ There is no automatic live import. Safe initial cutover is:
 
 This intentionally sacrifices old live capabilities rather than risk duplicated authority.
 
+For the existing accepted dev.15 deployment, the dev.16 upgrade sequence is narrower but still explicit: stop/gate execution as required, apply `0003_execution_output.sql` with the migrator identity while authority remains disabled, verify schema/privileges, then start the dev.16 Control. Do not start dev.16 Control against schema v2 and do not enable authority merely to perform the migration.
+
 ## Backup and recovery
 
-Use protected PostgreSQL base backups plus WAL/PITR appropriate to the deployment. Backups contain sensitive authority/audit data.
+Use protected PostgreSQL base backups plus WAL/PITR appropriate to the deployment. Backups contain sensitive authority/audit data and, from schema v3 onward, may also contain captured command stdout/stderr.
 
 Restoring an older database can restore an older security epoch. A restored database must therefore come up disabled/network-isolated and receive an epoch bump/revoke-all before Gateway/Worker access is permitted.
 
@@ -238,13 +256,15 @@ Current integration coverage includes:
 - authorization racing individual revoke;
 - one-shot authorization rollback when `audit_head` is blocked;
 - transactional authorize -> claim -> start -> complete lifecycle;
+- transactional terminal completion with bounded stdout/stderr persistence;
 - completion replay rejection;
+- capability-scoped output readback with explicit `history.include_output` gating;
 - emergency API behavior and PostgreSQL stores;
 - explicit backend selection and no PostgreSQL-to-file fallback.
 
 ## Real infrastructure acceptance
 
-The dev.13 constrained infrastructure run completed the previously outstanding persistence acceptance. Evidence in `HANDOFF.md` proves:
+The dev.13 constrained infrastructure run completed the original persistence acceptance. Evidence in `HANDOFF.md` proves:
 
 - PostgreSQL 18.6 with schema version 2 and least-privilege runtime role on the intended topology;
 - authority state persisted exactly across Control restart;
@@ -255,5 +275,7 @@ The dev.13 constrained infrastructure run completed the previously outstanding p
 - a second exact dev.13 Control binary with an unreachable PostgreSQL endpoint exited during startup before opening API listeners;
 - deliberate file-backend trap paths remained untouched, proving no silent PostgreSQL-to-file fallback;
 - the live accepted Control instance stayed active during the unavailable-database startup test.
+
+That accepted production evidence remains schema-v2 history; schema v3 execution-output behavior is a dev.16 candidate and requires constrained real-infrastructure acceptance before it replaces the baseline.
 
 `docs/INFRASTRUCTURE_ACCEPTANCE.md` remains the repeatable procedure. Any future change to persistence semantics must re-run the relevant CI and real-infrastructure checks before release/merge.
