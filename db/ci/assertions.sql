@@ -14,7 +14,7 @@ BEGIN
 
     SELECT version INTO v_version
     FROM sentinel.schema_version WHERE id = 1;
-    IF v_version <> 2 THEN
+    IF v_version <> 3 THEN
         RAISE EXCEPTION 'unexpected schema version: %', v_version;
     END IF;
 
@@ -31,6 +31,14 @@ BEGIN
        OR NOT has_table_privilege('sentinel_control', 'sentinel.grants', 'INSERT')
        OR NOT has_table_privilege('sentinel_control', 'sentinel.grants', 'UPDATE') THEN
         RAISE EXCEPTION 'sentinel_control grant DML privileges are incomplete';
+    END IF;
+    IF has_table_privilege('sentinel_control', 'sentinel.execution_job_output', 'DELETE') THEN
+        RAISE EXCEPTION 'sentinel_control unexpectedly has DELETE on execution_job_output';
+    END IF;
+    IF NOT has_table_privilege('sentinel_control', 'sentinel.execution_job_output', 'SELECT')
+       OR NOT has_table_privilege('sentinel_control', 'sentinel.execution_job_output', 'INSERT')
+       OR NOT has_table_privilege('sentinel_control', 'sentinel.execution_job_output', 'UPDATE') THEN
+        RAISE EXCEPTION 'sentinel_control execution output privileges are incomplete';
     END IF;
     IF has_table_privilege('sentinel_control', 'sentinel.audit_events', 'UPDATE')
        OR has_table_privilege('sentinel_control', 'sentinel.audit_events', 'DELETE') THEN
@@ -129,6 +137,23 @@ BEGIN
     END;
 END
 $request_unique$;
+
+-- Raw execution output is bounded independently from job metadata.
+INSERT INTO sentinel.execution_job_output (job_id, stdout, stderr)
+VALUES ('job-ci-00000001', convert_to('ok', 'UTF8'), ''::bytea);
+
+DO $output_limit$
+BEGIN
+    BEGIN
+        UPDATE sentinel.execution_job_output
+        SET stdout = decode(repeat('aa', 262145), 'hex')
+        WHERE job_id = 'job-ci-00000001';
+        RAISE EXCEPTION 'oversized execution output was accepted';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
+END
+$output_limit$;
 
 -- A consumed-by-job binding is valid only for an allow-once consumption.
 DO $approval_consumption_binding$
