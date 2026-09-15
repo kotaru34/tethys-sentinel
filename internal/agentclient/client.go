@@ -128,7 +128,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, bodyValue, res
 		return errors.New("sentinel response exceeds client limit")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var apiErr struct{ Error string `json:"error"` }
+		var apiErr struct {
+			Error string `json:"error"`
+		}
 		if json.Unmarshal(data, &apiErr) == nil && strings.TrimSpace(apiErr.Error) != "" {
 			return fmt.Errorf("sentinel HTTP %d: %s", resp.StatusCode, apiErr.Error)
 		}
