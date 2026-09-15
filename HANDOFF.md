@@ -169,10 +169,34 @@ Epoch 4 was enabled only for this controlled acceptance window using grant agent
 
 Epochs 0/1/2/3/4 capabilities are permanently stale after the epoch-5 revoke. Do not enable authority casually.
 
+## Agreed next milestone — Agent HTTP API v1
+
+The canonical agent integration is the capability-scoped HTTPS API, not MCP. `curl` remains the universal low-level client; a first-party Go `sentinelctl` should provide the convenient human/automation CLI. MCP will later be a thin purpose-built adapter over the same HTTP contract, with a deliberately narrow Qwen tool surface.
+
+Planned Agent HTTP API work:
+
+- add capability-scoped job lookup/polling so an agent can follow its own submitted job to a terminal state;
+- provide bounded execution result/output retrieval under an explicit grant permission, without exposing Worker/Signer/SSH/internal credentials;
+- provide idempotent recovery by request ID/job receipt so clients can safely survive disconnects/retries;
+- keep logical targets, structured argv, current risk classification/approval path and security-epoch semantics unchanged;
+- design remote-agent acceptance around a real deploy/test workflow on one narrowly granted VM;
+- solve external agent reachability as a separate transport/deployment concern rather than weakening the Sentinel authorization API;
+- defer generic file transfer until a concrete deployment use case requires it; prefer repository/artifact-driven deployment where practical.
+
+Planned `sentinelctl` principles:
+
+- thin 1:1 client over the public Agent HTTP API; it must not invent authority or bypass policy;
+- human-readable output by default plus stable `--json` for agents/scripts;
+- commands such as bootstrap/context, submit/exec, job get/wait, history/notes as permissions permit;
+- `exec --wait` may combine submit + polling but must preserve immutable request IDs and approval semantics;
+- capability must never be accepted as a normal command-line argument; use protected file/stdin/environment mechanisms and never persist it by default;
+- TLS verification is mandatory; no insecure convenience mode;
+- `curl`, `xh`/HTTPie and Hurl remain valid clients for raw API use and acceptance testing.
+
 ## Current phase / next steps
 
-1. Continue all new development from `main`; create a new branch and bump the development version when the next implemented feature warrants a release version.
-2. Keep production authority fail-closed at epoch 5 unless a future explicitly controlled operation requires enablement.
-3. `sentinel-operator.service` is enabled at boot and is part of the accepted deployed baseline.
-4. Preserve accepted dev.13 execution/credential invariants; materially touched execution paths require targeted re-acceptance.
-5. When MCP is implemented later, revisit and lock down the exact narrow tool surface for Qwen-class autonomous agents.
+1. Continue from `main`; next implementation branch should target Agent HTTP API v1 (for example `wip/agent-http-api`).
+2. Write/freeze the Agent HTTP API/job-output security contract before implementation, then bump the development version when the implemented feature becomes the next release candidate.
+3. Keep production authority fail-closed at epoch 5 except for explicit controlled acceptance windows.
+4. Preserve accepted execution/credential/network invariants; materially touched execution/result paths require targeted re-acceptance.
+5. After HTTP API + `sentinelctl` acceptance, implement MCP as a thin adapter and revisit/lock down the exact narrow tool surface specifically for Qwen-class autonomous agents.
