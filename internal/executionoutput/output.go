@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -66,10 +67,20 @@ func OpenFile(path string) (*FileStore, error) {
 		return nil, errors.New("execution output store path is empty")
 	}
 	s := &FileStore{path: path, outputs: make(map[string]Output)}
-	data, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, errors.New("execution output store must be a regular non-symlink file")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("execution output store must not be group/other accessible")
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
