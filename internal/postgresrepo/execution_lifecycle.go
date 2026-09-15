@@ -38,7 +38,7 @@ func (l *ExecutionLifecycle) Claim(ctx context.Context, workerID string) (execut
 		UPDATE sentinel.execution_jobs
 		SET status = 'expired', completed_at = clock_timestamp(), result_success = false,
 		    result_exit_code = -1, error_kind = 'job_expired', claim_token_hash = NULL
-		WHERE status = 'pending' AND expires_at <= clock_timestamp()
+		WHERE status IN ('pending', 'claimed', 'running') AND expires_at <= clock_timestamp()
 	`); err != nil {
 		return executionjob.Claim{}, err
 	}
