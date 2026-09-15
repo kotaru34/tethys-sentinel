@@ -4,21 +4,35 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/kotaru34/tethys-sentinel/internal/domain"
+	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
+	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 )
 
-// AgentJobHandler exposes only capability-scoped execution job readback to the
-// Gateway. It is intentionally separate from the worker lifecycle and operator
-// read model: callers must authenticate with the same capability that created
-// the job, and no claim/signing/admin material is returned.
+// AgentJobHandler exposes capability-scoped execution job readback without raw
+// output. Production wiring should use AgentJobHandlerWithOutput so grants that
+// explicitly include output can retrieve their own bounded execution output.
 func (a *API) AgentJobHandler() http.Handler {
+	return a.AgentJobHandlerWithOutput(nil)
+}
+
+// AgentJobHandlerWithOutput keeps raw output separate from the job read model.
+// Output is returned only when the authenticating grant explicitly has
+// history.include_output=true. Command output is data, never authoritative
+// context, regardless of whether it is returned to the agent.
+func (a *API) AgentJobHandlerWithOutput(output executionoutput.Reader) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /internal/v1/execution/jobs/get", a.getAgentExecutionJob)
-	mux.HandleFunc("POST /internal/v1/execution/jobs/by-request", a.getAgentExecutionJobByRequest)
+	mux.HandleFunc("POST /internal/v1/execution/jobs/get", func(w http.ResponseWriter, r *http.Request) {
+		a.getAgentExecutionJob(w, r, output)
+	})
+	mux.HandleFunc("POST /internal/v1/execution/jobs/by-request", func(w http.ResponseWriter, r *http.Request) {
+		a.getAgentExecutionJobByRequest(w, r, output)
+	})
 	return mux
 }
 
-func (a *API) getAgentExecutionJob(w http.ResponseWriter, r *http.Request) {
+func (a *API) getAgentExecutionJob(w http.ResponseWriter, r *http.Request, output executionoutput.Reader) {
 	var req internalapi.GetExecutionJobRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -43,10 +57,15 @@ func (a *API) getAgentExecutionJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "execution job not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, internalapi.GetExecutionJobResponse{Job: internalapi.AgentJob(job)})
+	response, err := agentJobResponse(r, grant, job, output)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "execution output lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
-func (a *API) getAgentExecutionJobByRequest(w http.ResponseWriter, r *http.Request) {
+func (a *API) getAgentExecutionJobByRequest(w http.ResponseWriter, r *http.Request, output executionoutput.Reader) {
 	var req internalapi.GetExecutionJobByRequestRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -71,5 +90,25 @@ func (a *API) getAgentExecutionJobByRequest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "execution job not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, internalapi.GetExecutionJobResponse{Job: internalapi.AgentJob(job)})
+	response, err := agentJobResponse(r, grant, job, output)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "execution output lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func agentJobResponse(r *http.Request, grant domain.Grant, job executionjob.Job, output executionoutput.Reader) (internalapi.GetExecutionJobResponse, error) {
+	view := internalapi.AgentJob(job)
+	if grant.History.IncludeOutput && output != nil {
+		captured, ok, err := output.OutputByID(r.Context(), job.ID)
+		if err != nil {
+			return internalapi.GetExecutionJobResponse{}, err
+		}
+		if ok {
+			copy := executionoutput.Clone(captured)
+			view.Output = &copy
+		}
+	}
+	return internalapi.GetExecutionJobResponse{Job: view}, nil
 }
