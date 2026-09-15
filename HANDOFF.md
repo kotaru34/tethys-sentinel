@@ -1,10 +1,10 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-15
+Updated: 2026-09-16
 Current development version: `0.1.0-dev.18`
 Branch: `wip/mcp-adapter`
 
-Status: `0.1.0-dev.17` remains the deployed and accepted runtime and is merged to `main` via PR #3. PostgreSQL remains schema v3 and `sentinel-operator` remains the accepted `0.1.0-dev.15` binary. Production authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. The dev.18 narrow Qwen-facing MCP adapter is implemented on `wip/mcp-adapter` and its branch CI is green; it is **not deployed or live-accepted yet**. The next gate is constrained MCP acceptance before merge/deployment.
+Status: `0.1.0-dev.17` remains the deployed and accepted runtime and is merged to `main` via PR #3. PostgreSQL remains schema v3 and `sentinel-operator` remains the accepted `0.1.0-dev.15` binary. Production authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. The dev.18 narrow Qwen-facing MCP adapter is implemented on `wip/mcp-adapter`; branch CI and its frozen reproducible MCP artifact build are green. It is **not deployed or live-accepted yet**. The next gate is constrained MCP acceptance before merge/deployment.
 
 ## Operator-mandated development rules
 
@@ -154,8 +154,12 @@ The Qwen-facing v1 contract is implemented in `cmd/sentinel-mcp` + `internal/mcp
 - Official Go MCP SDK `v1.8.0`; stdio transport input frame cap is explicitly 1 MiB. Stdout is reserved for protocol traffic.
 - Initial regression tests cover journal durability/session binding, output escaping/bounds, immutable request reuse through approval, complete batch journaling before first submit, structured-exec escape rejection, code carrier classification, cross-session recovery rejection, tampered journal revalidation and read-only output inspection.
 - The journal deliberately does **not** content-deduplicate a completely lost MCP response followed by a brand-new identical tool call. Recovery requires the original model-facing `id`.
-- Implementation commit `355e8440f845dfe59e73c6f57c95ea88667d4e1a`; module-tidy follow-up `6723380e3bc469d45d94ced1d6d96fc4b786eed9`.
-- Branch CI Actions `35025729363` passed module tidy, format, `go vet`, `go test -race ./...`, PostgreSQL 15, PostgreSQL 18 and Operator frontend/embed parity.
+- Frozen dev.18 MCP runtime source is `6723380e3bc469d45d94ced1d6d96fc4b786eed9` (implementation commit `355e8440f845dfe59e73c6f57c95ea88667d4e1a` plus module-tidy follow-up).
+- Branch CI Actions `35025729363` passed module tidy, format, `go vet`, `go test -race ./...`, PostgreSQL 15, PostgreSQL 18 and Operator frontend/embed parity. After adding the artifact workflow, full branch CI Actions `35032534729` also passed.
+- Reproducible MCP-only artifact workflow commit `6178aa5db317c1a1537f2343e15157f98104b9e9`; artifact Actions `35032534792` PASS. The workflow checks out the frozen source SHA, builds `sentinel-mcp` twice with Go 1.27.1 / `CGO_ENABLED=0` / `-trimpath -buildvcs=true`, requires byte-identical binaries and clean embedded VCS metadata, then creates a deterministic tarball.
+- Artifact ID `10421722605`, name `tethys-sentinel-mcp-dev18-linux-amd64-6723380e`, uploaded artifact ZIP digest `sha256:46e6069d9afaa93210821aaa2204a787f9f5c85db98109f201b8ecabb898e9a0`.
+- Deterministic MCP tarball `tethys-sentinel-mcp-0.1.0-dev.18-linux-amd64-6723380e.tar.gz` SHA-256: `afa53ab0f89fad9c1079e12ab885849764010ee6ac7d797b590a4e88fed91ce3`.
+- `sentinel-mcp` binary SHA-256: `08a6c1a64db097fb87e00fcc9789433582102f0b17f85253f654f34309070c50`.
 - dev.18 has not yet been deployed or live-accepted. Production authority remains epoch 7 disabled.
 
 ## Previous accepted milestones
@@ -167,7 +171,7 @@ The Qwen-facing v1 contract is implemented in `cmd/sentinel-mcp` + `internal/mcp
 ## Current phase / next step
 
 1. Keep production authority at epoch 7 disabled unless an explicit operator task requires a new constrained window.
-2. dev.18 branch CI is green at Actions `35025729363`; do not merge solely on CI because the MCP behavior has not yet been accepted against the intended infrastructure.
+2. dev.18 code CI and frozen reproducible MCP artifact are green (`35032534729` and `35032534792` respectively); do not merge solely on CI because the MCP behavior has not yet been accepted against the intended infrastructure.
 3. Perform constrained MCP acceptance with a fresh short-lived capability: harmless structured exec, batch sequential/parallel, approval wait + `check(id)`, output bounds/escaping/query, structured-exec escape negatives, code conditional exposure/approval, restart recovery and cross-session old-ID rejection.
 4. On successful acceptance, globally revoke/disable authority again, record evidence, review README/docs, then merge the WIP branch. Any acceptance blocker requires the next dev bump rather than merging dev.18.
 5. Grow the model-facing surface only from observed Qwen pain; keep arbitrary `code` exceptional.
