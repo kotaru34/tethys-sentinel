@@ -4,7 +4,7 @@ Updated: 2026-09-15
 Current development version: `0.1.0-dev.16`
 Branch: `wip/agent-http-cli` from accepted `main` base `a4b30f0b418359e6a14c0fc271b464919aa07c66`
 
-Status: dev.15 Operator UI remains the accepted/deployed baseline; dev.16 Agent HTTP API + `sentinelctl` is implemented and documentation-complete on the WIP branch, with pre-acceptance CI `34920370513` PASS on exact checkpoint `6ff46102e10d86cbcc3035f4a2232a9f548321dc`. Production has **not** been migrated to dev.16: exact deployed runtime source remains `41c343e83596d299af05cf92945395ec008f0fd9`, PostgreSQL remains schema v2, and authority remains fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`. The next phase is constrained dev.16 infrastructure deployment/acceptance; do not merge before it passes.
+Status: dev.15 Operator UI remains the accepted/deployed baseline. Dev.16 Agent HTTP API + `sentinelctl` is implemented and frozen for constrained infrastructure acceptance at runtime source `d9f688f5cd97bd932a4b9b99c243f0fb11361137`; CI `34920564170` passed on that exact runtime source. A reproducible Linux/amd64 deployment bundle was built from the frozen source by Actions run `34922039158` and independently inspected; the bundle includes exact Control/Gateway/Worker/`sentinelctl` binaries plus migration `0003_execution_output.sql`. Production has **not** been migrated to dev.16: exact deployed runtime source remains `41c343e83596d299af05cf92945395ec008f0fd9`, PostgreSQL remains schema v2, and authority remains fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`. The next phase is constrained dev.16 infrastructure deployment/acceptance; do not merge before it passes.
 
 ## Operator-mandated development rules
 
@@ -205,7 +205,19 @@ Key dev.16 checkpoints:
 - frontend drift diagnostic proved the reviewed graph change was only transitive `electron-to-chromium` `1.5.427 -> 1.5.428`; dev.16 reviewed graph SHA-256 is `9b6d418cebaaed94c674ea66429e7d1c9e4f92f269eb53f2bea666109373b964`;
 - embedded Operator frontend archive remains pinned to SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`; final frontend build/parity guard passed unchanged;
 - documentation-complete pre-acceptance checkpoint `6ff46102e10d86cbcc3035f4a2232a9f548321dc`, Actions `34920370513` PASS across Go race/vet/tidy/format, PostgreSQL 15, PostgreSQL 18 and full frontend/embed checks;
+- frozen runtime source `d9f688f5cd97bd932a4b9b99c243f0fb11361137`, Actions `34920564170` PASS;
+- reproducible bundle workflow final commit `5b4576860489fca9c5dde6e315d0bd8f3ae49d4a`; normal CI `34922039066` PASS and artifact Actions run `34922039158` PASS;
+- artifact ID `10378691542`, name `tethys-sentinel-dev16-linux-amd64-d9f688f5`, retention through 2026-09-22;
+- deterministic tarball SHA-256 `4336026365683215191520650157d4480f23d36d7ba6f2caa685b772e83424a6`;
+- frozen bundle manifest:
+  - `sentinel-control` `d9708e74b9e05124d2bd1304ee1736faf1e58b0e72fe8b0d1956337697ab1db2`;
+  - `sentinel-gateway` `a1971546ebe36ddfa07f88c07d48139f013fdc749a931e52547cc3ab37aa5fcb`;
+  - `sentinel-worker` `014f0f22be23724cbd3de5a534323831acb5abfcfcd3a55749b42a31101ea9dd`;
+  - `sentinelctl` `a2c67c056f5801f9719ead0d22d354f7bc5fc15ee860d0e452fdfe4c9a28d28f`;
+  - `db/migrations/0003_execution_output.sql` `813668ee447ba0c9767c6cab22535b28be6fbd8fa2e7062ffa9dc0d9650dbb99`;
+- the bundle was independently downloaded and verified: outer checksum PASS, all five manifest entries PASS, BUILDINFO source SHA exact, and all four Go binaries report `go1.27.1`, exact VCS revision `d9f688...`, `vcs.modified=false`;
 - API/CLI contract: `docs/AGENT_HTTP_CLI.md`;
+- acceptance delta/rollback procedure: `docs/AGENT_HTTP_CLI_ACCEPTANCE.md`;
 - schema-v3 development docs: `db/README.md`, `docs/POSTGRESQL_PERSISTENCE.md`;
 - README distinguishes dev.16 candidate state from the still-deployed dev.15/schema-v2 baseline.
 
@@ -213,13 +225,15 @@ The dev.16 candidate must not be merged merely because CI passes. It materially 
 
 ## Current phase / next steps
 
-1. Begin constrained dev.16 infrastructure acceptance from the green checkpoint above; do not merge first.
+1. Obtain the verified `tethys-sentinel-dev16-linux-amd64-d9f688f5` artifact from Actions run `34922039158` and verify outer tar SHA-256 `4336026365683215191520650157d4480f23d36d7ba6f2caa685b772e83424a6` plus internal `SHA256SUMS` before deployment. No separate build host is required.
 2. Keep production authority at epoch 5 disabled during deployment preparation.
-3. Apply reviewed PostgreSQL migration `0003_execution_output.sql` first while authority remains disabled, verify schema/privileges, then deploy exact dev.16 Control, Gateway and Worker binaries. Signer/target wrappers/PVE policy should remain unchanged unless evidence requires otherwise.
-4. Prove both raw `curl` and `sentinelctl` against the real Gateway with CA verification: bootstrap, submit, job polling, request-ID recovery and terminal result.
-5. Use narrowly scoped acceptance grants to prove output hidden with `include_output=false`, visible with `include_output=true`, human terminal sanitization, JSON base64 contract, and one real `exec --wait` end-to-end execution.
-6. Recheck Operator UI after the Control/schema upgrade to ensure raw output did not leak into its job read model.
-7. Finish with grant revoke + global `REVOKE ALL`; accepted authority must again be disabled. If this acceptance window begins by enabling epoch 5, the final revoke should advance to epoch 6.
-8. Any acceptance blocker => fix on branch, bump next development version to dev.17, and repeat relevant acceptance; do not merge dev.16.
-9. Once dev.16 passes constrained acceptance, update README/HANDOFF with exact deployed hashes/evidence, open WIP PR, run PR CI and merge.
-10. Only after HTTP API + `sentinelctl` are accepted/merged should the MCP adapter milestone begin; at that point revisit and lock the exact narrow tool surface for Qwen-class autonomous agents.
+3. Stop Worker -> Gateway -> Operator -> Control, create both the quiescent schema-v2 rollback clone and custom `pg_dump`, and save accepted rollback binaries before touching schema/runtime.
+4. Apply the bundled reviewed `db/migrations/0003_execution_output.sql` while authority remains disabled, verify schema v3/privileges/epoch 5 disabled, then install exact bundled dev.16 Control, Gateway and Worker binaries. Signer/target wrappers/PVE policy remain unchanged unless evidence requires otherwise.
+5. Start Control -> Operator -> Gateway while disabled, verify UI/listeners/health, then start Worker and recheck the hard egress boundary.
+6. Prove both raw `curl` and `sentinelctl` against the real Gateway with CA verification: bootstrap, submit, job polling, request-ID recovery and terminal result.
+7. Use narrowly scoped acceptance grants to prove output hidden with `include_output=false`, visible with `include_output=true`, human terminal sanitization, JSON base64 contract, and one real `exec --wait` end-to-end execution.
+8. Recheck Operator UI after the Control/schema upgrade to ensure raw output did not leak into its job read model.
+9. Finish with grant revoke + global `REVOKE ALL`; accepted authority must again be disabled. If this acceptance window begins by enabling epoch 5, the final revoke should advance to epoch 6.
+10. Any acceptance blocker => fix on branch, bump next development version to dev.17, and repeat relevant acceptance; do not merge dev.16.
+11. Once dev.16 passes constrained acceptance, update README/HANDOFF with exact deployed hashes/evidence, open WIP PR, run PR CI and merge.
+12. Only after HTTP API + `sentinelctl` are accepted/merged should the MCP adapter milestone begin; at that point revisit and lock the exact narrow tool surface for Qwen-class autonomous agents.
