@@ -1,0 +1,135 @@
+name: dev18 MCP artifact
+
+on:
+  push:
+    branches:
+      - wip/mcp-adapter
+    paths:
+      - .github/workflows/dev18-mcp-artifact.yml
+      - cmd/sentinel-mcp/**
+      - internal/mcpadapter/**
+      - internal/buildinfo/version.go
+      - go.mod
+      - go.sum
+      - VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-frozen-mcp:
+    runs-on: ubuntu-24.04
+    env:
+      FROZEN_SHA: 6723380e3bc469d45d94ced1d6d96fc4b786eed9
+      VERSION_EXPECTED: 0.1.0-dev.18
+      GO_VERSION_EXPECTED: go1.27.1
+      PACKAGE_BASENAME: tethys-sentinel-mcp-0.1.0-dev.18-linux-amd64-6723380e
+    steps:
+      - name: Checkout frozen MCP candidate
+        uses: actions/checkout@v6
+        with:
+          ref: 6723380e3bc469d45d94ced1d6d96fc4b786eed9
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up exact Go toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Verify frozen source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          test "$(cat VERSION)" = "$VERSION_EXPECTED"
+          test "$(go version | awk '{print $3}')" = "$GO_VERSION_EXPECTED"
+          test -z "$(git status --porcelain)"
+          printf 'source_sha=%s\nversion=%s\ngo=%s\n' \
+            "$FROZEN_SHA" "$VERSION_EXPECTED" "$(go version)"
+
+      - name: Build twice and prove reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_A="$RUNNER_TEMP/dev18-mcp-build-a"
+          BUILD_B="$RUNNER_TEMP/dev18-mcp-build-b"
+          rm -rf "$BUILD_A" "$BUILD_B"
+          mkdir -p "$BUILD_A" "$BUILD_B"
+
+          for dir in "$BUILD_A" "$BUILD_B"; do
+            test -z "$(git status --porcelain)"
+            GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+              go build -trimpath -buildvcs=true \
+              -o "$dir/sentinel-mcp" ./cmd/sentinel-mcp
+            chmod 0755 "$dir/sentinel-mcp"
+          done
+
+          cmp "$BUILD_A/sentinel-mcp" "$BUILD_B/sentinel-mcp"
+          go version -m "$BUILD_A/sentinel-mcp" | grep -F "vcs.revision=$FROZEN_SHA"
+          go version -m "$BUILD_A/sentinel-mcp" | grep -F 'vcs.modified=false'
+          test -z "$(git status --porcelain)"
+
+      - name: Package deterministic MCP artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_A="$RUNNER_TEMP/dev18-mcp-build-a"
+          rm -rf package artifact
+          mkdir -p package artifact
+
+          install -m 0755 "$BUILD_A/sentinel-mcp" package/sentinel-mcp
+
+          cat > package/BUILDINFO <<EOF
+          component=sentinel-mcp
+          version=$VERSION_EXPECTED
+          source_sha=$FROZEN_SHA
+          go_version=$(go version)
+          goos=linux
+          goarch=amd64
+          cgo=disabled
+          build_flags=-trimpath -buildvcs=true
+          backend_schema_required=3
+          EOF
+
+          (
+            cd package
+            sha256sum sentinel-mcp > SHA256SUMS
+          )
+
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          tar --sort=name \
+            --mtime="@${SOURCE_DATE_EPOCH}" \
+            --owner=0 --group=0 --numeric-owner \
+            -C package -cf - . \
+            | gzip -n > "artifact/${PACKAGE_BASENAME}.tar.gz"
+
+          (
+            cd artifact
+            sha256sum "${PACKAGE_BASENAME}.tar.gz" > "${PACKAGE_BASENAME}.tar.gz.sha256"
+            sha256sum -c "${PACKAGE_BASENAME}.tar.gz.sha256"
+          )
+
+          rm -rf "$RUNNER_TEMP/dev18-mcp-verify"
+          mkdir -p "$RUNNER_TEMP/dev18-mcp-verify"
+          tar -xzf "artifact/${PACKAGE_BASENAME}.tar.gz" -C "$RUNNER_TEMP/dev18-mcp-verify"
+          (cd "$RUNNER_TEMP/dev18-mcp-verify" && sha256sum -c SHA256SUMS)
+          test "$(sed -n 's/^component=//p' "$RUNNER_TEMP/dev18-mcp-verify/BUILDINFO")" = 'sentinel-mcp'
+          test "$(sed -n 's/^source_sha=//p' "$RUNNER_TEMP/dev18-mcp-verify/BUILDINFO")" = "$FROZEN_SHA"
+          test "$(sed -n 's/^backend_schema_required=//p' "$RUNNER_TEMP/dev18-mcp-verify/BUILDINFO")" = '3'
+
+          cat "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
+          cat package/SHA256SUMS
+
+      - name: Upload frozen dev18 MCP
+        uses: actions/upload-artifact@v4
+        with:
+          name: tethys-sentinel-mcp-dev18-linux-amd64-6723380e
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: |
+            artifact/tethys-sentinel-mcp-0.1.0-dev.18-linux-amd64-6723380e.tar.gz
+            artifact/tethys-sentinel-mcp-0.1.0-dev.18-linux-amd64-6723380e.tar.gz.sha256
