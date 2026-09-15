@@ -102,8 +102,12 @@ jobs:
             -C package -cf - . \
             | gzip -n > "artifact/${PACKAGE_BASENAME}.tar.gz"
 
-          sha256sum "artifact/${PACKAGE_BASENAME}.tar.gz" \
-            > "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
+          (
+            cd artifact
+            sha256sum "${PACKAGE_BASENAME}.tar.gz" \
+              > "${PACKAGE_BASENAME}.tar.gz.sha256"
+            sha256sum -c "${PACKAGE_BASENAME}.tar.gz.sha256"
+          )
 
           rm -rf "$RUNNER_TEMP/dev16-verify"
           mkdir -p "$RUNNER_TEMP/dev16-verify"
