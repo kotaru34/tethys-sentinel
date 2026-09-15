@@ -38,7 +38,7 @@ func (f *fakeAgent) Submit(_ context.Context, req gatewayapi.CommandRequest) (in
 	return internalapi.SubmitCommandResponse{
 		Accepted: true, Decision: "accepted",
 		Risk: risk.Result{Decision: risk.ApprovalRequired, Category: "SERVICE_RESTART"},
-		Job: &internalapi.ExecutionJobReceipt{ID: "job-1", RequestID: req.RequestID, Status: executionjob.Pending},
+		Job:  &internalapi.ExecutionJobReceipt{ID: "job-1", RequestID: req.RequestID, Status: executionjob.Pending},
 	}, nil
 }
 
