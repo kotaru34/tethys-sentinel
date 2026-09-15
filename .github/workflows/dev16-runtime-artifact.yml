@@ -47,10 +47,13 @@ jobs:
         run: |
           set -euo pipefail
           binaries=(sentinel-control sentinel-gateway sentinel-worker sentinelctl)
-          rm -rf build-a build-b
-          mkdir -p build-a build-b
+          BUILD_A="$RUNNER_TEMP/dev16-build-a"
+          BUILD_B="$RUNNER_TEMP/dev16-build-b"
+          rm -rf "$BUILD_A" "$BUILD_B"
+          mkdir -p "$BUILD_A" "$BUILD_B"
 
-          for dir in build-a build-b; do
+          for dir in "$BUILD_A" "$BUILD_B"; do
+            test -z "$(git status --porcelain)"
             for name in "${binaries[@]}"; do
               GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
                 go build -trimpath -buildvcs=true \
@@ -59,26 +62,28 @@ jobs:
             done
           done
 
+          test -z "$(git status --porcelain)"
           for name in "${binaries[@]}"; do
-            cmp "build-a/$name" "build-b/$name"
-            go version -m "build-a/$name" | grep -F "vcs.revision=$FROZEN_SHA"
-            go version -m "build-a/$name" | grep -F 'vcs.modified=false'
+            cmp "$BUILD_A/$name" "$BUILD_B/$name"
+            go version -m "$BUILD_A/$name" | grep -F "vcs.revision=$FROZEN_SHA"
+            go version -m "$BUILD_A/$name" | grep -F 'vcs.modified=false'
           done
 
-          (cd build-a && sha256sum "${binaries[@]}") | tee build-a/SHA256SUMS
+          (cd "$BUILD_A" && sha256sum "${binaries[@]}") | tee "$BUILD_A/SHA256SUMS"
 
       - name: Package deterministic artifact
         shell: bash
         run: |
           set -euo pipefail
+          BUILD_A="$RUNNER_TEMP/dev16-build-a"
           rm -rf package artifact
           mkdir -p package artifact
 
-          install -m 0755 build-a/sentinel-control package/sentinel-control
-          install -m 0755 build-a/sentinel-gateway package/sentinel-gateway
-          install -m 0755 build-a/sentinel-worker package/sentinel-worker
-          install -m 0755 build-a/sentinelctl package/sentinelctl
-          cp build-a/SHA256SUMS package/SHA256SUMS
+          install -m 0755 "$BUILD_A/sentinel-control" package/sentinel-control
+          install -m 0755 "$BUILD_A/sentinel-gateway" package/sentinel-gateway
+          install -m 0755 "$BUILD_A/sentinel-worker" package/sentinel-worker
+          install -m 0755 "$BUILD_A/sentinelctl" package/sentinelctl
+          cp "$BUILD_A/SHA256SUMS" package/SHA256SUMS
 
           cat > package/BUILDINFO <<EOF
           version=$VERSION_EXPECTED
@@ -100,10 +105,11 @@ jobs:
           sha256sum "artifact/${PACKAGE_BASENAME}.tar.gz" \
             > "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
 
-          mkdir -p /tmp/dev16-verify
-          tar -xzf "artifact/${PACKAGE_BASENAME}.tar.gz" -C /tmp/dev16-verify
-          (cd /tmp/dev16-verify && sha256sum -c SHA256SUMS)
-          test "$(sed -n 's/^source_sha=//p' /tmp/dev16-verify/BUILDINFO)" = "$FROZEN_SHA"
+          rm -rf "$RUNNER_TEMP/dev16-verify"
+          mkdir -p "$RUNNER_TEMP/dev16-verify"
+          tar -xzf "artifact/${PACKAGE_BASENAME}.tar.gz" -C "$RUNNER_TEMP/dev16-verify"
+          (cd "$RUNNER_TEMP/dev16-verify" && sha256sum -c SHA256SUMS)
+          test "$(sed -n 's/^source_sha=//p' "$RUNNER_TEMP/dev16-verify/BUILDINFO")" = "$FROZEN_SHA"
 
           cat "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
 
