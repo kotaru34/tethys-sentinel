@@ -16,8 +16,8 @@ const MaxStreamBytes = 256 << 10
 var ErrUnavailable = errors.New("execution output store unavailable")
 
 type Output struct {
-	Stdout          []byte `json:"stdout,omitempty"`
-	Stderr          []byte `json:"stderr,omitempty"`
+	Stdout          []byte `json:"stdout_b64,omitempty"`
+	Stderr          []byte `json:"stderr_b64,omitempty"`
 	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 }
