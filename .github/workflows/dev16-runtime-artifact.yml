@@ -1,0 +1,119 @@
+name: dev16 runtime artifact
+
+on:
+  push:
+    branches:
+      - wip/agent-http-cli
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-frozen-runtime:
+    runs-on: ubuntu-24.04
+    env:
+      FROZEN_SHA: d9f688f5cd97bd932a4b9b99c243f0fb11361137
+      VERSION_EXPECTED: 0.1.0-dev.16
+      GO_VERSION_EXPECTED: go1.27.1
+      PACKAGE_BASENAME: tethys-sentinel-0.1.0-dev.16-linux-amd64-d9f688f5
+    steps:
+      - name: Checkout frozen runtime candidate
+        uses: actions/checkout@v6
+        with:
+          ref: d9f688f5cd97bd932a4b9b99c243f0fb11361137
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up exact Go toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Verify frozen source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          test "$(cat VERSION)" = "$VERSION_EXPECTED"
+          test "$(go version | awk '{print $3}')" = "$GO_VERSION_EXPECTED"
+          test -z "$(git status --porcelain)"
+          printf 'source_sha=%s\nversion=%s\ngo=%s\n' \
+            "$FROZEN_SHA" "$VERSION_EXPECTED" "$(go version)"
+
+      - name: Build twice and prove reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          binaries=(sentinel-control sentinel-gateway sentinel-worker sentinelctl)
+          rm -rf build-a build-b
+          mkdir -p build-a build-b
+
+          for dir in build-a build-b; do
+            for name in "${binaries[@]}"; do
+              GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+                go build -trimpath -buildvcs=true \
+                -o "$dir/$name" "./cmd/$name"
+              chmod 0755 "$dir/$name"
+            done
+          done
+
+          for name in "${binaries[@]}"; do
+            cmp "build-a/$name" "build-b/$name"
+            go version -m "build-a/$name" | grep -F "vcs.revision=$FROZEN_SHA"
+            go version -m "build-a/$name" | grep -F 'vcs.modified=false'
+          done
+
+          (cd build-a && sha256sum "${binaries[@]}") | tee build-a/SHA256SUMS
+
+      - name: Package deterministic artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf package artifact
+          mkdir -p package artifact
+
+          install -m 0755 build-a/sentinel-control package/sentinel-control
+          install -m 0755 build-a/sentinel-gateway package/sentinel-gateway
+          install -m 0755 build-a/sentinel-worker package/sentinel-worker
+          install -m 0755 build-a/sentinelctl package/sentinelctl
+          cp build-a/SHA256SUMS package/SHA256SUMS
+
+          cat > package/BUILDINFO <<EOF
+          version=$VERSION_EXPECTED
+          source_sha=$FROZEN_SHA
+          go_version=$(go version)
+          goos=linux
+          goarch=amd64
+          cgo=disabled
+          build_flags=-trimpath -buildvcs=true
+          EOF
+
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          tar --sort=name \
+            --mtime="@${SOURCE_DATE_EPOCH}" \
+            --owner=0 --group=0 --numeric-owner \
+            -C package -cf - . \
+            | gzip -n > "artifact/${PACKAGE_BASENAME}.tar.gz"
+
+          sha256sum "artifact/${PACKAGE_BASENAME}.tar.gz" \
+            > "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
+
+          mkdir -p /tmp/dev16-verify
+          tar -xzf "artifact/${PACKAGE_BASENAME}.tar.gz" -C /tmp/dev16-verify
+          (cd /tmp/dev16-verify && sha256sum -c SHA256SUMS)
+          test "$(sed -n 's/^source_sha=//p' /tmp/dev16-verify/BUILDINFO)" = "$FROZEN_SHA"
+
+          cat "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
+
+      - name: Upload frozen dev16 runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: tethys-sentinel-dev16-linux-amd64-d9f688f5
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: |
+            artifact/tethys-sentinel-0.1.0-dev.16-linux-amd64-d9f688f5.tar.gz
+            artifact/tethys-sentinel-0.1.0-dev.16-linux-amd64-d9f688f5.tar.gz.sha256
