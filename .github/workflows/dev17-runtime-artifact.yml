@@ -1,0 +1,133 @@
+name: dev17 runtime artifact
+
+on:
+  push:
+    branches:
+      - wip/dev17-completion-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-frozen-runtime:
+    runs-on: ubuntu-24.04
+    env:
+      FROZEN_SHA: 4728a86abc49bf2a686c588a3878288a36f44f7d
+      VERSION_EXPECTED: 0.1.0-dev.17
+      GO_VERSION_EXPECTED: go1.27.1
+      PACKAGE_BASENAME: tethys-sentinel-0.1.0-dev.17-linux-amd64-4728a86a
+    steps:
+      - name: Checkout frozen runtime candidate
+        uses: actions/checkout@v6
+        with:
+          ref: 4728a86abc49bf2a686c588a3878288a36f44f7d
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up exact Go toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Verify frozen source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          test "$(cat VERSION)" = "$VERSION_EXPECTED"
+          test "$(go version | awk '{print $3}')" = "$GO_VERSION_EXPECTED"
+          test -z "$(git status --porcelain)"
+          printf 'source_sha=%s\nversion=%s\ngo=%s\n' \
+            "$FROZEN_SHA" "$VERSION_EXPECTED" "$(go version)"
+
+      - name: Build twice and prove reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          binaries=(sentinel-control sentinel-gateway sentinel-worker sentinelctl)
+          BUILD_A="$RUNNER_TEMP/dev17-build-a"
+          BUILD_B="$RUNNER_TEMP/dev17-build-b"
+          rm -rf "$BUILD_A" "$BUILD_B"
+          mkdir -p "$BUILD_A" "$BUILD_B"
+
+          for dir in "$BUILD_A" "$BUILD_B"; do
+            test -z "$(git status --porcelain)"
+            for name in "${binaries[@]}"; do
+              GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+                go build -trimpath -buildvcs=true \
+                -o "$dir/$name" "./cmd/$name"
+              chmod 0755 "$dir/$name"
+            done
+          done
+
+          test -z "$(git status --porcelain)"
+          for name in "${binaries[@]}"; do
+            cmp "$BUILD_A/$name" "$BUILD_B/$name"
+            go version -m "$BUILD_A/$name" | grep -F "vcs.revision=$FROZEN_SHA"
+            go version -m "$BUILD_A/$name" | grep -F 'vcs.modified=false'
+          done
+
+      - name: Package deterministic artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_A="$RUNNER_TEMP/dev17-build-a"
+          rm -rf package artifact
+          mkdir -p package artifact
+
+          install -m 0755 "$BUILD_A/sentinel-control" package/sentinel-control
+          install -m 0755 "$BUILD_A/sentinel-gateway" package/sentinel-gateway
+          install -m 0755 "$BUILD_A/sentinel-worker" package/sentinel-worker
+          install -m 0755 "$BUILD_A/sentinelctl" package/sentinelctl
+
+          cat > package/BUILDINFO <<EOF
+          version=$VERSION_EXPECTED
+          source_sha=$FROZEN_SHA
+          go_version=$(go version)
+          goos=linux
+          goarch=amd64
+          cgo=disabled
+          build_flags=-trimpath -buildvcs=true
+          schema_required=3
+          EOF
+
+          (
+            cd package
+            sha256sum sentinel-control sentinel-gateway sentinel-worker sentinelctl > SHA256SUMS
+          )
+
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          tar --sort=name \
+            --mtime="@${SOURCE_DATE_EPOCH}" \
+            --owner=0 --group=0 --numeric-owner \
+            -C package -cf - . \
+            | gzip -n > "artifact/${PACKAGE_BASENAME}.tar.gz"
+
+          (
+            cd artifact
+            sha256sum "${PACKAGE_BASENAME}.tar.gz" > "${PACKAGE_BASENAME}.tar.gz.sha256"
+            sha256sum -c "${PACKAGE_BASENAME}.tar.gz.sha256"
+          )
+
+          rm -rf "$RUNNER_TEMP/dev17-verify"
+          mkdir -p "$RUNNER_TEMP/dev17-verify"
+          tar -xzf "artifact/${PACKAGE_BASENAME}.tar.gz" -C "$RUNNER_TEMP/dev17-verify"
+          (cd "$RUNNER_TEMP/dev17-verify" && sha256sum -c SHA256SUMS)
+          test "$(sed -n 's/^source_sha=//p' "$RUNNER_TEMP/dev17-verify/BUILDINFO")" = "$FROZEN_SHA"
+          test "$(sed -n 's/^schema_required=//p' "$RUNNER_TEMP/dev17-verify/BUILDINFO")" = '3'
+
+          cat "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
+          cat package/SHA256SUMS
+
+      - name: Upload frozen dev17 runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: tethys-sentinel-dev17-linux-amd64-4728a86a
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: |
+            artifact/tethys-sentinel-0.1.0-dev.17-linux-amd64-4728a86a.tar.gz
+            artifact/tethys-sentinel-0.1.0-dev.17-linux-amd64-4728a86a.tar.gz.sha256
