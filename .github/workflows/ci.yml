@@ -190,8 +190,6 @@ jobs:
 
       - name: Install PostgreSQL client
         shell: bash
-        env:
-          PGPASSWORD: sentinel-ci-postgres
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-client
