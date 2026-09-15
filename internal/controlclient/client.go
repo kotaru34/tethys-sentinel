@@ -31,12 +31,29 @@ func (c *Client) Introspect(ctx context.Context, hash [32]byte) (domain.Grant, e
 	return response.Grant, nil
 }
 
-func (c *Client) SubmitCommand(ctx context.Context, hash [32]byte, requestID, target string, argv []string, agentReason string) (internalapi.SubmitCommandResponse, error) {
+func (c *Client) SubmitCommand(ctx context.Context, hash [32]byte, requestID, target string, argv []string, agentReason string, timeoutSeconds int64) (internalapi.SubmitCommandResponse, error) {
 	var response internalapi.SubmitCommandResponse
 	err := c.post(ctx, "/internal/v1/commands/submit", internalapi.SubmitCommandRequest{
-		TokenHash: encodeHash(hash), RequestID: requestID, Target: target, Argv: argv, AgentReason: agentReason,
+		TokenHash: encodeHash(hash), RequestID: requestID, Target: target, Argv: argv,
+		AgentReason: agentReason, TimeoutSeconds: timeoutSeconds,
 	}, &response)
 	return response, err
+}
+
+func (c *Client) GetExecutionJob(ctx context.Context, hash [32]byte, jobID string) (internalapi.AgentExecutionJob, error) {
+	var response internalapi.GetExecutionJobResponse
+	err := c.post(ctx, "/internal/v1/execution/jobs/get", internalapi.GetExecutionJobRequest{
+		TokenHash: encodeHash(hash), JobID: jobID,
+	}, &response)
+	return response.Job, err
+}
+
+func (c *Client) GetExecutionJobByRequest(ctx context.Context, hash [32]byte, requestID string) (internalapi.AgentExecutionJob, error) {
+	var response internalapi.GetExecutionJobResponse
+	err := c.post(ctx, "/internal/v1/execution/jobs/by-request", internalapi.GetExecutionJobByRequestRequest{
+		TokenHash: encodeHash(hash), RequestID: requestID,
+	}, &response)
+	return response.Job, err
 }
 
 func (c *Client) Context(ctx context.Context, hash [32]byte) (domain.ContextBundle, error) {
