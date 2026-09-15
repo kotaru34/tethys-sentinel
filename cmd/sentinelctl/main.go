@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/kotaru34/tethys-sentinel/internal/agentclient"
 	"github.com/kotaru34/tethys-sentinel/internal/buildinfo"
@@ -333,6 +335,63 @@ func printJob(w io.Writer, job internalapi.AgentExecutionJob) {
 			fmt.Fprintf(w, "output_sha256: %s\n", job.Result.OutputSHA256)
 		}
 	}
+	if job.Output != nil {
+		printCapturedStream(w, "stdout", job.Output.Stdout, job.Output.StdoutTruncated)
+		printCapturedStream(w, "stderr", job.Output.Stderr, job.Output.StderrTruncated)
+	}
+}
+
+func printCapturedStream(w io.Writer, name string, data []byte, truncated bool) {
+	if len(data) == 0 && !truncated {
+		return
+	}
+	fmt.Fprintf(w, "%s:\n", name)
+	if len(data) != 0 {
+		text := safeTerminalText(data)
+		fmt.Fprint(w, text)
+		if !strings.HasSuffix(text, "\n") {
+			fmt.Fprintln(w)
+		}
+	}
+	if truncated {
+		fmt.Fprintf(w, "[%s truncated]\n", name)
+	}
+}
+
+// safeTerminalText renders captured remote output without allowing terminal
+// control sequences or malformed UTF-8 to execute in the operator's terminal.
+// Newlines and tabs remain readable; other control/format characters are
+// escaped. Use --json when byte-exact machine processing is required.
+func safeTerminalText(data []byte) string {
+	var b strings.Builder
+	for len(data) > 0 {
+		r, size := utf8.DecodeRune(data)
+		if r == utf8.RuneError && size == 1 {
+			fmt.Fprintf(&b, "\\x%02x", data[0])
+			data = data[1:]
+			continue
+		}
+		switch r {
+		case '\n':
+			b.WriteByte('\n')
+		case '\t':
+			b.WriteByte('\t')
+		default:
+			if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+				if r <= 0xff {
+					fmt.Fprintf(&b, "\\x%02x", r)
+				} else if r <= 0xffff {
+					fmt.Fprintf(&b, "\\u%04x", r)
+				} else {
+					fmt.Fprintf(&b, "\\U%08x", r)
+				}
+			} else {
+				b.WriteRune(r)
+			}
+		}
+		data = data[size:]
+	}
+	return b.String()
 }
 
 func writeJSON(stdout, stderr io.Writer, value any) int {
@@ -430,6 +489,8 @@ commands:
   job wait <JOB-ID> [--poll 1s]
   request get <REQUEST-ID>
 
+Captured output is shown only when the grant has history.include_output=true.
+Human output escapes terminal control sequences; --json returns byte-exact base64 fields.
 A capability is read from --cap-file/SENTINEL_CAP_FILE or SENTINEL_CAP.
 There is intentionally no --token argument and no insecure TLS mode.`)
 }
