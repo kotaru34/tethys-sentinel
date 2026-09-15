@@ -1,10 +1,10 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-15
-Current development version: `0.1.0-dev.17`
-Branch: `main`
+Current development version: `0.1.0-dev.18`
+Branch: `wip/mcp-adapter`
 
-Status: `0.1.0-dev.17` is deployed, has passed constrained real-infrastructure Agent HTTP/`sentinelctl` acceptance on the intended PVE topology, and is merged to `main` via PR #3. PostgreSQL is schema v3. `sentinel-operator` remains the accepted `0.1.0-dev.15` binary, unchanged. Final authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. Post-merge `main` CI passed. The next product milestone is the deliberately narrow MCP adapter over the accepted HTTP contract; its initial Qwen-class tool surface is now locked in `docs/MCP_ADAPTER_DESIGN.md`.
+Status: `0.1.0-dev.17` remains the deployed and accepted runtime and is merged to `main` via PR #3. PostgreSQL remains schema v3 and `sentinel-operator` remains the accepted `0.1.0-dev.15` binary. Production authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. The dev.18 narrow Qwen-facing MCP adapter is implemented on `wip/mcp-adapter` and its branch CI is green; it is **not deployed or live-accepted yet**. The next gate is constrained MCP acceptance before merge/deployment.
 
 ## Operator-mandated development rules
 
@@ -14,7 +14,7 @@ Status: `0.1.0-dev.17` is deployed, has passed constrained real-infrastructure A
 4. Once functioning infrastructure execution is fully accepted on the intended infrastructure, merge the project as WIP.
 5. On merge, review/update README and project documentation.
 6. Acceptance blocker => fix branch + bump next dev version; do not merge until constrained acceptance passes.
-7. Future MCP must expose a narrow purpose-built Qwen tool surface, never generic backend/admin APIs.
+7. MCP must expose a narrow purpose-built Qwen tool surface, never generic backend/admin APIs.
 
 ## Locked security architecture
 
@@ -83,7 +83,7 @@ The original pre-schema-v3 rollback dump remains `/var/backups/tethys-sentinel/p
 
 ## Agent HTTP API + `sentinelctl`
 
-Canonical agent integration is the capability-scoped HTTPS Gateway API. `curl` is the raw/reference client and `sentinelctl` is the first-party convenience client. MCP must later wrap this accepted contract rather than create another authority model.
+Canonical agent integration is the capability-scoped HTTPS Gateway API. `curl` is the raw/reference client and `sentinelctl` is the first-party convenience client. MCP wraps this accepted contract rather than creating another authority model.
 
 Accepted surface includes:
 
@@ -138,20 +138,25 @@ This closes the Agent HTTP/CLI constrained acceptance. No dev.17 runtime accepta
 - Post-merge `main` CI Actions `35007585656` passed all four jobs, including PostgreSQL 15/18 and frontend embed parity.
 - The deployed runtime remains the frozen source `4728a86abc49bf2a686c588a3878288a36f44f7d`; later CI/docs commits are not runtime-source changes.
 
-## MCP adapter design checkpoint
+## dev.18 MCP adapter implementation checkpoint
 
-The initial Qwen-class MCP design is now locked in `docs/MCP_ADAPTER_DESIGN.md`.
+The Qwen-facing v1 contract is implemented in `cmd/sentinel-mcp` + `internal/mcpadapter` and documented in `docs/MCP_ADAPTER_DESIGN.md`.
 
-- Model-facing v1 tools: `sentinel.exec`, `sentinel.exec_batch`, `sentinel.code`, `sentinel.check`, `sentinel.output`.
-- `target` is mandatory for all execution tools regardless of how many targets the capability exposes.
-- Normal remote administration should be performed through structured, classifiable and auditable `exec`/`exec_batch` operations as far as practical.
-- `exec_batch` is only orchestration for independent structured commands; it must not become a workflow/shell language.
-- There is no model-facing `shell` tool. Model-facing terminology is `code`; the current backend `shell` permission may remain a legacy implementation detail until a separate justified migration.
-- `code` initially means Python arbitrary-code execution and is an explicit last-resort escape hatch, not the preferred administration path. It requires arbitrary-code/powerful-operation authority and explicit approval semantics; do not attempt to infer safety by regex/AST source inspection.
-- The adapter should use durable `operation_id` state mapped to immutable Sentinel request IDs so recovery, approval waits and interrupted calls do not rely on Qwen correctly reconstructing protocol state.
-- Output remains untrusted `TRUST_2`; normal responses are bounded and deeper inspection goes through `sentinel.output`.
-- If real traces show repeated pain with configuration files, deployments, stdin-heavy commands or other tasks, prefer a narrow controlled primitive or a carefully bounded extension of structured execution over encouraging routine fallback to `code`.
-- Tool surface growth is driven by observed agent pain, not speculative feature completeness.
+- Model-facing tools: `sentinel.exec`, `sentinel.exec_batch`, conditional `sentinel.code`, `sentinel.check`, `sentinel.output`.
+- Inputs are deliberately small: `exec(target, argv, timeout_seconds?)`, `exec_batch(target, commands, parallel?)`, `code(target, source, timeout_seconds?)`, `check(id)`, `output(id, step?, query?)`.
+- Results expose the MCP operation `id`, compact status, and only when applicable job ID, exit code and bounded stdout/stderr. Request/approval/grant IDs, risk metadata, epochs, hashes and backend HTTP mechanics are not normal model-facing state.
+- `exec` and every `exec_batch` child run the shared Sentinel classifier locally and fail closed for all classes where `risk.RequiresShell(...)` is true. This blocks known shell/interpreter, remote-exec and privilege-launcher escape routes without maintaining a second classifier in MCP.
+- `code` is Python-only, implemented as adapter-owned `python3 -c <source>`, registered only when the capability has backend `shell` authority, and asserts that the shared classifier still categorizes the carrier as requiring that authority. Backend approval semantics remain authoritative.
+- A versioned 0600 durable operation journal records the complete operation and all immutable request IDs before any submit, using temp write + fsync + atomic rename + directory fsync. Records bind to the exact Sentinel bootstrap session/grant ID.
+- `check(id)` rejects cross-session operation IDs, revalidates the stored operation against the MCP structured/code boundary, resubmits the same immutable request ID(s), then reconciles jobs from Sentinel.
+- `output(id, step?, query?)` is strictly read-only and also revalidates the stored operation before resolving its request.
+- Model output is escaped before bounding: 8 KiB/stream for exec/code, 2 KiB/stream/step for batch, 12 KiB total for explicit output; deeper reads use head+tail or literal query context. ANSI/control/format/invalid-UTF-8 bytes cannot survive as active control sequences.
+- Official Go MCP SDK `v1.8.0`; stdio transport input frame cap is explicitly 1 MiB. Stdout is reserved for protocol traffic.
+- Initial regression tests cover journal durability/session binding, output escaping/bounds, immutable request reuse through approval, complete batch journaling before first submit, structured-exec escape rejection, code carrier classification, cross-session recovery rejection, tampered journal revalidation and read-only output inspection.
+- The journal deliberately does **not** content-deduplicate a completely lost MCP response followed by a brand-new identical tool call. Recovery requires the original model-facing `id`.
+- Implementation commit `355e8440f845dfe59e73c6f57c95ea88667d4e1a`; module-tidy follow-up `6723380e3bc469d45d94ced1d6d96fc4b786eed9`.
+- Branch CI Actions `35025729363` passed module tidy, format, `go vet`, `go test -race ./...`, PostgreSQL 15, PostgreSQL 18 and Operator frontend/embed parity.
+- dev.18 has not yet been deployed or live-accepted. Production authority remains epoch 7 disabled.
 
 ## Previous accepted milestones
 
@@ -162,7 +167,7 @@ The initial Qwen-class MCP design is now locked in `docs/MCP_ADAPTER_DESIGN.md`.
 ## Current phase / next step
 
 1. Keep production authority at epoch 7 disabled unless an explicit operator task requires a new constrained window.
-2. Agent HTTP API + `sentinelctl` are accepted, deployed and merged to `main`; the MCP v1 design is now locked.
-3. When implementation starts, branch from `main`, bump the development version for the MCP feature, and implement the narrow adapter described in `docs/MCP_ADAPTER_DESIGN.md` rather than mirroring raw HTTP/backend mechanics.
-4. Bias implementation and later tuning toward making diagnosis, deployment, configuration, config changes, monitoring and routine administration succeed through controlled structured execution. Treat arbitrary `code` as the exceptional escape hatch.
-5. Add new model-facing powers only after real Qwen traces demonstrate a repeated gap that the existing controlled primitives cannot address cleanly.
+2. dev.18 branch CI is green at Actions `35025729363`; do not merge solely on CI because the MCP behavior has not yet been accepted against the intended infrastructure.
+3. Perform constrained MCP acceptance with a fresh short-lived capability: harmless structured exec, batch sequential/parallel, approval wait + `check(id)`, output bounds/escaping/query, structured-exec escape negatives, code conditional exposure/approval, restart recovery and cross-session old-ID rejection.
+4. On successful acceptance, globally revoke/disable authority again, record evidence, review README/docs, then merge the WIP branch. Any acceptance blocker requires the next dev bump rather than merging dev.18.
+5. Grow the model-facing surface only from observed Qwen pain; keep arbitrary `code` exceptional.
