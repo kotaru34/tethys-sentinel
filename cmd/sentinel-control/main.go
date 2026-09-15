@@ -65,7 +65,7 @@ func main() {
 	controlInternal := api.InternalHandler()
 	executionInternal := api.ExecutionHandler(persistence.executionOps)
 	commandInternal := api.CommandHandler(persistence.approvalOps, persistence.authorizer)
-	agentJobs := api.AgentJobHandler()
+	agentJobs := api.AgentJobHandlerWithOutput(persistence.output)
 
 	internalMux := http.NewServeMux()
 	internalMux.Handle("/internal/v1/context", resources)
