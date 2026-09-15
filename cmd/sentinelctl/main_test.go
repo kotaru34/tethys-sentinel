@@ -13,6 +13,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
+	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
 	"github.com/kotaru34/tethys-sentinel/internal/gatewayapi"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
 	"github.com/kotaru34/tethys-sentinel/internal/risk"
@@ -46,11 +47,13 @@ func (f *fakeAgent) Job(context.Context, string) (internalapi.AgentExecutionJob,
 	f.jobReads++
 	status := executionjob.Running
 	var result *executionjob.Result
+	var output *executionoutput.Output
 	if f.jobReads >= 2 {
 		status = executionjob.Succeeded
 		result = &executionjob.Result{Success: true, ExitCode: 0}
+		output = &executionoutput.Output{Stdout: []byte("done\n")}
 	}
-	return internalapi.AgentExecutionJob{ID: "job-1", RequestID: "req-test", Target: "target1", Status: status, Result: result}, nil
+	return internalapi.AgentExecutionJob{ID: "job-1", RequestID: "req-test", Target: "target1", Status: status, Result: result, Output: output}, nil
 }
 
 func (f *fakeAgent) Request(context.Context, string) (internalapi.AgentExecutionJob, error) {
@@ -78,6 +81,39 @@ func TestExecWaitReusesRequestAcrossApprovalAndWaitsForTerminal(t *testing.T) {
 	}
 	if client.jobReads < 2 || !strings.Contains(stdout.String(), `"status":"succeeded"`) {
 		t.Fatalf("job was not polled to terminal state: reads=%d output=%s", client.jobReads, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"stdout_b64":"ZG9uZQo="`) {
+		t.Fatalf("JSON output did not expose explicit base64 stdout: %s", stdout.String())
+	}
+}
+
+func TestPrintJobRendersCapturedOutputWithoutTerminalInjection(t *testing.T) {
+	job := internalapi.AgentExecutionJob{
+		ID: "job-safe-output", RequestID: "req-safe-output", Target: "target1", Status: executionjob.Failed,
+		Result: &executionjob.Result{Success: false, ExitCode: 7, ErrorKind: "remote_exit_nonzero"},
+		Output: &executionoutput.Output{
+			Stdout:          []byte("hello\n\x1b[31mred\x1b[0m\n"),
+			Stderr:          []byte{0xff, 'x', '\n'},
+			StderrTruncated: true,
+		},
+	}
+	var out bytes.Buffer
+	printJob(&out, job)
+	got := out.String()
+	if strings.ContainsRune(got, '\x1b') {
+		t.Fatalf("raw ESC reached terminal output: %q", got)
+	}
+	for _, want := range []string{"stdout:\nhello\n\\x1b[31mred\\x1b[0m\n", "stderr:\n\\xffx\n", "[stderr truncated]\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestSafeTerminalTextEscapesUnicodeFormatCharacters(t *testing.T) {
+	got := safeTerminalText([]byte("left\u202eright\n"))
+	if got != "left\\u202eright\n" {
+		t.Fatalf("unexpected safe rendering %q", got)
 	}
 }
 
