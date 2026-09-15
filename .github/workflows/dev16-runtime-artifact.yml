@@ -39,6 +39,7 @@ jobs:
           test "$(cat VERSION)" = "$VERSION_EXPECTED"
           test "$(go version | awk '{print $3}')" = "$GO_VERSION_EXPECTED"
           test -z "$(git status --porcelain)"
+          test -f db/migrations/0003_execution_output.sql
           printf 'source_sha=%s\nversion=%s\ngo=%s\n' \
             "$FROZEN_SHA" "$VERSION_EXPECTED" "$(go version)"
 
@@ -69,21 +70,20 @@ jobs:
             go version -m "$BUILD_A/$name" | grep -F 'vcs.modified=false'
           done
 
-          (cd "$BUILD_A" && sha256sum "${binaries[@]}") | tee "$BUILD_A/SHA256SUMS"
-
       - name: Package deterministic artifact
         shell: bash
         run: |
           set -euo pipefail
           BUILD_A="$RUNNER_TEMP/dev16-build-a"
           rm -rf package artifact
-          mkdir -p package artifact
+          mkdir -p package/db/migrations artifact
 
           install -m 0755 "$BUILD_A/sentinel-control" package/sentinel-control
           install -m 0755 "$BUILD_A/sentinel-gateway" package/sentinel-gateway
           install -m 0755 "$BUILD_A/sentinel-worker" package/sentinel-worker
           install -m 0755 "$BUILD_A/sentinelctl" package/sentinelctl
-          cp "$BUILD_A/SHA256SUMS" package/SHA256SUMS
+          install -m 0644 db/migrations/0003_execution_output.sql \
+            package/db/migrations/0003_execution_output.sql
 
           cat > package/BUILDINFO <<EOF
           version=$VERSION_EXPECTED
@@ -94,6 +94,17 @@ jobs:
           cgo=disabled
           build_flags=-trimpath -buildvcs=true
           EOF
+
+          (
+            cd package
+            sha256sum \
+              sentinel-control \
+              sentinel-gateway \
+              sentinel-worker \
+              sentinelctl \
+              db/migrations/0003_execution_output.sql \
+              > SHA256SUMS
+          )
 
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           tar --sort=name \
@@ -116,6 +127,7 @@ jobs:
           test "$(sed -n 's/^source_sha=//p' "$RUNNER_TEMP/dev16-verify/BUILDINFO")" = "$FROZEN_SHA"
 
           cat "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
+          cat package/SHA256SUMS
 
       - name: Upload frozen dev16 runtime
         uses: actions/upload-artifact@v4
