@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kotaru34/tethys-sentinel/internal/buildinfo"
+	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
 	"github.com/kotaru34/tethys-sentinel/internal/sshexec"
 	"github.com/kotaru34/tethys-sentinel/internal/tlsutil"
 	"github.com/kotaru34/tethys-sentinel/internal/worker"
@@ -51,17 +52,29 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	captureLimit, err := int64Env("SENTINEL_WORKER_CAPTURE_LIMIT_BYTES", executionoutput.MaxStreamBytes)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if captureLimit > executionoutput.MaxStreamBytes {
+		log.Fatalf("SENTINEL_WORKER_CAPTURE_LIMIT_BYTES must be at most %d", executionoutput.MaxStreamBytes)
+	}
+	if captureLimit > outputLimit {
+		log.Fatal("SENTINEL_WORKER_CAPTURE_LIMIT_BYTES must not exceed SENTINEL_WORKER_OUTPUT_LIMIT_BYTES")
+	}
 
 	client := workerclient.New(controlURL, httpClient, workerToken)
 	runner := worker.Runner{
-		Control:               client,
-		Executor:              sshexec.Executor{DialTimeout: dialTimeout, OutputLimitBytes: outputLimit},
+		Control: client,
+		Executor: sshexec.Executor{
+			DialTimeout: dialTimeout, OutputLimitBytes: outputLimit, CaptureLimitBytes: captureLimit,
+		},
 		WorkerID:              workerID,
 		AuthorityPollInterval: authorityPollInterval,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Printf("tethys-sentinel worker %s id=%s control=%s authority_poll=%s", buildinfo.Version, workerID, controlURL, authorityPollInterval)
+	log.Printf("tethys-sentinel worker %s id=%s control=%s authority_poll=%s capture_limit=%d", buildinfo.Version, workerID, controlURL, authorityPollInterval, captureLimit)
 
 	for ctx.Err() == nil {
 		didWork, err := runner.RunOnce(ctx)
