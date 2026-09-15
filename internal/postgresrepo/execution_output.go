@@ -39,6 +39,13 @@ func (r *Repository) OutputByID(ctx context.Context, jobID string) (executionout
 	return executionoutput.Clone(out), true, nil
 }
 
+func postgresOutputBytes(value []byte) []byte {
+	if value == nil {
+		return []byte{}
+	}
+	return value
+}
+
 func (l *ExecutionLifecycle) CompleteWithOutput(ctx context.Context, id, claimToken, workerID string, result executionjob.Result, output executionoutput.Output) (executionjob.Job, error) {
 	if err := executionjob.ValidateResult(result); err != nil {
 		return executionjob.Job{}, err
@@ -106,7 +113,7 @@ func (l *ExecutionLifecycle) CompleteWithOutput(ctx context.Context, id, claimTo
 				stderr = EXCLUDED.stderr,
 				stdout_truncated = EXCLUDED.stdout_truncated,
 				stderr_truncated = EXCLUDED.stderr_truncated
-		`, job.ID, output.Stdout, output.Stderr, output.StdoutTruncated, output.StderrTruncated); err != nil {
+		`, job.ID, postgresOutputBytes(output.Stdout), postgresOutputBytes(output.Stderr), output.StdoutTruncated, output.StderrTruncated); err != nil {
 			return executionjob.Job{}, err
 		}
 	}
