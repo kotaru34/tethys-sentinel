@@ -1,10 +1,10 @@
 # Tethys Sentinel — Handoff
 
 Updated: 2026-09-15
-Current development version: `0.1.0-dev.15`
-Branch: `main` (Operator UI WIP merged from `wip/operator-ui` via PR #2)
+Current development version: `0.1.0-dev.16`
+Branch: `wip/agent-http-cli` from accepted `main` base `a4b30f0b418359e6a14c0fc271b464919aa07c66`
 
-Status: dev.15 Operator UI acceptance is complete on the intended infrastructure and the accepted WIP has been merged to `main`. Exact deployed runtime source remains frozen at `41c343e83596d299af05cf92945395ec008f0fd9`; deployed binary hashes are recorded below. Documentation-complete branch head `6aaf813e87f8ed84ae062b7d5dcc95b73bdff986` passed push CI `34910290003` and PR CI `34910423543`; PR #2 merged as `0cbe1e4dbb2d7beb0feb751ca1e42872064578ea`; post-merge `main` CI `34910609193` passed. Real mTLS deployment, Control/BFF integration, credential separation, read-only UI, CSRF/origin/spoofing negatives, grant issue/reveal/revoke, emergency controls, approval deny/allow-once/session-policy, one-shot non-reuse, and a real approved execution all pass. `sentinel-operator.service` is now enabled at boot. Final authority remains fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`.
+Status: dev.15 Operator UI remains the accepted/deployed baseline; dev.16 Agent HTTP API + `sentinelctl` is implemented on the WIP branch and is preparing for constrained infrastructure acceptance. Production has **not** been migrated to dev.16: exact deployed runtime source remains `41c343e83596d299af05cf92945395ec008f0fd9`, PostgreSQL remains schema v2, and authority remains fail-closed at **epoch 5, disabled=true**, reason `dev.15 approval workflow acceptance complete`. The dev.16 candidate adds capability-scoped job/request readback, bounded command output, schema v3, per-command timeout and a first-party secure CLI without changing Signer/target/PVE authority boundaries.
 
 ## Operator-mandated development rules
 
@@ -41,6 +41,8 @@ Status: dev.15 Operator UI acceptance is complete on the intended infrastructure
 - Browser-supplied Authorization/operator identity are ignored; identity is derived from the verified client-cert leaf.
 - BFF has explicit route allowlist, loopback-only Control upstream, no proxy env/redirect following, bounded bodies/responses, same-origin CSRF, strict CSP and no-store.
 - Browser frontend uses no localStorage/sessionStorage and no third-party runtime/CDN.
+- Dev.16 raw execution output is `TRUST_2`, stored separately from the job read model, bounded to 256 KiB per stream and returned only when the exact grant has `history.include_output=true`.
+- Dev.16 agent bearer clients must use verified HTTPS. First-party `sentinelctl` deliberately has no `--token`, no insecure TLS mode, no proxy-env routing and no redirect following.
 
 ## Accepted infrastructure baseline — dev.13
 
@@ -84,7 +86,7 @@ PR #1 merged the accepted core to `main` at `478009b1310b782db7dc20c629bada475c3
 - PR #2 merge commit: `0cbe1e4dbb2d7beb0feb751ca1e42872064578ea`
 - post-merge `main` CI: Actions `34910609193` PASS
 - embedded frontend archive SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`
-- CI pins Node `24.20.0`, npm `11.19.0`, package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95`
+- accepted dev.15 CI pins Node `24.20.0`, npm `11.19.0`, historical resolved package-lock graph SHA-256 `9521cb1e1dab401e0ca9d81653adfd82d1459fe725ebaa5b26a663eff7f5ba95`
 
 ## dev.15 deployed operator boundary
 
@@ -169,34 +171,54 @@ Epoch 4 was enabled only for this controlled acceptance window using grant agent
 
 Epochs 0/1/2/3/4 capabilities are permanently stale after the epoch-5 revoke. Do not enable authority casually.
 
-## Agreed next milestone — Agent HTTP API v1
+## dev.16 Agent HTTP API + `sentinelctl` WIP checkpoint
 
-The canonical agent integration is the capability-scoped HTTPS API, not MCP. `curl` remains the universal low-level client; a first-party Go `sentinelctl` should provide the convenient human/automation CLI. MCP will later be a thin purpose-built adapter over the same HTTP contract, with a deliberately narrow Qwen tool surface.
+The canonical agent integration is now the capability-scoped HTTPS API. `curl` is the raw/reference interface and first-party Go `sentinelctl` is the supported convenient CLI. Do not add parallel convenience protocols in this milestone. MCP comes later as a thin purpose-built adapter over the accepted HTTP contract with a deliberately narrow Qwen tool surface.
 
-Planned Agent HTTP API work:
+Implemented dev.16 surface:
 
-- add capability-scoped job lookup/polling so an agent can follow its own submitted job to a terminal state;
-- provide bounded execution result/output retrieval under an explicit grant permission, without exposing Worker/Signer/SSH/internal credentials;
-- provide idempotent recovery by request ID/job receipt so clients can safely survive disconnects/retries;
-- keep logical targets, structured argv, current risk classification/approval path and security-epoch semantics unchanged;
-- design remote-agent acceptance around a real deploy/test workflow on one narrowly granted VM;
-- solve external agent reachability as a separate transport/deployment concern rather than weakening the Sentinel authorization API;
-- defer generic file transfer until a concrete deployment use case requires it; prefer repository/artifact-driven deployment where practical.
+- Gateway `GET /v1/jobs/{id}` and `GET /v1/requests/{request_id}` with exact capability/grant isolation;
+- public bootstrap advertises job/request resource templates;
+- command submission accepts optional `timeout_seconds`, defaulting to the existing TTL and capped at 900 seconds/grant expiry;
+- request IDs remain immutable idempotency keys; disconnect recovery does not permit rebinding target/argv;
+- `sentinelctl bootstrap`, `exec`, `exec --wait`, `job get`, `job wait`, `request get`, `--json`;
+- generated request IDs when omitted;
+- `exec --wait` survives `approval_required` by retrying the exact same immutable request, then polls the authorized job to terminal state;
+- CLI capability comes from `SENTINEL_CAP` or a protected cap file; there is intentionally no `--token` argv option;
+- first-party client requires HTTPS, verifies TLS, ignores proxy environment routing and refuses redirects/insecure convenience modes;
+- Worker captures bounded stdout/stderr prefixes independently at max 256 KiB per stream while preserving the larger existing output-accounting/abort limit;
+- output is a separate persistence object rather than a field in the general job store/Operator UI read model;
+- output readback is gated by `grant.History.IncludeOutput`; without it the output backend is not consulted at all;
+- JSON uses explicit `stdout_b64` / `stderr_b64` names because arbitrary bytes are base64-encoded;
+- human CLI rendering decodes captured bytes but visibly escapes invalid UTF-8, terminal control sequences and Unicode format/control characters;
+- file-mode output persistence requires a regular non-symlink private store and writes mode `0600`;
+- PostgreSQL schema v3 adds one-to-one `sentinel.execution_job_output` with independent 256 KiB bytea constraints and only SELECT/INSERT/UPDATE for `sentinel_control`;
+- PostgreSQL terminal job state + bounded output + completion audit commit in one transaction; raw output itself is not copied into audit.
 
-Planned `sentinelctl` principles:
+Key dev.16 checkpoints:
 
-- thin 1:1 client over the public Agent HTTP API; it must not invent authority or bypass policy;
-- human-readable output by default plus stable `--json` for agents/scripts;
-- commands such as bootstrap/context, submit/exec, job get/wait, history/notes as permissions permit;
-- `exec --wait` may combine submit + polling but must preserve immutable request IDs and approval semantics;
-- capability must never be accepted as a normal command-line argument; use protected file/stdin/environment mechanisms and never persist it by default;
-- TLS verification is mandatory; no insecure convenience mode;
-- `curl`, `xh`/HTTPie and Hurl remain valid clients for raw API use and acceptance testing.
+- branch base: `a4b30f0b418359e6a14c0fc271b464919aa07c66` (`main`);
+- first job/readback + CLI slice passed full Go race tests before output persistence work;
+- output-store/Worker/PostgreSQL hardening checkpoint `69c1de20e3fdf7b81dcbc7524dafff5f43acffed`, Actions `34918635619` PASS;
+- human-safe CLI output and explicit permission-boundary tests added after that checkpoint;
+- PostgreSQL 15/18 runs on `e514d270821f7e35b7d524508395d4c15093cbee` both PASS, as did Go race tests; that CI run failed only in the independent frontend dependency-graph guard;
+- frontend drift diagnostic proved the reviewed graph change was only transitive `electron-to-chromium` `1.5.427 -> 1.5.428`; dev.16 reviewed graph SHA-256 is now `9b6d418cebaaed94c674ea66429e7d1c9e4f92f269eb53f2bea666109373b964`;
+- embedded Operator frontend archive remains pinned to SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`; CI still requires byte-for-byte generated UI parity;
+- API/CLI contract: `docs/AGENT_HTTP_CLI.md`;
+- schema-v3 development docs: `db/README.md`, `docs/POSTGRESQL_PERSISTENCE.md`;
+- README now distinguishes dev.16 candidate state from the still-deployed dev.15/schema-v2 baseline.
+
+The dev.16 candidate must not be merged merely because CI passes. It materially touches Control/Gateway/Worker/result persistence and therefore requires constrained real-infrastructure acceptance.
 
 ## Current phase / next steps
 
-1. Continue from `main`; next implementation branch should target Agent HTTP API v1 (for example `wip/agent-http-api`).
-2. Write/freeze the Agent HTTP API/job-output security contract before implementation, then bump the development version when the implemented feature becomes the next release candidate.
-3. Keep production authority fail-closed at epoch 5 except for explicit controlled acceptance windows.
-4. Preserve accepted execution/credential/network invariants; materially touched execution/result paths require targeted re-acceptance.
-5. After HTTP API + `sentinelctl` acceptance, implement MCP as a thin adapter and revisit/lock down the exact narrow tool surface specifically for Qwen-class autonomous agents.
+1. Finish CI on the documentation-complete dev.16 branch head; all Go, PostgreSQL 15/18 and frontend/embed guards must be green.
+2. Keep production authority at epoch 5 disabled during deployment preparation.
+3. For constrained dev.16 acceptance, apply reviewed PostgreSQL migration `0003_execution_output.sql` first while authority remains disabled, then deploy exact dev.16 Control, Gateway and Worker binaries. Signer/target wrappers/PVE policy should remain unchanged unless evidence requires otherwise.
+4. Prove both raw `curl` and `sentinelctl` against the real Gateway with CA verification: bootstrap, submit, job polling, request-ID recovery and terminal result.
+5. Use narrowly scoped acceptance grants to prove output hidden with `include_output=false`, visible with `include_output=true`, human terminal sanitization, JSON base64 contract, and one real `exec --wait` end-to-end execution.
+6. Recheck Operator UI after the Control/schema upgrade to ensure raw output did not leak into its job read model.
+7. Finish with grant revoke + global `REVOKE ALL`; accepted authority must again be disabled. If this acceptance window begins by enabling epoch 5, the final revoke should advance to epoch 6.
+8. Any acceptance blocker => fix on branch, bump next development version to dev.17, and repeat relevant acceptance; do not merge dev.16.
+9. Once dev.16 passes constrained acceptance, update README/HANDOFF with exact deployed hashes/evidence, open WIP PR, run PR CI and merge.
+10. Only after HTTP API + `sentinelctl` are accepted/merged should the MCP adapter milestone begin; at that point revisit and lock the exact narrow tool surface for Qwen-class autonomous agents.
