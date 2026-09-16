@@ -67,7 +67,7 @@ func TestMCPClaimRedemptionIsUnauthenticatedOneTimeBootstrapPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	control := &fakeControl{redeemResult: mcpclaim.RedeemResult{
-		Grant: domain.Grant{ID: "grant-from-claim", Agent: "mcp-agent"},
+		Grant:      domain.Grant{ID: "grant-from-claim", Agent: "mcp-agent"},
 		Capability: capToken,
 	}}
 	h := New(control).Handler()
