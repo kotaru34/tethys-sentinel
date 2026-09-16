@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 type Config struct {
 	DSN                    string
