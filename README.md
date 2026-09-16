@@ -116,13 +116,11 @@ Dev.18 provides a deliberately small MCP surface for Qwen-class autonomous agent
 
 ```text
 sentinel.exec
-tsentinel.exec_batch   # see note below
+sentinel.exec_batch
 sentinel.code          # conditional in dev.18; shell-authorized capabilities only
 sentinel.check
 sentinel.output
 ```
-
-The actual tool name is `sentinel.exec_batch`; the leading `t` above is not part of the API.
 
 ### `sentinel.exec`
 
