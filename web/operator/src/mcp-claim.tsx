@@ -154,7 +154,7 @@ function MCPClaimLauncher() {
                 <p class="mcp-claim-warning">This claim is shown once. It expires at {new Date(result.claim.expires_at).toLocaleString()} and is invalid after first redemption.</p>
                 <label class="mcp-claim-field">
                   <span>One-time claim</span>
-                  <textarea readonly rows={3} value={result.claim_code} onFocus={(event) => event.currentTarget.select()} />
+                  <textarea readOnly rows={3} value={result.claim_code} onFocus={(event) => event.currentTarget.select()} />
                 </label>
                 <div class="mcp-claim-actions">
                   <button class="mcp-claim-primary" type="button" onClick={() => void copyClaim()}>Copy claim</button>
