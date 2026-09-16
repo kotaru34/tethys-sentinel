@@ -17,6 +17,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/emergencyapi"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/executionoutput"
+	"github.com/kotaru34/tethys-sentinel/internal/mcpclaim"
 	"github.com/kotaru34/tethys-sentinel/internal/notes"
 	"github.com/kotaru34/tethys-sentinel/internal/operatorview"
 	"github.com/kotaru34/tethys-sentinel/internal/postgresrepo"
@@ -32,6 +33,7 @@ type jobPersistence interface {
 type persistenceBundle struct {
 	caps         *capability.Service
 	grants       controlops.GrantLifecycle
+	mcpClaims    mcpclaim.Lifecycle
 	approvalOps  controlops.ApprovalLifecycle
 	executionOps controlops.ExecutionLifecycle
 	authorizer   controlops.JobAuthorizer
@@ -99,6 +101,7 @@ func openFilePersistence() (*persistenceBundle, error) {
 	return &persistenceBundle{
 		caps:         caps,
 		grants:       controlops.NewLegacyGrantLifecycle(caps, jobStore, auditLog),
+		mcpClaims:    nil, // One-time MCP claims are production PostgreSQL authority only.
 		approvalOps:  controlops.NewLegacyApprovalLifecycle(approvalStore, auditLog),
 		executionOps: controlops.NewLegacyExecutionLifecycle(caps, jobStore, auditLog, outputStore),
 		authorizer:   controlops.NewLegacyJobAuthorizer(caps, approvalStore, jobStore, auditLog),
@@ -129,6 +132,7 @@ func openPostgresPersistence(ctx context.Context) (*persistenceBundle, error) {
 	return &persistenceBundle{
 		caps:         caps,
 		grants:       repo.Grants(),
+		mcpClaims:    repo.MCPClaims(),
 		approvalOps:  repo.ApprovalOperations(),
 		executionOps: repo.ExecutionOperations(),
 		authorizer:   repo.Authorizer(),
