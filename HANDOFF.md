@@ -4,7 +4,7 @@ Updated: 2026-09-16
 Current development version: `0.1.0-dev.18`
 Branch: `wip/mcp-adapter`
 
-Status: `0.1.0-dev.17` remains the deployed and accepted runtime and is merged to `main` via PR #3. PostgreSQL remains schema v3 and `sentinel-operator` remains the accepted `0.1.0-dev.15` binary. Production authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. The dev.18 narrow Qwen-facing MCP adapter is implemented on `wip/mcp-adapter`; branch CI and its frozen reproducible MCP artifact build are green. It is **not deployed or live-accepted yet**. The next gate is constrained MCP acceptance before merge/deployment.
+Status: `0.1.0-dev.17` remains the deployed and accepted backend runtime and is merged to `main` via PR #3. PostgreSQL remains schema v3 and `sentinel-operator` remains the accepted `0.1.0-dev.15` binary. The frozen dev.18 `sentinel-mcp` artifact is now installed on the intended Qwen/MCP client host and constrained live acceptance is in progress against the accepted dev.17 backend. Authority is temporarily enabled under the explicit short-lived dev.18 acceptance grant; it must be globally revoked/disabled again before merge closure. Structured exec, batch, output sanitation/bounds/query, local structured-exec escape rejection and approval/check immutable-request reuse have passed live acceptance so far. Remaining gates are same-session restart recovery, cross-session old-ID rejection, conditional `sentinel.code` exposure/approval under a shell-enabled grant, final revoke/disable, documentation review and merge.
 
 ## Operator-mandated development rules
 
@@ -119,7 +119,7 @@ All acceptance was performed against the topology above with no insecure TLS byp
 - stdout-only job `6270561830345b37b41948b4c90b840f` completed `succeeded`, exit 0. PostgreSQL stored `stdout_bytes=18`, `stderr_bytes=0`, both non-truncated. This directly proves the original NULL/409 defect is fixed.
 - A grant with `history.include_output=false` could read status/result but received no `output`, `stdout_b64` or `stderr_b64` fields.
 - Output-enabled job `057b1288b8d76062ff29bddf5d4c6838` returned `dev17-visible` in human mode and exact base64 `ZGV2MTctdmlzaWJsZQo=` in JSON mode.
-- ANSI test job `ce3ddba7c4473d697173dc76312373f1` rendered escape bytes visibly as `\x1b[31mRED\x1b[0m`; the terminal sequence was not executed.
+- ANSI test job `ce3ddba7c4473d697173dc76312373f1` rendered escape bytes visibly as `\\x1b[31mRED\\x1b[0m`; the terminal sequence was not executed.
 - stderr-only job `d2dad44b89fbc530765f044c0a0c0234` completed as a normal remote failure with exit 2, `error_kind=remote_exit_nonzero`, `stderr_b64` present and stdout absent.
 - `sentinelctl exec --wait` on `FILESYSTEM_DELETE` request `dev17-allowonce-bcd53b541465740f` waited for approval `d82905fb1484ed5a6a32bdf66c404539`, reused the same request ID after `allow_once`, and completed job `19b00dcaa048774266e5982f74517ea6` successfully.
 - A fresh request for the same delete scope returned a fresh approval `a687d0337939978c769a69fc82748fbe`, proving allow-once non-reuse. The later global revoke made all epoch-6 authority stale regardless of any remaining undecided record.
@@ -160,7 +160,21 @@ The Qwen-facing v1 contract is implemented in `cmd/sentinel-mcp` + `internal/mcp
 - Artifact ID `10421722605`, name `tethys-sentinel-mcp-dev18-linux-amd64-6723380e`, uploaded artifact ZIP digest `sha256:46e6069d9afaa93210821aaa2204a787f9f5c85db98109f201b8ecabb898e9a0`.
 - Deterministic MCP tarball `tethys-sentinel-mcp-0.1.0-dev.18-linux-amd64-6723380e.tar.gz` SHA-256: `afa53ab0f89fad9c1079e12ab885849764010ee6ac7d797b590a4e88fed91ce3`.
 - `sentinel-mcp` binary SHA-256: `08a6c1a64db097fb87e00fcc9789433582102f0b17f85253f654f34309070c50`.
-- dev.18 has not yet been deployed or live-accepted. Production authority remains epoch 7 disabled.
+
+## dev.18 live MCP acceptance checkpoint
+
+The exact frozen dev.18 binary above is installed as `/usr/local/bin/sentinel-mcp` on `bs-tethys-core`; its embedded version/source/build metadata and SHA-256 were verified before acceptance. Qwen reaches it through the existing shared `mcp-proxy` using Streamable HTTP at `/servers/sentinel/mcp`.
+
+- `mcp-proxy` initially terminated its whole shared process when `sentinel-mcp` failed bootstrap on an expired capability. The proxy was locally patched with the upstream named-server failure-isolation change (PR #213), its runtime/version was pinned with an `ExecStartPre` integrity guard, a local `LOCAL_PATCHES.md` update policy was installed, and timer/cron searches found no automatic updater. A deliberate invalid-capability test then proved `mcp-proxy.service` remains active, only `sentinel` becomes `failed`, and unrelated named MCP servers remain configured.
+- Grant A is deliberately narrow: target `sentinel-target-test`, `exec=true`, `shell=false`, output history enabled, unrelated permissions disabled. Under this grant `sentinel.code` must not be exposed.
+- Basic structured exec passed end-to-end: operation `op-26a28c511e0562a44bdad144f7d669e5`, job `758d1f8eb00ef4650bf0ffefbc72d9aa`, `printf dev18-exec-ok` -> `succeeded`, exit 0, exact stdout. The journal appeared mode `0600` owned by `kotaru`.
+- Sequential batch passed: operation `op-6ee697091946af4156c78c3775c810ff` produced two successful steps/jobs with exact `dev18-seq-one` and `dev18-seq-two` stdout. Parallel batch operation `op-8497933ac04eecef71c80c30be2e88f0` with two `sleep 2` children produced two successful jobs; functional parallel-path invocation is accepted, while wall-clock concurrency was not independently measured from the returned tool result.
+- Output bounds/query passed: `seq 1 3000` operation `op-94a07c94963154fc9f4f930d36134c64` returned bounded stdout with `stdout_truncated=true`; `sentinel.output` on the same operation with query `1777` returned a bounded excerpt surrounding the match rather than only the default head/tail.
+- Output sanitation passed: ANSI bytes from `printf "\\033[31mRED\\033[0m\n"` were rendered as literal `\\x1b[31mRED\\x1b[0m`, and invalid UTF-8 byte `0xff` was rendered as literal `\\xff`.
+- Structured-exec escape negatives passed for `sh`, `python3`, `ssh` and `sudo`: all four were rejected locally with `command is not permitted through structured exec; use code only when structured execution is insufficient`. Journal SHA-256, size and mtime were unchanged before/after, proving rejection occurred before journal creation/backend submission.
+- Approval/check immutable-request reuse passed using harmless `/tmp/tethys-dev18-approval-test`: `touch` succeeded; `rm -- /tmp/tethys-dev18-approval-test` operation `op-eac53490c794dd71e33c7399e11c6129` returned `awaiting_approval`; its journaled immutable request ID was `req-b0725ee8235de5d208506e7a`; after Operator **Allow once**, `sentinel.check` completed the same operation successfully with exit 0; the journal still contained the identical request ID afterward.
+
+No dev.18 acceptance blocker has been found in the completed tests above.
 
 ## Previous accepted milestones
 
@@ -170,8 +184,9 @@ The Qwen-facing v1 contract is implemented in `cmd/sentinel-mcp` + `internal/mcp
 
 ## Current phase / next step
 
-1. Keep production authority at epoch 7 disabled unless an explicit operator task requires a new constrained window.
-2. dev.18 code CI and frozen reproducible MCP artifact are green (`35032534729` and `35032534792` respectively); do not merge solely on CI because the MCP behavior has not yet been accepted against the intended infrastructure.
-3. Perform constrained MCP acceptance with a fresh short-lived capability: harmless structured exec, batch sequential/parallel, approval wait + `check(id)`, output bounds/escaping/query, structured-exec escape negatives, code conditional exposure/approval, restart recovery and cross-session old-ID rejection.
-4. On successful acceptance, globally revoke/disable authority again, record evidence, review README/docs, then merge the WIP branch. Any acceptance blocker requires the next dev bump rather than merging dev.18.
-5. Grow the model-facing surface only from observed Qwen pain; keep arbitrary `code` exceptional.
+1. Continue only within the explicit constrained dev.18 acceptance window; do not treat the temporary enabled authority as the desired steady state.
+2. Prove same-capability restart recovery: restart the MCP bridge/proxy, reconnect, and `sentinel.check` an existing operation from the durable journal under the same grant/session.
+3. Issue a fresh short-lived shell-enabled Grant B, replace the capability, restart/reconnect, prove an old Grant-A operation ID is rejected cross-session, and verify `sentinel.code` is now conditionally exposed.
+4. Under Grant B, execute harmless Python code through `sentinel.code`, require explicit Operator approval, then `sentinel.check(id)` using the same immutable request ID and verify successful output.
+5. On successful completion, `REVOKE ALL`, disable authority, remove/retire acceptance capability material as appropriate, record final evidence, review README/docs, and merge the WIP branch. Any acceptance blocker requires the next dev bump rather than merging dev.18.
+6. Grow the model-facing surface only from observed Qwen pain; keep arbitrary `code` exceptional.
