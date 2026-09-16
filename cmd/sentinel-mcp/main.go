@@ -86,10 +86,10 @@ func run(ctx context.Context, args []string, stderr io.Writer, lookupEnv func(st
 	}
 
 	provider := &serviceProvider{
-		baseURL: strings.TrimSpace(*urlFlag),
-		caFile: strings.TrimSpace(*caFile),
-		capFile: strings.TrimSpace(*capFile),
-		journal: journal,
+		baseURL:   strings.TrimSpace(*urlFlag),
+		caFile:    strings.TrimSpace(*caFile),
+		capFile:   strings.TrimSpace(*capFile),
+		journal:   journal,
 		lookupEnv: lookupEnv,
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "tethys-sentinel", Version: buildinfo.Version}, nil)
@@ -116,9 +116,9 @@ func (p *serviceProvider) service(ctx context.Context) (*mcpadapter.Service, err
 		return nil, fmt.Errorf("Sentinel capability unavailable: %w", err)
 	}
 	client, err := agentclient.New(agentclient.Config{
-		BaseURL: p.baseURL,
+		BaseURL:    p.baseURL,
 		Capability: capToken,
-		CAFile: p.caFile,
+		CAFile:     p.caFile,
 	})
 	if err != nil {
 		return nil, err
@@ -211,8 +211,8 @@ func runHTTP(ctx context.Context, stderr io.Writer, server *mcp.Server, listen, 
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return server
 	}, &mcp.StreamableHTTPOptions{
-		Stateless: true,
-		MaxRequestBodyBytes: maxMCPFrameBytes,
+		Stateless:                    true,
+		MaxRequestBodyBytes:          maxMCPFrameBytes,
 		PropagateRequestCancellation: true,
 	})
 	mux := http.NewServeMux()
@@ -224,10 +224,10 @@ func runHTTP(ctx context.Context, stderr io.Writer, server *mcp.Server, listen, 
 	})
 
 	httpServer := &http.Server{
-		Addr: listen,
-		Handler: mux,
+		Addr:              listen,
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout: 2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
 	}
 	shutdownDone := make(chan struct{})
 	go func() {
