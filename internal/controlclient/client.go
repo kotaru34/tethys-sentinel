@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/kotaru34/tethys-sentinel/internal/controlapi"
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
+	"github.com/kotaru34/tethys-sentinel/internal/mcpclaim"
 )
 
 type Client struct {
@@ -29,6 +31,14 @@ func (c *Client) Introspect(ctx context.Context, hash [32]byte) (domain.Grant, e
 		return domain.Grant{}, err
 	}
 	return response.Grant, nil
+}
+
+func (c *Client) RedeemMCPClaim(ctx context.Context, hash [32]byte) (mcpclaim.RedeemResult, error) {
+	var response mcpclaim.RedeemResult
+	if err := c.post(ctx, "/internal/v1/mcp/claims/redeem", controlapi.RedeemMCPClaimRequest{CodeHash: hash}, &response); err != nil {
+		return mcpclaim.RedeemResult{}, err
+	}
+	return response, nil
 }
 
 func (c *Client) SubmitCommand(ctx context.Context, hash [32]byte, requestID, target string, argv []string, agentReason string, timeoutSeconds int64) (internalapi.SubmitCommandResponse, error) {
