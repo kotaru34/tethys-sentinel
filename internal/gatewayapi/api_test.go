@@ -13,6 +13,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
 	"github.com/kotaru34/tethys-sentinel/internal/executionjob"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
+	"github.com/kotaru34/tethys-sentinel/internal/mcpclaim"
 	"github.com/kotaru34/tethys-sentinel/internal/risk"
 )
 
@@ -22,10 +23,16 @@ type fakeControl struct {
 	timeoutSeconds int64
 	jobs           map[string]internalapi.AgentExecutionJob
 	requests       map[string]internalapi.AgentExecutionJob
+	claimRedeems   int
+	redeemResult   mcpclaim.RedeemResult
 }
 
 func (f *fakeControl) Introspect(context.Context, [32]byte) (domain.Grant, error) {
 	return f.grant, nil
+}
+func (f *fakeControl) RedeemMCPClaim(context.Context, [32]byte) (mcpclaim.RedeemResult, error) {
+	f.claimRedeems++
+	return f.redeemResult, nil
 }
 func (f *fakeControl) SubmitCommand(_ context.Context, _ [32]byte, requestID, target string, argv []string, _ string, timeoutSeconds int64) (internalapi.SubmitCommandResponse, error) {
 	f.submits++
@@ -48,6 +55,36 @@ func (f *fakeControl) GetExecutionJobByRequest(_ context.Context, _ [32]byte, re
 		return internalapi.AgentExecutionJob{}, context.Canceled
 	}
 	return job, nil
+}
+
+func TestMCPClaimRedemptionIsUnauthenticatedOneTimeBootstrapPath(t *testing.T) {
+	_, claimCode, _, err := mcpclaim.Generate(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capToken, _, err := capability.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := &fakeControl{redeemResult: mcpclaim.RedeemResult{
+		Grant: domain.Grant{ID: "grant-from-claim", Agent: "mcp-agent"},
+		Capability: capToken,
+	}}
+	h := New(control).Handler()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/mcp/claims/redeem", strings.NewReader(`{"claim_code":"`+claimCode+`"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || control.claimRedeems != 1 || !strings.Contains(rr.Body.String(), `"capability":"`) {
+		t.Fatalf("redeem status=%d calls=%d body=%s", rr.Code, control.claimRedeems, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/mcp/claims/redeem", strings.NewReader(`{"claim_code":"not-a-claim"}`))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized || control.claimRedeems != 1 {
+		t.Fatalf("invalid claim status=%d calls=%d body=%s", rr.Code, control.claimRedeems, rr.Body.String())
+	}
 }
 
 func TestBootstrapSubmitAndJobReadback(t *testing.T) {
