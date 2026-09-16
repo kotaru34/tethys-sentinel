@@ -70,6 +70,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, lookupEnv
 		printUsage(stdout)
 		return 0
 	}
+	if rest[0] == "mcp" {
+		return runMCP(ctx, rest[1:], *urlFlag, *caFile, *capFile, *jsonOutput, stdout, stderr, lookupEnv)
+	}
 
 	capToken, err := loadCapability(*capFile, lookupEnv)
 	if err != nil {
@@ -488,9 +491,11 @@ commands:
   job get <JOB-ID>
   job wait <JOB-ID> [--poll 1s]
   request get <REQUEST-ID>
+  mcp claim [--claim-file PATH]
 
 Captured output is shown only when the grant has history.include_output=true.
 Human output escapes terminal control sequences; --json returns byte-exact base64 fields.
-A capability is read from --cap-file/SENTINEL_CAP_FILE or SENTINEL_CAP.
-There is intentionally no --token argument and no insecure TLS mode.`)
+Normal commands read a capability from --cap-file/SENTINEL_CAP_FILE or SENTINEL_CAP.
+The mcp claim command redeems a one-time operator claim without requiring an existing capability and atomically installs the new capability.
+There is intentionally no --token or --claim-code argument and no insecure TLS mode.`)
 }
