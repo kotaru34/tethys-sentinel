@@ -101,6 +101,7 @@ func (p *Proxy) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/v1/grants/{id}", p.readID("/admin/v1/grants/"))
 	mux.HandleFunc("POST /api/v1/grants", p.mutate("/admin/v1/grants"))
 	mux.HandleFunc("POST /api/v1/grants/{id}/revoke", p.mutateID("/admin/v1/grants/", "/revoke"))
+	mux.HandleFunc("POST /api/v1/mcp/claims", p.mutate("/admin/v1/mcp/claims"))
 	mux.HandleFunc("GET /api/v1/approvals", p.read("/admin/v1/approvals"))
 	mux.HandleFunc("POST /api/v1/approvals/{id}/decision", p.mutateID("/admin/v1/approvals/", "/decision"))
 	mux.HandleFunc("GET /api/v1/jobs", p.read("/admin/v1/jobs"))
