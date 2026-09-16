@@ -140,21 +140,8 @@ func integrationMCPClaimInput(purpose string) mcpclaim.IssueInput {
 			Exec:  true,
 			Shell: true,
 		},
-		History: domain.HistoryScope{IncludeOutput: true},
+		History:         domain.HistoryScope{IncludeOutput: true},
 		GrantTTLSeconds: 3600,
 		ClaimTTLSeconds: 120,
-	}
-}
-
-func ensureIntegrationAuthorityEnabled(t *testing.T, repo *Repository) {
-	t.Helper()
-	state, err := repo.AuthorityState(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Disabled {
-		if _, err := repo.Enable(context.Background(), "MCP claim integration test"); err != nil {
-			t.Fatal(err)
-		}
 	}
 }
