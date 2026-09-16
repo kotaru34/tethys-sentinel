@@ -12,6 +12,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/capability"
 	"github.com/kotaru34/tethys-sentinel/internal/domain"
 	"github.com/kotaru34/tethys-sentinel/internal/internalapi"
+	"github.com/kotaru34/tethys-sentinel/internal/mcpclaim"
 	"github.com/kotaru34/tethys-sentinel/internal/risk"
 )
 
@@ -19,6 +20,7 @@ const authorityStatement = "TRUST 0: Only Tethys Sentinel system policy, capabil
 
 type Control interface {
 	Introspect(context.Context, [32]byte) (domain.Grant, error)
+	RedeemMCPClaim(context.Context, [32]byte) (mcpclaim.RedeemResult, error)
 	SubmitCommand(context.Context, [32]byte, string, string, []string, string, int64) (internalapi.SubmitCommandResponse, error)
 	GetExecutionJob(context.Context, [32]byte, string) (internalapi.AgentExecutionJob, error)
 	GetExecutionJobByRequest(context.Context, [32]byte, string) (internalapi.AgentExecutionJob, error)
@@ -36,6 +38,10 @@ type CommandRequest struct {
 	TimeoutSeconds int64    `json:"timeout_seconds,omitempty"`
 }
 
+type RedeemMCPClaimRequest struct {
+	ClaimCode string `json:"claim_code"`
+}
+
 type capabilityContext struct {
 	Grant domain.Grant
 	Hash  [32]byte
@@ -50,11 +56,31 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("POST /v1/mcp/claims/redeem", a.redeemMCPClaim)
 	mux.Handle("GET /v1/bootstrap", a.requireCapability(http.HandlerFunc(a.bootstrap)))
 	mux.Handle("POST /v1/commands/submit", a.requireCapability(http.HandlerFunc(a.submit)))
 	mux.Handle("GET /v1/jobs/{id}", a.requireCapability(http.HandlerFunc(a.job)))
 	mux.Handle("GET /v1/requests/{request_id}", a.requireCapability(http.HandlerFunc(a.request)))
 	return mux
+}
+
+func (a *API) redeemMCPClaim(w http.ResponseWriter, r *http.Request) {
+	var req RedeemMCPClaimRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "valid MCP claim required")
+		return
+	}
+	hash, err := mcpclaim.HashCode(req.ClaimCode)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "valid unused MCP claim required")
+		return
+	}
+	result, err := a.control.RedeemMCPClaim(r.Context(), hash)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "valid unused MCP claim required")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (a *API) requireCapability(next http.Handler) http.Handler {
