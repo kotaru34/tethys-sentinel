@@ -1,168 +1,170 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-15
-Current development version: `0.1.0-dev.17`
-Branch: `main`
+Updated: 2026-09-16
+Current accepted development version: `0.1.0-dev.18`
+Branch: `wip/mcp-adapter`
 
-Status: `0.1.0-dev.17` is deployed, has passed constrained real-infrastructure Agent HTTP/`sentinelctl` acceptance on the intended PVE topology, and is merged to `main` via PR #3. PostgreSQL is schema v3. `sentinel-operator` remains the accepted `0.1.0-dev.15` binary, unchanged. Final authority is deliberately fail-closed at **security epoch 7, disabled=true**, reason `dev.17 Agent HTTP CLI acceptance complete`. Post-merge `main` CI passed. The next product milestone is the deliberately narrow MCP adapter over the accepted HTTP contract; its initial Qwen-class tool surface is now locked in `docs/MCP_ADAPTER_DESIGN.md`.
+## Status
+
+`0.1.0-dev.18` MCP acceptance is complete. The frozen `sentinel-mcp` artifact was installed on the intended AI/MCP client host and exercised against the accepted dev.17 backend. All planned functional gates passed without an acceptance blocker.
+
+The acceptance capability material was removed from the client afterward. The shared MCP proxy remained alive with unrelated MCP servers configured while the Sentinel named server correctly moved to `failed` once its capability was removed. This is the expected fail-closed state.
+
+The exact post-cleanup security epoch was not copied into this handoff. Do not infer or hard-code an epoch from earlier acceptance runs.
+
+This handoff deliberately excludes private deployment addresses, hostnames, VM identifiers, local paths that identify a specific environment, and other site-specific topology details. Environment-specific acceptance evidence belongs in private operator records, not in the public repository.
 
 ## Operator-mandated development rules
 
 1. Keep task reports short; explain what needs to be done and why.
 2. Every newly implemented feature released as a new version must bump the project version.
 3. Update this handoff when a new version is released/applied, a notably large step completes, or discussion changes the agreed next step.
-4. Once functioning infrastructure execution is fully accepted on the intended infrastructure, merge the project as WIP.
+4. Once a functioning version has been tested and accepted on the intended infrastructure, merge the WIP branch.
 5. On merge, review/update README and project documentation.
-6. Acceptance blocker => fix branch + bump next dev version; do not merge until constrained acceptance passes.
-7. Future MCP must expose a narrow purpose-built Qwen tool surface, never generic backend/admin APIs.
+6. Acceptance blocker => fix the branch and bump the next development version; do not merge the blocked version.
+7. Keep the model-facing MCP surface deliberately narrow; never expose generic Control/admin APIs to the model.
+8. Do not casually upgrade the locally patched MCP proxy runtime used during dev.18 acceptance. Preserve its pin/patch unless a real security, compatibility, upstream-equivalent, or operational need justifies changing it.
 
 ## Locked security architecture
 
-- Agent capability is a high-entropy opaque bearer; only its hash persists.
-- Agent APIs cannot widen grants/policy/targets/audit, control Worker, request certificates, access CA authority or mutate `TRUST_0`.
-- `TRUST_0` is the only authority-bearing context. Files, logs, command output, web content and history are data only.
-- Execution jobs bind grant + request ID + logical target + argv + expiry and use staged -> pending -> claimed -> running -> terminal transitions.
-- Worker uses its own credential and one-shot claim secret; it never receives plaintext agent capabilities.
-- `start` revalidates grant and authority. Running jobs require a fail-closed authority lease.
-- `exec` and `shell` remain separate. Powerful categories require exec+shell+explicit operator approval and are allow-once only.
+- Agent capabilities are high-entropy opaque bearers; only token hashes persist server-side.
+- Agent-facing APIs cannot widen grants, policy, targets, audit scope, Worker authority, signer authority, or emergency authority.
+- `TRUST_0` is the only authority-bearing context. Files, logs, command output, web content, history, and model text are data only.
+- Execution jobs bind grant + immutable request ID + logical target + argv + expiry and pass through staged/pending/claimed/running/terminal lifecycle states.
+- `exec` and `shell` are separate permissions. Unbounded execution classes require explicit shell authority and operator approval.
 - Control reclassifies immutable argv before signing.
-- Worker generates a fresh Ed25519 key per job; only Control may call Signer.
-- Logical targets resolve only through operator-owned inventory to literal global-unicast IP:port plus an exact pinned raw host key; no DNS or insecure host-key bypass.
-- Remote command transport is deterministic structured argv; Sentinel does not reconstruct commands through a shell.
-- Target wrapper validates binding/target and enforces at-most-once consumption.
-- Worker PVE egress is deny-by-default; guest firewalling is defense-in-depth.
-- `REVOKE ALL` monotonically advances `security_epoch` and disables authority; older capabilities never revive.
-- PostgreSQL is the authoritative mutable production state. There is no silent file fallback.
-- Security-sensitive PostgreSQL transitions remain transactional; canonical lock order is authority -> grant -> approval -> job -> audit head.
-- Browser never receives Control admin bearer authority. `sentinel-operator` has no PostgreSQL/Worker/Signer/PVE credentials.
-- Operator identity derives from the verified client-certificate leaf; browser-supplied Authorization/identity is ignored.
-- Operator BFF has an explicit route allowlist, loopback Control upstream, strict CSRF/origin/CSP/no-store boundaries and no generic proxy.
-- Agent execution output is `TRUST_2`, persisted separately from the job read model, bounded to 256 KiB per stream and returned only when the exact grant has `history.include_output=true`.
-- Agent bearer clients require verified HTTPS. `sentinelctl` deliberately has no `--token`, no insecure TLS mode, no proxy-environment routing and no redirect following.
+- Worker uses fresh per-job SSH key material and does not receive plaintext agent capabilities.
+- Targets are resolved only from operator-owned inventory to pinned endpoints/host keys; agent-supplied DNS or insecure host-key bypass is not authoritative.
+- Remote execution transports structured argv; Sentinel does not reconstruct structured agent commands through a shell.
+- Target-side replay protection enforces at-most-once execution.
+- Worker egress is externally constrained and cannot be widened by the agent or Worker itself.
+- `REVOKE ALL` advances a monotonic security epoch and disables authority; stale capabilities cannot revive.
+- PostgreSQL is the authoritative mutable production security state; production failure is fail-closed.
+- Browser operator access is isolated behind the dedicated Operator BFF with certificate-derived identity and strict browser security boundaries.
+- Raw execution output is bounded, permission-gated, treated as untrusted data, and kept out of the normal Operator job read model.
 
-## Accepted topology
+## Accepted baseline before MCP
 
-PVE `ai-server`, VLAN 1520 / `10.169.2.0/24`:
+The accepted backend remains the dev.17 Agent HTTP / `sentinelctl` milestone:
 
-- Control VM 1310 — `10.169.2.210`
-- Gateway VM 1320 — `10.169.2.211`
-- Worker VM 1330 — `10.169.2.212`
-- Signer VM 1340 — `10.169.2.213`
-- Target-test VM 1350 — `10.169.2.214`
-- PostgreSQL — `10.169.2.6:5432`, PostgreSQL 18.6, TLS verify-full, schema v3
+- Control/Gateway/Worker/`sentinelctl`: `0.1.0-dev.17`
+- Operator UI/BFF: accepted dev.15 baseline retained unchanged
+- PostgreSQL schema: v3
+- accepted dev.17 runtime source: `4728a86abc49bf2a686c588a3878288a36f44f7d`
+- dev.17 merge: PR #3
 
-Signer CA fingerprint: `SHA256:pIfrpoGeNiKBtZrqzhOaFdIQknQrPsmIP3NiysW7opI`.
-Target host-key fingerprint: `SHA256:cfRNJVXjQWQhmNCnLaIQtMZIxYrZoJ7zWlWPU0HAmGM`.
-Worker PVE policy remains `policy_in=ACCEPT`, `policy_out=DROP`, with outbound runtime access only to Control `10.169.2.210:9091/tcp` and target-test `10.169.2.214:22/tcp`.
-
-## Accepted/deployed runtime
-
-Frozen dev.17 runtime source:
-
-`4728a86abc49bf2a686c588a3878288a36f44f7d`
-
-CI on that source: Actions `35000514153` PASS. The artifact workflow commit is `d32145acab45139123b4996e1fc5b0a93b0979de`; normal CI Actions `35000746655` PASS and reproducible artifact Actions `35000746762` PASS. Artifact ID `10409765901`, name `tethys-sentinel-dev17-linux-amd64-4728a86a`.
-
-Deployed hashes:
-
-- `sentinel-control` dev.17: `89a66f2f905dabcc804a858c7fdfc5ebf3ad38ec9e425acf8fc4eeab748c9f0e`
-- `sentinel-gateway` dev.17: `53f6952a6a10854008486dc57ea23fcbdc3852b2cfb44ee75b799feecbad9bde`
-- `sentinel-worker` dev.17: `4874c0a0ae034d1b928dcaf06da72f2761c918f6255d68fb5af17ef2867e2317`
-- `sentinelctl` dev.17: `0df406f08f3ddd8388e6cfb5e0be33a50a7cec9195b5152f431a5f566b983bc5`
-- `sentinel-operator` remains accepted dev.15: `ea50c402b93d39e592f18106b3340b8615ede04e94e9957eb2f27abde236956c`
-
-The deterministic dev.17 tarball used for deployment had SHA-256 `d9ed43c237b85046a3c6913354154354cff75aa36201d4b95078aa9bcae0c058`.
-
-Preserved local rollback binaries include the exact dev.16 Control/Gateway/Worker binaries:
-
-- Control dev.16 `d9708e74b9e05124d2bd1304ee1736faf1e58b0e72fe8b0d1956337697ab1db2`
-- Gateway dev.16 `a1971546ebe36ddfa07f88c07d48139f013fdc749a931e52547cc3ab37aa5fcb`
-- Worker dev.16 `014f0f22be23724cbd3de5a534323831acb5abfcfcd3a55749b42a31101ea9dd`
-
-The original pre-schema-v3 rollback dump remains `/var/backups/tethys-sentinel/pre-dev16-schema-v2-20260915_160623.dump`, SHA-256 `6cdd756ae979753695becc9627b095f7a1cd35ed79bd8774ec198c6076416cf4`. A sealed same-cluster pre-dev16 clone also exists; its exact name is recorded on the database host rather than duplicated here.
-
-## Agent HTTP API + `sentinelctl`
-
-Canonical agent integration is the capability-scoped HTTPS Gateway API. `curl` is the raw/reference client and `sentinelctl` is the first-party convenience client. MCP must later wrap this accepted contract rather than create another authority model.
-
-Accepted surface includes:
+The Agent HTTP contract remains the canonical authority boundary beneath MCP:
 
 - `GET /v1/bootstrap`
 - `POST /v1/commands/submit`
 - `GET /v1/jobs/{id}`
 - `GET /v1/requests/{request_id}`
-- optional per-command timeout, default 30 seconds, explicit 1..900 seconds and clamped to grant expiry
-- idempotent immutable request IDs
-- `sentinelctl bootstrap`, `exec`, `exec --wait`, `job get`, `job wait`, `request get`, `--json`
-- approval-aware `exec --wait` that retries the same immutable request ID
-- bounded stdout/stderr capture, separately persisted and permission-gated
-- byte-exact JSON base64 fields and safe human terminal rendering
 
-Contract: `docs/AGENT_HTTP_CLI.md`.
+MCP is an adapter over this contract; it does not introduce a second authority model.
 
-## dev.16 acceptance blocker and dev.17 fix
+## dev.18 MCP implementation
 
-The initial dev.16 live acceptance found job `732318c707a961fa3061e0fb55ccac03` stuck in `running` after a harmless stdout-only `printf`. Worker logged `execution job completion rejected with status 409`.
+Frozen runtime source used to build the accepted MCP artifact:
 
-Root cause: one-sided captured output could carry a nil `[]byte` for the empty stream; the PostgreSQL driver represented it as SQL `NULL`, while `sentinel.execution_job_output.stdout/stderr` are `NOT NULL`. The completion transaction rolled back, leaving the job running.
+`6723380e3bc469d45d94ced1d6d96fc4b786eed9`
 
-dev.17 fixes this by normalizing one-sided output to zero-length `bytea` and adds PostgreSQL regression coverage for stdout-only and stderr-only completion. It also reaps expired `pending`, `claimed` and `running` jobs during Worker claim processing so a failed terminalization cannot remain permanently running.
+Accepted Linux/amd64 `sentinel-mcp` binary SHA-256:
 
-## dev.17 real-infrastructure acceptance evidence
+`08a6c1a64db097fb87e00fcc9789433582102f0b17f85253f654f34309070c50`
 
-All acceptance was performed against the topology above with no insecure TLS bypass and with authority deliberately constrained.
+The dev.18 MCP adapter provides:
 
-- PostgreSQL remained schema v3 after the dev.17 binary-only redeploy.
-- Control/Gateway/Worker started as `0.1.0-dev.17`; Operator remained `0.1.0-dev.15`.
-- Authority began epoch 6 disabled after the dev.16 blocker closure.
-- On controlled epoch-6 enable, the old dev.16 stuck job automatically transitioned `running -> expired`, set `completed_at`, `result_success=false`, `result_exit_code=-1`, `error_kind=job_expired`, and cleared the claim hash without creating an output row.
-- stdout-only job `6270561830345b37b41948b4c90b840f` completed `succeeded`, exit 0. PostgreSQL stored `stdout_bytes=18`, `stderr_bytes=0`, both non-truncated. This directly proves the original NULL/409 defect is fixed.
-- A grant with `history.include_output=false` could read status/result but received no `output`, `stdout_b64` or `stderr_b64` fields.
-- Output-enabled job `057b1288b8d76062ff29bddf5d4c6838` returned `dev17-visible` in human mode and exact base64 `ZGV2MTctdmlzaWJsZQo=` in JSON mode.
-- ANSI test job `ce3ddba7c4473d697173dc76312373f1` rendered escape bytes visibly as `\x1b[31mRED\x1b[0m`; the terminal sequence was not executed.
-- stderr-only job `d2dad44b89fbc530765f044c0a0c0234` completed as a normal remote failure with exit 2, `error_kind=remote_exit_nonzero`, `stderr_b64` present and stdout absent.
-- `sentinelctl exec --wait` on `FILESYSTEM_DELETE` request `dev17-allowonce-bcd53b541465740f` waited for approval `d82905fb1484ed5a6a32bdf66c404539`, reused the same request ID after `allow_once`, and completed job `19b00dcaa048774266e5982f74517ea6` successfully.
-- A fresh request for the same delete scope returned a fresh approval `a687d0337939978c769a69fc82748fbe`, proving allow-once non-reuse. The later global revoke made all epoch-6 authority stale regardless of any remaining undecided record.
-- Operator Jobs screenshots confirmed the read model exposes exact argv, lifecycle, result and output SHA-256 only; raw stdout/stderr/base64 content did not appear, including for the visible-output, ANSI and stderr-only jobs.
-- Capability files were removed from the acceptance client.
-- Final global `REVOKE ALL` reason `dev.17 Agent HTTP CLI acceptance complete` advanced authority to **epoch 7, disabled=true**. Every epoch-6 capability is permanently stale.
+- `sentinel.exec(target, argv, timeout_seconds?)`
+- `sentinel.exec_batch(target, commands, parallel?)`
+- conditional `sentinel.code(target, source, timeout_seconds?)`
+- `sentinel.check(id)`
+- `sentinel.output(id, step?, query?)`
 
-This closes the Agent HTTP/CLI constrained acceptance. No dev.17 runtime acceptance blocker remains.
+Key implementation properties:
 
-## Merge checkpoint
+- official Go MCP SDK `v1.8.0`;
+- stdio transport with an explicit 1 MiB input-frame ceiling;
+- structured exec uses the shared Sentinel risk classifier locally and rejects shell/interpreter/remote-exec/privilege-launcher escape classes before journaling or backend submission;
+- `code` is adapter-owned Python execution via exact `python3 -c <source>` and requires shell authority plus normal backend approval semantics;
+- a versioned mode-0600 durable operation journal persists complete operations and immutable request IDs before any backend submission;
+- journal records bind operations to the exact capability session;
+- `check(id)` reuses immutable request IDs and rejects cross-session operation recovery;
+- `output(...)` is read-only and bounded;
+- returned output is escaped before bounding so ANSI/control/format/invalid-UTF-8 bytes cannot survive as active terminal/control sequences;
+- model-facing results intentionally omit backend authority internals such as grant IDs, approval IDs, epochs, and policy hashes.
 
-- PR #3 `WIP: Agent HTTP API + sentinelctl accepted as dev.17` passed PR CI Actions `35007376760` across Go test/vet/tidy/format, PostgreSQL 15, PostgreSQL 18 and Operator frontend checks.
-- The final pre-merge frontend graph drift was reviewed before changing the guard: only `baseline-browser-mapping` `2.11.23 -> 2.11.24` and `electron-to-chromium` `1.5.428 -> 1.5.429` changed. The reviewed graph SHA-256 is `7a60e35fc4ab70216dd4b7c2073d545f78c7f9f7ea2aabdf20b95e2a6a4981d2`.
-- The frontend job then rebuilt/typechecked successfully and verified the generated Operator UI remained byte-for-byte identical to embedded archive SHA-256 `9ae64c375e26d76d101cbdfe3db916296ff39237a5fc67bef4bf7aff99cef711`.
-- PR #3 merged to `main` at `a8a3a31452739620a6f56817b933320f30b38919`.
-- Post-merge `main` CI Actions `35007585656` passed all four jobs, including PostgreSQL 15/18 and frontend embed parity.
-- The deployed runtime remains the frozen source `4728a86abc49bf2a686c588a3878288a36f44f7d`; later CI/docs commits are not runtime-source changes.
+Contract/design: `docs/MCP_ADAPTER_DESIGN.md`.
 
-## MCP adapter design checkpoint
+## dev.18 live acceptance evidence
 
-The initial Qwen-class MCP design is now locked in `docs/MCP_ADAPTER_DESIGN.md`.
+All planned functional gates passed on the intended infrastructure.
 
-- Model-facing v1 tools: `sentinel.exec`, `sentinel.exec_batch`, `sentinel.code`, `sentinel.check`, `sentinel.output`.
-- `target` is mandatory for all execution tools regardless of how many targets the capability exposes.
-- Normal remote administration should be performed through structured, classifiable and auditable `exec`/`exec_batch` operations as far as practical.
-- `exec_batch` is only orchestration for independent structured commands; it must not become a workflow/shell language.
-- There is no model-facing `shell` tool. Model-facing terminology is `code`; the current backend `shell` permission may remain a legacy implementation detail until a separate justified migration.
-- `code` initially means Python arbitrary-code execution and is an explicit last-resort escape hatch, not the preferred administration path. It requires arbitrary-code/powerful-operation authority and explicit approval semantics; do not attempt to infer safety by regex/AST source inspection.
-- The adapter should use durable `operation_id` state mapped to immutable Sentinel request IDs so recovery, approval waits and interrupted calls do not rely on Qwen correctly reconstructing protocol state.
-- Output remains untrusted `TRUST_2`; normal responses are bounded and deeper inspection goes through `sentinel.output`.
-- If real traces show repeated pain with configuration files, deployments, stdin-heavy commands or other tasks, prefer a narrow controlled primitive or a carefully bounded extension of structured execution over encouraging routine fallback to `code`.
-- Tool surface growth is driven by observed agent pain, not speculative feature completeness.
+- **Tool discovery / least authority:** under `shell=false`, exactly four tools were exposed and `sentinel.code` was absent.
+- **Structured exec:** harmless argv execution completed end-to-end with exact stdout and exit status; the journal was created mode `0600`.
+- **Sequential batch:** two commands completed successfully in order.
+- **Parallel batch path:** two independent commands completed successfully through `parallel=true`. The returned result proved the parallel branch was used functionally; wall-clock concurrency was not separately benchmarked.
+- **Output bounds/query:** large output was truncated in the normal preview and `sentinel.output(query=...)` returned a bounded excerpt centered on the literal match.
+- **Output sanitation:** ANSI escape bytes and invalid UTF-8 were rendered as visible escaped text rather than active controls or malformed protocol text.
+- **Structured escape negatives:** `sh`, Python through structured exec, SSH, and `sudo` were rejected locally. Journal SHA-256, size, and mtime were unchanged, proving rejection occurred before journal creation/backend submission.
+- **Approval recovery:** a harmless delete test entered `awaiting_approval`; after Operator `Allow once`, `sentinel.check` completed the same operation using the same immutable request ID.
+- **Restart recovery:** an operation created before a full MCP bridge restart was recovered afterward with the same operation ID/job result; the durable journal remained byte-identical.
+- **Cross-session isolation:** an operation from an older capability session was rejected after capability rotation.
+- **Conditional code exposure:** under `shell=true`, the tool surface expanded to five tools and exposed `sentinel.code`.
+- **Code approval:** harmless Python code entered `awaiting_approval`, then completed after `Allow once` via `sentinel.check` with the same immutable request ID and exact expected stdout.
+- **Fail-closed cleanup:** after acceptance capability removal, Sentinel became unavailable while the shared proxy and unrelated MCP servers remained available.
 
-## Previous accepted milestones
+No dev.18 MCP acceptance blocker remains.
 
-- Core execution/security baseline merged as PR #1 at `478009b1310b782db7dc20c629bada475c3f3d63`.
-- Operator UI dev.15 passed browser mTLS, cert-derived identity, credential separation, read-only views, CSRF/origin/spoofing negatives, grant/emergency mutation and approval semantics. PR #2 merged at `0cbe1e4dbb2d7beb0feb751ca1e42872064578ea`.
-- Operator configuration remains isolated under `/etc/tethys-sentinel-operator`; `/etc/tethys-sentinel` remains the Control boundary.
+## Shared MCP proxy note
 
-## Current phase / next step
+During dev.18 acceptance the existing shared `mcp-proxy` had an upstream startup-isolation defect: one failing named stdio server could terminate the shared proxy. A local patch equivalent to upstream PR #213 was applied and pinned. Regression testing proved that an invalid/expired Sentinel capability now marks only Sentinel failed while unrelated MCP servers remain available.
 
-1. Keep production authority at epoch 7 disabled unless an explicit operator task requires a new constrained window.
-2. Agent HTTP API + `sentinelctl` are accepted, deployed and merged to `main`; the MCP v1 design is now locked.
-3. When implementation starts, branch from `main`, bump the development version for the MCP feature, and implement the narrow adapter described in `docs/MCP_ADAPTER_DESIGN.md` rather than mirroring raw HTTP/backend mechanics.
-4. Bias implementation and later tuning toward making diagnosis, deployment, configuration, config changes, monitoring and routine administration succeed through controlled structured execution. Treat arbitrary `code` as the exceptional escape hatch.
-5. Add new model-facing powers only after real Qwen traces demonstrate a repeated gap that the existing controlled primitives cannot address cleanly.
+This patch was necessary for dev.18 acceptance, but the next architecture should remove Sentinel from the shared proxy dependency entirely rather than building more coupling around it.
+
+## Next milestone — dev.19 MCP usability
+
+The next implementation milestone is `0.1.0-dev.19` and addresses two observed usability/robustness problems.
+
+### 1. Capability issue/rotation without MCP restart
+
+Short-lived capabilities remain a security property; the solution must not silently turn them into renewable long-lived authority.
+
+Target UX:
+
+- Operator creates/rotates a narrow MCP grant/profile.
+- A short-lived one-time claim mechanism transfers the resulting capability to the MCP client without exposing it in shell history or logs.
+- The client stores capability material atomically with strict file permissions.
+- Capability replacement is detected/loaded by the running Sentinel MCP process; no process restart is required.
+- Capability expiry remains visible and fail-closed; no hidden refresh token automatically extends authority.
+
+### 2. Native stable Sentinel MCP endpoint
+
+Sentinel should run its own long-lived Streamable HTTP MCP endpoint using the official Go MCP SDK instead of being a stdio child of the shared Python proxy.
+
+Requirements:
+
+- dedicated Sentinel MCP process and stable HTTP URL;
+- no shared-proxy restart when a Sentinel capability changes;
+- no outage for unrelated MCP servers when Sentinel is unavailable;
+- Sentinel process remains alive when no capability is installed or a capability expires;
+- capability/bootstrap state is resolved at tool-call time or through a reloadable capability manager;
+- **stable five-tool surface** throughout a chat session: `exec`, `exec_batch`, `code`, `check`, `output` remain discoverable;
+- `sentinel.code` must return a clear authorization error when the current capability lacks shell authority instead of appearing/disappearing from tool discovery;
+- backend policy remains authoritative; stable discovery must not widen execution authority;
+- session-bound journal recovery semantics remain intact across capability rotations.
+
+This stable surface avoids stale tool-schema/model hallucination problems when permissions change after the model has already cached MCP tool discovery.
+
+## Public-release cleanup milestone
+
+After the dev.19 feature/acceptance work, perform a repository-wide public-release audit:
+
+- inspect every branch for environment-specific IP addresses, hostnames, VM identifiers, usernames, internal paths, fingerprints, acceptance dumps, tokens, or other private deployment data;
+- remove obsolete development/acceptance artifacts that do not belong in a public source repository;
+- review README and every document for current behavior, clear structure, complete coverage, and public-safe examples;
+- verify configuration examples use documentation-only addresses/names and contain no real secrets;
+- review branch inventory and remove obsolete WIP branches once their useful history is safely represented in `main`;
+- scan Git history, not only the current tree. Deleting a file from the current branch does **not** remove it from public history;
+- if sensitive historical content is found, use an explicit history-rewrite/publication procedure and verify the rewritten object graph before calling the repository sanitized.
+
+Because the repository is already public, current-tree sanitization should happen opportunistically as files are touched; a final history-level audit remains mandatory before the first public release.
