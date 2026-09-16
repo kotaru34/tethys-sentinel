@@ -21,13 +21,13 @@ import (
 )
 
 type mcpClaimInstallResult struct {
-	Path      string             `json:"path"`
-	GrantID   string             `json:"grant_id"`
-	Agent     string             `json:"agent"`
-	Purpose   string             `json:"purpose"`
-	Targets   []string           `json:"targets"`
-	ExpiresAt string             `json:"expires_at"`
-	Shell     bool               `json:"shell"`
+	Path      string              `json:"path"`
+	GrantID   string              `json:"grant_id"`
+	Agent     string              `json:"agent"`
+	Purpose   string              `json:"purpose"`
+	Targets   []string            `json:"targets"`
+	ExpiresAt string              `json:"expires_at"`
+	Shell     bool                `json:"shell"`
 	History   domain.HistoryScope `json:"history"`
 }
 
