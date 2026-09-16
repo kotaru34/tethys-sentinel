@@ -14,7 +14,7 @@ BEGIN
 
     SELECT version INTO v_version
     FROM sentinel.schema_version WHERE id = 1;
-    IF v_version <> 3 THEN
+    IF v_version <> 4 THEN
         RAISE EXCEPTION 'unexpected schema version: %', v_version;
     END IF;
 
@@ -31,6 +31,22 @@ BEGIN
        OR NOT has_table_privilege('sentinel_control', 'sentinel.grants', 'INSERT')
        OR NOT has_table_privilege('sentinel_control', 'sentinel.grants', 'UPDATE') THEN
         RAISE EXCEPTION 'sentinel_control grant DML privileges are incomplete';
+    END IF;
+    IF has_table_privilege('sentinel_control', 'sentinel.mcp_claims', 'DELETE') THEN
+        RAISE EXCEPTION 'sentinel_control unexpectedly has DELETE on mcp_claims';
+    END IF;
+    IF NOT has_table_privilege('sentinel_control', 'sentinel.mcp_claims', 'SELECT')
+       OR NOT has_table_privilege('sentinel_control', 'sentinel.mcp_claims', 'INSERT')
+       OR NOT has_table_privilege('sentinel_control', 'sentinel.mcp_claims', 'UPDATE') THEN
+        RAISE EXCEPTION 'sentinel_control MCP claim DML privileges are incomplete';
+    END IF;
+    IF has_table_privilege('sentinel_control', 'sentinel.mcp_claim_targets', 'UPDATE')
+       OR has_table_privilege('sentinel_control', 'sentinel.mcp_claim_targets', 'DELETE') THEN
+        RAISE EXCEPTION 'sentinel_control MCP claim targets must be append-only';
+    END IF;
+    IF NOT has_table_privilege('sentinel_control', 'sentinel.mcp_claim_targets', 'SELECT')
+       OR NOT has_table_privilege('sentinel_control', 'sentinel.mcp_claim_targets', 'INSERT') THEN
+        RAISE EXCEPTION 'sentinel_control MCP claim target privileges are incomplete';
     END IF;
     IF has_table_privilege('sentinel_control', 'sentinel.execution_job_output', 'DELETE') THEN
         RAISE EXCEPTION 'sentinel_control unexpectedly has DELETE on execution_job_output';
@@ -68,8 +84,39 @@ BEGIN
     EXCEPTION
         WHEN check_violation THEN NULL;
     END;
+
+    BEGIN
+        INSERT INTO sentinel.mcp_claims (
+            id, code_hash, purpose, agent, grant_ttl_seconds,
+            security_epoch, issued_at, expires_at
+        ) VALUES (
+            'mcpclaim-bad-hash', decode('aa', 'hex'), 'ci claim', 'agent-a', 3600,
+            0, clock_timestamp(), clock_timestamp() + interval '1 minute'
+        );
+        RAISE EXCEPTION 'invalid MCP claim hash was accepted';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
 END
 $hash_constraint$;
+
+-- MCP claim validity is tightly bounded before redemption.
+DO $mcp_claim_constraints$
+BEGIN
+    BEGIN
+        INSERT INTO sentinel.mcp_claims (
+            id, code_hash, purpose, agent, grant_ttl_seconds,
+            security_epoch, issued_at, expires_at
+        ) VALUES (
+            'mcpclaim-too-long', decode(repeat('44', 32), 'hex'), 'ci claim', 'agent-a', 3600,
+            0, clock_timestamp(), clock_timestamp() + interval '6 minutes'
+        );
+        RAISE EXCEPTION 'oversized MCP claim TTL was accepted';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
+END
+$mcp_claim_constraints$;
 
 -- Seed one valid grant for relational/uniqueness checks.
 INSERT INTO sentinel.grants (
@@ -81,6 +128,17 @@ INSERT INTO sentinel.grants (
 );
 INSERT INTO sentinel.grant_targets (grant_id, target)
 VALUES ('grant-ci-00000001', 'dns01');
+
+-- Seed one valid MCP claim and target for relational checks.
+INSERT INTO sentinel.mcp_claims (
+    id, code_hash, purpose, agent, permission_exec, grant_ttl_seconds,
+    security_epoch, issued_at, expires_at
+) VALUES (
+    'mcpclaim-ci-00000001', decode(repeat('55', 32), 'hex'), 'ci claim', 'agent-a', true, 3600,
+    0, clock_timestamp(), clock_timestamp() + interval '1 minute'
+);
+INSERT INTO sentinel.mcp_claim_targets (claim_id, target)
+VALUES ('mcpclaim-ci-00000001', 'dns01');
 
 -- Only one pending approval may exist for the same narrow scope.
 INSERT INTO sentinel.approvals (
