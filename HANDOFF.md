@@ -2,15 +2,45 @@
 
 Updated: 2026-09-16
 Current accepted development version: `0.1.0-dev.18`
-Branch: `wip/mcp-adapter`
+Current candidate: `0.1.0-dev.19`
+Branch: `wip/mcp-usability`
 
 ## Status
 
-`0.1.0-dev.18` MCP acceptance is complete. The frozen `sentinel-mcp` artifact was installed on the intended AI/MCP client host and exercised against the accepted dev.17 backend. All planned functional gates passed without an acceptance blocker.
+`0.1.0-dev.18` remains the latest version accepted on the intended infrastructure.
 
-The acceptance capability material was removed from the client afterward. The shared MCP proxy remained alive with unrelated MCP servers configured while the Sentinel named server correctly moved to `failed` once its capability was removed. This is the expected fail-closed state.
+`0.1.0-dev.19` MCP usability implementation is complete and has a frozen Linux/amd64 candidate. Source CI, PostgreSQL 15/18 integration tests, Operator frontend reproducibility checks, and the deterministic artifact build are green. **dev.19 has not yet been live-accepted and must not be merged until intended-infrastructure acceptance completes.**
 
-The exact post-cleanup security epoch was not copied into this handoff. Do not infer or hard-code an epoch from earlier acceptance runs.
+The dev.19 candidate removes Sentinel MCP's dependency on the shared Python MCP proxy by adding a dedicated loopback-only Streamable HTTP server, keeps a stable five-tool discovery surface, and adds one-time operator-issued claims for capability installation/rotation without restarting the MCP process.
+
+Frozen dev.19 runtime source:
+
+`0152ba27c9822bdf23bc5dcd3800f6620d431fef`
+
+Green source CI: run `35118182487`.
+
+Artifact workflow commit: `2dfa9eb05296209210b054182f9d3658cacc4a24`.
+
+Green frozen artifact run: `35118463532`.
+
+Artifact name:
+
+`tethys-sentinel-dev19-mcp-usability-linux-amd64-0152ba27`
+
+Deterministic inner tar SHA-256:
+
+`793b5b568d7a2b623a8c4df73300ef704c21e53303f9c9630e393839927b3a8d`
+
+Frozen component SHA-256 values:
+
+- `sentinel-control`: `461c6694200eaa3f639b3176005d4b82f7796ffb9a51a9c97e728149668a8754`
+- `sentinel-gateway`: `2632e65ecc154acb9f42f47c63467fe9ae83650d97dcad2428bc11f1af3e753d`
+- `sentinel-operator`: `3986678eee367410205d9aad28c07ac4accfb5f6748ffd8479d86b7315853088`
+- `sentinel-mcp`: `6eecfed0d94f986711fb32e40c4b9b7ee217cf30264e183e02b9df426744d847`
+- `sentinelctl`: `80a884464f455ccaca579491b6c9c3736803b8afdd482828414ee9c4b775aa39`
+- `db/migrations/0004_mcp_claims.sql`: `3faa23ef23932f82ee1f04338e89e267e5f55918c3a39dd31f6c9d26b9a88a88`
+
+The exact post-dev.18 cleanup security epoch was not copied into this handoff. Do not infer or hard-code an epoch from earlier acceptance runs.
 
 This handoff deliberately excludes private deployment addresses, hostnames, VM identifiers, local paths that identify a specific environment, and other site-specific topology details. Environment-specific acceptance evidence belongs in private operator records, not in the public repository.
 
@@ -119,41 +149,69 @@ No dev.18 MCP acceptance blocker remains.
 
 During dev.18 acceptance the existing shared `mcp-proxy` had an upstream startup-isolation defect: one failing named stdio server could terminate the shared proxy. A local patch equivalent to upstream PR #213 was applied and pinned. Regression testing proved that an invalid/expired Sentinel capability now marks only Sentinel failed while unrelated MCP servers remain available.
 
-This patch was necessary for dev.18 acceptance, but the next architecture should remove Sentinel from the shared proxy dependency entirely rather than building more coupling around it.
+The pinned proxy remains valid for unrelated MCP servers. dev.19 Sentinel MCP is designed to run independently and should no longer depend on that shared proxy after live acceptance.
 
-## Next milestone — dev.19 MCP usability
+## dev.19 MCP usability candidate
 
-The next implementation milestone is `0.1.0-dev.19` and addresses two observed usability/robustness problems.
+### One-time capability claims
 
-### 1. Capability issue/rotation without MCP restart
+Short-lived capabilities remain a security property; dev.19 does not add a renewable refresh token or silently extend authority.
 
-Short-lived capabilities remain a security property; the solution must not silently turn them into renewable long-lived authority.
+Implemented flow:
 
-Target UX:
+- Operator issues a short-lived, one-time MCP claim for a selected agent, target set, permissions, history scope, claim TTL, and grant TTL.
+- Only the claim hash is persisted in PostgreSQL; plaintext is returned once to the operator.
+- Claim redemption is transactional and single-use; concurrent redemption produces one winner.
+- Redemption creates a normal Sentinel grant bound to the current security epoch.
+- Outstanding claims become unusable after global revoke/epoch advance.
+- Gateway exposes the narrow claim redemption bootstrap path without exposing generic Control authority.
+- `sentinelctl mcp claim` accepts the one-time claim through a hidden prompt and atomically installs the resulting capability with strict file permissions.
+- The running MCP process reloads capability state without requiring a process restart.
+- Operator UI exposes a dedicated `Connect MCP` flow and does not use browser-persistent secret storage.
 
-- Operator creates/rotates a narrow MCP grant/profile.
-- A short-lived one-time claim mechanism transfers the resulting capability to the MCP client without exposing it in shell history or logs.
-- The client stores capability material atomically with strict file permissions.
-- Capability replacement is detected/loaded by the running Sentinel MCP process; no process restart is required.
-- Capability expiry remains visible and fail-closed; no hidden refresh token automatically extends authority.
+PostgreSQL schema for dev.19 is **v4**.
 
-### 2. Native stable Sentinel MCP endpoint
+### Native stable Sentinel MCP endpoint
 
-Sentinel should run its own long-lived Streamable HTTP MCP endpoint using the official Go MCP SDK instead of being a stdio child of the shared Python proxy.
+Implemented native MCP behavior:
 
-Requirements:
+- dedicated Sentinel Streamable HTTP server using the official Go MCP SDK;
+- loopback-only HTTP bind enforcement;
+- process starts and remains healthy with no installed capability;
+- missing, invalid, expired, or insufficient capability fails individual calls closed rather than terminating the MCP server;
+- capability state is resolved/reloaded at call time;
+- discovery remains a stable five-tool surface: `exec`, `exec_batch`, `code`, `check`, `output`;
+- `code` remains discoverable under `shell=false` but returns a clear authorization error at call time;
+- backend policy remains authoritative and stable discovery does not widen execution authority;
+- the durable operation journal and session binding remain part of the MCP adapter contract.
 
-- dedicated Sentinel MCP process and stable HTTP URL;
-- no shared-proxy restart when a Sentinel capability changes;
-- no outage for unrelated MCP servers when Sentinel is unavailable;
-- Sentinel process remains alive when no capability is installed or a capability expires;
-- capability/bootstrap state is resolved at tool-call time or through a reloadable capability manager;
-- **stable five-tool surface** throughout a chat session: `exec`, `exec_batch`, `code`, `check`, `output` remain discoverable;
-- `sentinel.code` must return a clear authorization error when the current capability lacks shell authority instead of appearing/disappearing from tool discovery;
-- backend policy remains authoritative; stable discovery must not widen execution authority;
-- session-bound journal recovery semantics remain intact across capability rotations.
+### dev.19 automated evidence
 
-This stable surface avoids stale tool-schema/model hallucination problems when permissions change after the model has already cached MCP tool discovery.
+The frozen source candidate `0152ba27c9822bdf23bc5dcd3800f6620d431fef` passed:
+
+- Go module tidy check, formatting, vet, and race-enabled unit tests;
+- PostgreSQL migration/schema assertions and integration tests on PostgreSQL 15 and 18;
+- one-time claim persistence/redemption tests, including single-use, concurrent redemption, and epoch invalidation;
+- native MCP tests covering no-capability startup, loopback bind policy, and the stable five-tool surface;
+- Operator dependency graph pinning, TypeScript typecheck, production build, no browser-persistent secret storage, CSP-compatible output, and byte-for-byte equality between fresh frontend build and embedded Operator assets;
+- reproducible Linux/amd64 builds of all dev.19-changed binaries from the frozen source.
+
+### Remaining dev.19 acceptance gates
+
+Live acceptance on the intended infrastructure must still prove:
+
+1. schema v4 migration and upgraded Control/Gateway/Operator operate correctly against the real PostgreSQL authority state;
+2. native Sentinel MCP starts without a capability and remains reachable while calls fail closed;
+3. the AI client uses Sentinel's native HTTP endpoint directly while unrelated MCP servers remain on the pinned shared proxy;
+4. all five tools remain discoverable before and after capability changes;
+5. one-time claim bootstrap installs a capability without exposing it in shell history and without restarting `sentinel-mcp`;
+6. capability rotation takes effect without restarting the MCP process or changing the MCP URL;
+7. `code` is denied at call time under `shell=false`, then works through the normal approval path under a short-lived `shell=true` grant;
+8. consumed and stale/expired claims fail closed;
+9. `REVOKE ALL` invalidates current authority while the native MCP endpoint itself stays alive;
+10. acceptance cleanup removes capability material and leaves authority disabled, recording the actual resulting epoch rather than assuming one.
+
+No merge until these live gates pass. An acceptance blocker requires a new development version rather than silently changing the frozen dev.19 candidate.
 
 ## Public-release cleanup milestone
 
