@@ -60,7 +60,7 @@ function MCPClaimLauncher() {
   const [copyState, setCopyState] = useState("");
 
   useEffect(() => {
-    if (!open || targets.length > 0 || loadingTargets) return;
+    if (!open || targets.length > 0) return;
     const controller = new AbortController();
     setLoadingTargets(true);
     void getJSON<TargetPage>("/api/v1/targets", controller.signal)
@@ -73,7 +73,7 @@ function MCPClaimLauncher() {
       })
       .finally(() => setLoadingTargets(false));
     return () => controller.abort();
-  }, [open, targets.length, loadingTargets]);
+  }, [open, targets.length]);
 
   const close = () => {
     setOpen(false);
