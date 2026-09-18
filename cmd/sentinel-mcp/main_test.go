@@ -66,7 +66,7 @@ func TestStableToolSurfaceDoesNotDependOnCapability(t *testing.T) {
 
 func TestCapabilityErrorsAreActionableForModels(t *testing.T) {
 	missing := capabilityLoadError(fmt.Errorf("inspect capability file: %w", os.ErrNotExist))
-	if !strings.HasPrefix(missing.Error(), "CAPABILITY_MISSING:") || !strings.Contains(missing.Error(), "do not retry") {
+	if !strings.HasPrefix(missing.Error(), "CAPABILITY_MISSING:") || !strings.Contains(missing.Error(), "instead of retrying") {
 		t.Fatalf("missing capability error is not actionable: %q", missing)
 	}
 
@@ -74,7 +74,7 @@ func TestCapabilityErrorsAreActionableForModels(t *testing.T) {
 		StatusCode: http.StatusUnauthorized,
 		Message:    "valid capability required",
 	})
-	if !strings.HasPrefix(invalid.Error(), "CAPABILITY_INVALID:") || !strings.Contains(invalid.Error(), "do not retry") {
+	if !strings.HasPrefix(invalid.Error(), "CAPABILITY_INVALID:") || !strings.Contains(invalid.Error(), "instead of retrying") {
 		t.Fatalf("invalid capability error is not actionable: %q", invalid)
 	}
 

@@ -123,31 +123,31 @@ func (p *serviceProvider) service(ctx context.Context) (*mcpadapter.Service, err
 		CAFile:     p.caFile,
 	})
 	if err != nil {
-		return nil, errors.New("MCP_CONFIG_ERROR: Sentinel MCP client configuration is invalid. Stop and report this to the operator.")
+		return nil, errors.New("MCP_CONFIG_ERROR: Sentinel MCP configuration is invalid; report it to the operator.")
 	}
 	bootstrap, err := client.Bootstrap(ctx)
 	if err != nil {
 		return nil, capabilityBootstrapError(err)
 	}
 	if !bootstrap.Permissions.Exec {
-		return nil, errors.New("EXEC_AUTHORITY_REQUIRED: Current capability does not allow command execution. Ask the operator to install a capability with exec authority.")
+		return nil, errors.New("EXEC_AUTHORITY_REQUIRED: This capability blocks command execution; ask the operator for exec authority.")
 	}
 	return mcpadapter.NewService(client, p.journal, bootstrap.SessionID, bootstrap.Permissions.Shell)
 }
 
 func capabilityLoadError(err error) error {
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, errCapabilityMissing) {
-		return errors.New("CAPABILITY_MISSING: No Sentinel capability is installed. Ask the operator to install one; do not retry Sentinel tools.")
+		return errors.New("CAPABILITY_MISSING: No capability is installed; ask the operator to install one instead of retrying.")
 	}
-	return errors.New("CAPABILITY_INVALID: Installed Sentinel capability is invalid or unreadable. Ask the operator to replace it; do not retry Sentinel tools.")
+	return errors.New("CAPABILITY_INVALID: Installed capability is invalid or unreadable; ask the operator to replace it instead of retrying.")
 }
 
 func capabilityBootstrapError(err error) error {
 	var httpErr *agentclient.HTTPError
 	if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) {
-		return errors.New("CAPABILITY_INVALID: Current Sentinel capability is expired, revoked, or no longer accepted. Ask the operator to install a new capability; do not retry Sentinel tools.")
+		return errors.New("CAPABILITY_INVALID: Capability expired, was revoked, or was rejected; ask the operator to install a new one instead of retrying.")
 	}
-	return errors.New("SENTINEL_UNAVAILABLE: Sentinel could not validate the capability. Stop retrying and report the service or connection problem to the operator.")
+	return errors.New("SENTINEL_UNAVAILABLE: Sentinel could not validate the capability; report the service or connection problem instead of retrying.")
 }
 
 func registerTools(server *mcp.Server, provider *serviceProvider) {

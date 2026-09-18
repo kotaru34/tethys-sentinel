@@ -152,7 +152,7 @@ func (s *Service) ExecBatch(ctx context.Context, in ExecBatchInput) (OperationRe
 
 func (s *Service) Code(ctx context.Context, in CodeInput) (OperationResult, error) {
 	if !s.allowCode {
-		return OperationResult{}, errors.New("SHELL_AUTHORITY_REQUIRED: Current capability does not allow arbitrary code. Use sentinel_exec when possible or ask the operator for shell authority.")
+		return OperationResult{}, errors.New("SHELL_AUTHORITY_REQUIRED: This capability blocks arbitrary code; use sentinel_exec or ask the operator for shell authority.")
 	}
 	if err := validateTimeout(in.TimeoutSeconds); err != nil {
 		return OperationResult{}, err
@@ -184,7 +184,7 @@ func (s *Service) Check(ctx context.Context, in CheckInput) (OperationResult, er
 		return OperationResult{}, operationLookupError(err)
 	}
 	if err := s.validateStoredOperation(op); err != nil {
-		return OperationResult{}, errors.New("OPERATION_INVALID: Stored operation failed validation. Stop and report this to the operator.")
+		return OperationResult{}, errors.New("OPERATION_INVALID: Stored operation validation failed; report it to the operator.")
 	}
 	return s.runOperation(ctx, op)
 }
@@ -195,7 +195,7 @@ func (s *Service) Output(ctx context.Context, in OutputInput) (OperationResult, 
 		return OperationResult{}, operationLookupError(err)
 	}
 	if err := s.validateStoredOperation(op); err != nil {
-		return OperationResult{}, errors.New("OPERATION_INVALID: Stored operation failed validation. Stop and report this to the operator.")
+		return OperationResult{}, errors.New("OPERATION_INVALID: Stored operation validation failed; report it to the operator.")
 	}
 	index, err := outputStepIndex(op, in.Step)
 	if err != nil {
@@ -203,7 +203,7 @@ func (s *Service) Output(ctx context.Context, in OutputInput) (OperationResult, 
 	}
 	job, err := s.api.Request(ctx, op.Steps[index].RequestID)
 	if err != nil {
-		return OperationResult{}, errors.New("OUTPUT_NOT_READY: Output is not available yet. Use sentinel_check to inspect this operation before retrying output.")
+		return OperationResult{}, errors.New("OUTPUT_NOT_READY: Output is not available yet; inspect the operation with sentinel_check first.")
 	}
 	step := resultFromJob(index, job, outputReadBytes, true, in.Query)
 	return OperationResult{
@@ -409,10 +409,10 @@ func validateStructuredStep(argv []string, timeout int64) (OperationStep, error)
 	}
 	classified := risk.Classify(argv)
 	if classified.Decision == risk.Deny {
-		return OperationStep{}, errors.New("COMMAND_DENIED: Sentinel policy denies this command class. Do not retry the same command unchanged.")
+		return OperationStep{}, errors.New("COMMAND_DENIED: Sentinel policy denies this command class; do not retry it unchanged.")
 	}
 	if risk.RequiresShell(classified) {
-		return OperationStep{}, errors.New("STRUCTURED_EXEC_REJECTED: This command requires arbitrary-code authority. Use sentinel_code only when structured execution is insufficient.")
+		return OperationStep{}, errors.New("STRUCTURED_EXEC_REJECTED: This command requires arbitrary-code authority; use sentinel_code only when necessary.")
 	}
 	return OperationStep{Argv: append([]string(nil), argv...), TimeoutSeconds: timeout}, nil
 }
@@ -501,11 +501,11 @@ func modelStatus(status executionjob.Status) string {
 func operationLookupError(err error) error {
 	switch {
 	case errors.Is(err, ErrOperationNotFound):
-		return errors.New("OPERATION_NOT_FOUND: This operation id is unknown. Do not retry or invent ids; start a new operation if needed.")
+		return errors.New("OPERATION_NOT_FOUND: This operation id is unknown; start a new operation instead of inventing or retrying ids.")
 	case errors.Is(err, ErrSessionMismatch):
-		return errors.New("OPERATION_SESSION_MISMATCH: This operation belongs to an older capability session and cannot be resumed. Do not retry this id.")
+		return errors.New("OPERATION_SESSION_MISMATCH: This operation belongs to an older capability session; it cannot be resumed or repaired by retrying.")
 	default:
-		return errors.New("OPERATION_STORE_ERROR: The local operation journal could not be read. Stop and report this to the operator.")
+		return errors.New("OPERATION_STORE_ERROR: The local operation journal could not be read; report it to the operator.")
 	}
 }
 

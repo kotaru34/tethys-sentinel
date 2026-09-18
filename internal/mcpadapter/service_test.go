@@ -246,7 +246,7 @@ func TestCheckRejectsOperationFromPreviousCapabilitySession(t *testing.T) {
 	}
 	if _, err := svc.Check(context.Background(), CheckInput{ID: "op-old"}); err == nil {
 		t.Fatal("cross-session operation was accepted")
-	} else if !strings.HasPrefix(err.Error(), "OPERATION_SESSION_MISMATCH:") || !strings.Contains(err.Error(), "Do not retry") {
+	} else if !strings.HasPrefix(err.Error(), "OPERATION_SESSION_MISMATCH:") || !strings.Contains(err.Error(), "by retrying") {
 		t.Fatalf("cross-session error is not actionable: %q", err)
 	}
 	if called {

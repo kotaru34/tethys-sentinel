@@ -2,9 +2,9 @@ package agentclient
 
 import (
 	"context"
-	"errors"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
