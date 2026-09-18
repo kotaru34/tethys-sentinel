@@ -9,7 +9,7 @@ Branch: `wip/mcp-usability`
 
 `0.1.0-dev.18` remains the latest version accepted on the intended infrastructure.
 
-`0.1.0-dev.19` MCP usability implementation is complete and the frozen Linux/amd64 candidate has now passed its live functional/security acceptance gates on the intended infrastructure. Source CI, PostgreSQL 15/18 integration tests, Operator frontend reproducibility checks, deterministic artifact build, native MCP startup/discovery, one-time claim redemption, capability hot-rotation, session binding, approval recovery, model-driven execution, output readback, claim replay rejection, capability expiry, and REVOKE ALL behavior all passed. **dev.19 must still not be merged because live acceptance exposed an Operator CSRF/session-rotation bug in ordinary multi-tab use; fix it as dev.20 rather than modifying the frozen dev.19 source.**
+`0.1.0-dev.19` MCP usability implementation is complete and the frozen Linux/amd64 candidate has now passed its live functional/security acceptance gates on the intended infrastructure. Source CI, PostgreSQL 15/18 integration tests, Operator frontend reproducibility checks, deterministic artifact build, native MCP startup/discovery, one-time claim redemption, capability hot-rotation, session binding, approval recovery, model-driven execution, output readback, claim replay rejection, capability expiry, and REVOKE ALL behavior all passed. **dev.19 live acceptance is complete, including cleanup, but it must still not be merged because acceptance exposed an Operator CSRF/session-rotation bug in ordinary multi-tab use; fix it as dev.20 rather than modifying the frozen dev.19 source.**
 
 The dev.19 candidate removes Sentinel MCP's dependency on the shared Python MCP proxy by adding a dedicated loopback-only Streamable HTTP server, keeps a stable five-tool discovery surface, and adds one-time operator-issued claims for capability installation/rotation without restarting the MCP process.
 
@@ -213,7 +213,7 @@ The frozen dev.19 candidate passed the intended-infrastructure functional/securi
 - Expired capabilities failed closed with HTTP 401 while the MCP process stayed healthy.
 - `REVOKE ALL` invalidated the current capability immediately, invalidated an unused pre-revoke claim, and left the native MCP process/health endpoint alive with the same PID.
 
-Acceptance cleanup left autonomous authority disabled. The exact resulting security epoch remains intentionally unrecorded here.
+Acceptance cleanup left autonomous authority disabled, removed the installed MCP capability file, and verified that the native MCP process stayed alive and healthy with the same PID after capability removal. The exact resulting security epoch remains intentionally unrecorded here.
 
 **Acceptance blocker:** Operator CSRF state is rotated by repeated `/api/v1/session` fetches while the CSRF cookie is shared across tabs. A token obtained in one tab can therefore be invalidated by another tab refreshing/opening the Operator UI, producing `CSRF validation failed` on mutation. A clean single-tab retry succeeded, confirming the underlying claim flow works. This is a normal multi-tab usability/reliability defect in the Operator security boundary and must be fixed in `0.1.0-dev.20`; do not merge dev.19.
 
