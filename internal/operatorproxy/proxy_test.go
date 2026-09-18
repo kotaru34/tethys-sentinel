@@ -143,6 +143,86 @@ func TestProxySessionAndCSRFProtectMutations(t *testing.T) {
 	}
 }
 
+func TestProxySessionReusePreventsMultiTabCSRFRotation(t *testing.T) {
+	cert := testCertificate()
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"created":true}`))
+	}))
+	defer upstream.Close()
+
+	proxy := testProxy(t, upstream.URL, bytes.NewReader(bytes.Repeat([]byte{0x43}, 32)))
+
+	tabAReq := verifiedRequest(http.MethodGet, "/api/v1/session", nil, cert)
+	tabARR := httptest.NewRecorder()
+	proxy.Handler().ServeHTTP(tabARR, tabAReq)
+	if tabARR.Code != http.StatusOK {
+		t.Fatalf("tab A session status=%d body=%s", tabARR.Code, tabARR.Body.String())
+	}
+	var tabA sessionResponse
+	if err := json.Unmarshal(tabARR.Body.Bytes(), &tabA); err != nil {
+		t.Fatal(err)
+	}
+	tabACookies := tabARR.Result().Cookies()
+	if len(tabACookies) != 1 {
+		t.Fatalf("tab A cookies=%+v", tabACookies)
+	}
+
+	tabBReq := verifiedRequest(http.MethodGet, "/api/v1/session", nil, cert)
+	tabBReq.AddCookie(tabACookies[0])
+	tabBRR := httptest.NewRecorder()
+	proxy.Handler().ServeHTTP(tabBRR, tabBReq)
+	if tabBRR.Code != http.StatusOK {
+		t.Fatalf("tab B session status=%d body=%s", tabBRR.Code, tabBRR.Body.String())
+	}
+	var tabB sessionResponse
+	if err := json.Unmarshal(tabBRR.Body.Bytes(), &tabB); err != nil {
+		t.Fatal(err)
+	}
+	if tabB.CSRFToken != tabA.CSRFToken {
+		t.Fatalf("second session GET rotated CSRF token: A=%q B=%q", tabA.CSRFToken, tabB.CSRFToken)
+	}
+	tabBCookies := tabBRR.Result().Cookies()
+	if len(tabBCookies) != 1 || tabBCookies[0].Value != tabA.CSRFToken {
+		t.Fatalf("tab B cookie=%+v want same token", tabBCookies)
+	}
+
+	mutation := verifiedRequest(http.MethodPost, "/api/v1/grants", strings.NewReader(`{"agent":"qwen","purpose":"multi-tab"}`), cert)
+	mutation.AddCookie(tabBCookies[0])
+	mutation.Header.Set("Origin", "https://operator.test")
+	mutation.Header.Set("Sec-Fetch-Site", "same-origin")
+	mutation.Header.Set(csrfHeaderName, tabA.CSRFToken)
+	mutation.Header.Set("Content-Type", "application/json")
+	mutationRR := httptest.NewRecorder()
+	proxy.Handler().ServeHTTP(mutationRR, mutation)
+	if mutationRR.Code != http.StatusCreated || calls.Load() != 1 {
+		t.Fatalf("tab A mutation after tab B session status=%d calls=%d body=%s", mutationRR.Code, calls.Load(), mutationRR.Body.String())
+	}
+}
+
+func TestProxySessionReplacesMalformedCSRFCookie(t *testing.T) {
+	cert := testCertificate()
+	proxy := testProxy(t, "http://127.0.0.1:1", bytes.NewReader(bytes.Repeat([]byte{0x44}, 32)))
+
+	req := verifiedRequest(http.MethodGet, "/api/v1/session", nil, cert)
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "not-a-valid-token"})
+	rr := httptest.NewRecorder()
+	proxy.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("session status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var session sessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.CSRFToken == "" || session.CSRFToken == "not-a-valid-token" {
+		t.Fatalf("malformed cookie was reused: %+v", session)
+	}
+}
+
 func TestProxyRejectsUnknownRoutesAndUnsafeIDs(t *testing.T) {
 	cert := testCertificate()
 	var calls atomic.Int32

@@ -2,12 +2,12 @@
 
 Updated: 2026-09-19
 Current accepted development version: `0.1.0-dev.18`
-Current candidate: `0.1.0-dev.19`
+Current candidate: `0.1.0-dev.20`
 Branch: `wip/mcp-usability`
 
 ## Status
 
-`0.1.0-dev.18` remains the latest version accepted on the intended infrastructure.
+`0.1.0-dev.18` remains the latest merged/accepted baseline. dev.19 completed live functional/security acceptance but is intentionally blocked from merge by the Operator multi-tab CSRF defect found during acceptance.
 
 `0.1.0-dev.19` MCP usability implementation is complete and the frozen Linux/amd64 candidate has now passed its live functional/security acceptance gates on the intended infrastructure. Source CI, PostgreSQL 15/18 integration tests, Operator frontend reproducibility checks, deterministic artifact build, native MCP startup/discovery, one-time claim redemption, capability hot-rotation, session binding, approval recovery, model-driven execution, output readback, claim replay rejection, capability expiry, and REVOKE ALL behavior all passed. **dev.19 live acceptance is complete, including cleanup, but it must still not be merged because acceptance exposed an Operator CSRF/session-rotation bug in ordinary multi-tab use; fix it as dev.20 rather than modifying the frozen dev.19 source.**
 
@@ -224,6 +224,41 @@ Agreed dev.20 fix direction:
 - preserve the existing strict Origin / `Sec-Fetch-Site` checks and HttpOnly `__Host-` cookie model.
 
 After dev.20 is built and accepted, merge the WIP branch, then perform the repository-wide public-release cleanup milestone.
+## dev.20 MCP/Operator usability hardening
+
+Version: `0.1.0-dev.20`.
+
+Implementation scope:
+
+- fix the Operator multi-tab CSRF race by reusing a valid existing `__Host-tethys_csrf` token on repeated `GET /api/v1/session` calls instead of rotating it;
+- keep strict Origin, optional `Sec-Fetch-Site: same-origin`, HttpOnly, Secure, SameSite=Strict and `__Host-` cookie protections;
+- reject malformed CSRF cookies and replace them with fresh high-entropy tokens;
+- rename the stable five MCP tools to `sentinel_exec`, `sentinel_exec_batch`, `sentinel_code`, `sentinel_check`, and `sentinel_output`;
+- make direct model-facing failures compact and actionable with stable error codes such as `CAPABILITY_MISSING`, `CAPABILITY_INVALID`, `SHELL_AUTHORITY_REQUIRED`, `OPERATION_SESSION_MISMATCH`, `COMMAND_DENIED`, and `OUTPUT_NOT_READY`;
+- capability expiry/revocation must explicitly tell the model to stop retrying Sentinel tools and ask the operator for a new capability; `sentinel_check` must explicitly state that it cannot restore/refresh capability authority.
+
+Automated regression requirements:
+
+1. repeated session GET with the shared cookie returns the same CSRF token;
+2. a second tab/session fetch cannot invalidate the first tab's mutation token;
+3. malformed CSRF cookies are replaced, not reused;
+4. same-origin mutation with the reused token succeeds while cross-origin mutation remains rejected;
+5. MCP discovery exposes exactly the five underscore-named tools;
+6. capability missing/expired/revoked errors contain a stable code and a short stop-retrying/operator remediation;
+7. shell=false code invocation and cross-session operation recovery expose actionable stable codes;
+8. existing Go race tests, PostgreSQL 15/18 integration, Operator frontend reproducibility and security checks remain green.
+
+Live acceptance after green CI/artifact:
+
+- reproduce the two-tab Operator flow and confirm both tabs can mutate after either tab refreshes;
+- connect the real llama-ui/Qwen client and confirm all five underscore tool names;
+- execute one structured command end-to-end;
+- revoke/expire the capability and confirm Qwen receives `CAPABILITY_INVALID`, stops tool retry loops, and reports that operator action is required;
+- rotate/install a new capability without MCP restart and confirm normal execution resumes;
+- leave authority disabled and remove capability material after acceptance.
+
+dev.20 must pass these gates before the WIP branch is merged.
+
 ## Public-release cleanup milestone
 
 After the dev.19 feature/acceptance work, perform a repository-wide public-release audit:

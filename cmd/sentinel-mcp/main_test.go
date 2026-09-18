@@ -3,15 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/kotaru34/tethys-sentinel/internal/agentclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -42,11 +46,11 @@ func TestStableToolSurfaceDoesNotDependOnCapability(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"sentinel.check",
-		"sentinel.code",
-		"sentinel.exec",
-		"sentinel.exec_batch",
-		"sentinel.output",
+		"sentinel_check",
+		"sentinel_code",
+		"sentinel_exec",
+		"sentinel_exec_batch",
+		"sentinel_output",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("tool surface=%v, want %v", got, want)
@@ -57,6 +61,26 @@ func TestStableToolSurfaceDoesNotDependOnCapability(t *testing.T) {
 	}
 	if err := serverSession.Wait(); err != nil && ctx.Err() == nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCapabilityErrorsAreActionableForModels(t *testing.T) {
+	missing := capabilityLoadError(fmt.Errorf("inspect capability file: %w", os.ErrNotExist))
+	if !strings.HasPrefix(missing.Error(), "CAPABILITY_MISSING:") || !strings.Contains(missing.Error(), "do not retry") {
+		t.Fatalf("missing capability error is not actionable: %q", missing)
+	}
+
+	invalid := capabilityBootstrapError(&agentclient.HTTPError{
+		StatusCode: http.StatusUnauthorized,
+		Message:    "valid capability required",
+	})
+	if !strings.HasPrefix(invalid.Error(), "CAPABILITY_INVALID:") || !strings.Contains(invalid.Error(), "do not retry") {
+		t.Fatalf("invalid capability error is not actionable: %q", invalid)
+	}
+
+	unavailable := capabilityBootstrapError(errors.New("dial failed"))
+	if !strings.HasPrefix(unavailable.Error(), "SENTINEL_UNAVAILABLE:") {
+		t.Fatalf("transport error misclassified: %q", unavailable)
 	}
 }
 

@@ -112,17 +112,17 @@ Full contract: `docs/AGENT_HTTP_CLI.md`.
 
 ## MCP adapter (`sentinel-mcp`)
 
-Dev.18 provides a deliberately small MCP surface for Qwen-class autonomous agents:
+Dev.20 keeps a deliberately small, stable five-tool MCP surface for Qwen-class autonomous agents:
 
 ```text
-sentinel.exec
-sentinel.exec_batch
-sentinel.code          # conditional in dev.18; shell-authorized capabilities only
-sentinel.check
-sentinel.output
+sentinel_exec
+sentinel_exec_batch
+sentinel_code
+sentinel_check
+sentinel_output
 ```
 
-### `sentinel.exec`
+### `sentinel_exec`
 
 Runs one structured command on an allowed logical Sentinel target:
 
@@ -136,29 +136,33 @@ Runs one structured command on an allowed logical Sentinel target:
 
 Structured exec rejects known shell/interpreter/remote-exec/privilege-launcher escape classes locally before journaling or backend submission. Backend authorization remains authoritative.
 
-### `sentinel.exec_batch`
+### `sentinel_exec_batch`
 
 Runs up to 32 independent structured commands against one target, sequentially or through the parallel execution path. Commands that depend on earlier command output should use separate calls rather than a batch.
 
-### `sentinel.code`
+### `sentinel_code`
 
-Dev.18 provides an exceptional Python-only escape hatch for tasks that structured exec cannot reasonably express. The adapter owns the carrier exactly as:
+Exceptional Python-only execution for tasks that structured exec cannot reasonably express. The adapter owns the carrier exactly as:
 
 ```text
 python3 -c <source>
 ```
 
-It requires a grant with shell authority and still goes through Sentinel's normal arbitrary-code classification and explicit operator approval semantics. Dev.18 exposes the tool only when bootstrap reports shell authority; dev.19 is planned to keep a stable discovery surface while enforcing permission at call time.
+The tool is always discoverable, but invocation requires a current grant with shell authority and still goes through Sentinel's normal arbitrary-code classification and explicit operator approval semantics.
 
-### `sentinel.check`
+### `sentinel_check`
 
-Continues or recovers a previously journaled operation using its model-facing operation ID. It reuses the operation's immutable backend request ID rather than inventing another request.
+Continues or recovers a previously journaled operation using its model-facing operation ID and immutable backend request ID. It cannot restore, refresh or replace an expired/revoked capability.
 
 Operation records are bound to the capability session. After capability rotation, an old operation ID is rejected as belonging to another session.
 
-### `sentinel.output`
+### `sentinel_output`
 
 Reads a deeper but still bounded stdout/stderr excerpt from a previous operation. A literal query can center the returned excerpt around a matching string.
+
+### Model-facing errors
+
+Actionable failures use compact `CODE: sentence` messages. Capability failures explicitly tell the model to stop retrying Sentinel tools and ask the operator for a new capability. Operation/session, shell-authority, command-policy and output-readiness failures use similarly narrow codes. MCP tools never renew capabilities.
 
 ### Durable journal
 
@@ -228,7 +232,7 @@ The embedded UI provides Overview, Grants, Approvals, Jobs, Audit, Targets, Cont
 - `docs/THREAT_MODEL.md` — attacker assumptions, threats and invariants
 - `docs/API.md` — development API surface
 - `docs/AGENT_HTTP_CLI.md` — Agent HTTP API, `curl`, `sentinelctl`, output and recovery semantics
-- `docs/MCP_ADAPTER_DESIGN.md` — dev.18 MCP surface, journal, safety and recovery design
+- `docs/MCP_ADAPTER_DESIGN.md` — current MCP surface, error vocabulary, journal, safety and recovery design
 - `docs/OPERATOR_UI.md` — Operator product/security contract
 - `docs/OPERATOR_DEPLOYMENT.md` — Operator deployment and isolated configuration boundary
 - `docs/EXECUTION_PROTOCOL.md` — staged/claim/start/complete semantics and idempotency
@@ -243,13 +247,12 @@ The embedded UI provides Overview, Grants, Approvals, Jobs, Audit, Targets, Cont
 
 Some historical acceptance documents are still present during development. They will be reviewed, sanitized or removed before the first public release.
 
-## Next milestone: dev.19 MCP usability
+## Current milestone: dev.20 MCP usability hardening
 
-The next milestone addresses issues observed during dev.18 acceptance:
+Dev.20 closes the dev.19 live-acceptance blocker and incorporates model-UX findings from real Qwen use:
 
-1. **Capability issue/rotation without process restart.** Short-lived authority remains short-lived, but replacing a capability must not require restarting the MCP server.
-2. **Native Streamable HTTP Sentinel MCP endpoint.** Sentinel should no longer be a stdio child of a shared third-party MCP proxy.
-3. **Stable tool discovery.** The MCP server should expose the same narrow five-tool schema throughout a chat session. Permission changes should cause explicit authorization errors at call time rather than adding/removing tools after the model has cached discovery.
-4. **One-time claim UX.** The intended operator flow is a short-lived, one-time capability claim/installation mechanism with atomic local storage and no hidden renewable refresh authority.
+1. **Multi-tab-safe Operator CSRF.** Repeated session GETs reuse the valid shared browser CSRF token instead of rotating it and invalidating another tab.
+2. **Actionable model-facing errors.** Capability, authority, operation-session, command-policy and output-state errors use compact stable codes plus one short remediation sentence.
+3. **Underscore MCP tool names.** The stable surface is `sentinel_exec`, `sentinel_exec_batch`, `sentinel_code`, `sentinel_check`, and `sentinel_output`.
 
-After dev.19 acceptance, the repository will receive a branch/history/privacy/documentation audit before the first public release.
+After dev.20 CI/artifact/live acceptance passes, merge the WIP branch and perform the branch/history/privacy/documentation audit before the first public release.

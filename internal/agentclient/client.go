@@ -28,6 +28,18 @@ type Client struct {
 	http       *http.Client
 }
 
+type HTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *HTTPError) Error() string {
+	if strings.TrimSpace(e.Message) != "" {
+		return fmt.Sprintf("sentinel HTTP %d: %s", e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("sentinel HTTP %d", e.StatusCode)
+}
+
 type Config struct {
 	BaseURL    string
 	Capability string
@@ -132,9 +144,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, bodyValue, res
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(data, &apiErr) == nil && strings.TrimSpace(apiErr.Error) != "" {
-			return fmt.Errorf("sentinel HTTP %d: %s", resp.StatusCode, apiErr.Error)
+			return &HTTPError{StatusCode: resp.StatusCode, Message: apiErr.Error}
 		}
-		return fmt.Errorf("sentinel HTTP %d", resp.StatusCode)
+		return &HTTPError{StatusCode: resp.StatusCode}
 	}
 	if responseValue == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil

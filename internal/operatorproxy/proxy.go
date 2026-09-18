@@ -120,12 +120,15 @@ func (p *Proxy) buildHandler() http.Handler {
 
 func (p *Proxy) session(w http.ResponseWriter, r *http.Request) {
 	identity := operatorIdentity(r.Context())
-	tokenBytes := make([]byte, 32)
-	if _, err := io.ReadFull(p.random, tokenBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create operator session")
-		return
+	token, ok := csrfTokenFromRequest(r)
+	if !ok {
+		tokenBytes := make([]byte, 32)
+		if _, err := io.ReadFull(p.random, tokenBytes); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create operator session")
+			return
+		}
+		token = base64.RawURLEncoding.EncodeToString(tokenBytes)
 	}
-	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    token,
@@ -187,15 +190,35 @@ func (p *Proxy) validCSRF(r *http.Request) bool {
 	if site := strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")); site != "" && site != "same-origin" {
 		return false
 	}
-	cookie, err := r.Cookie(csrfCookieName)
-	if err != nil || cookie.Value == "" {
+	cookieToken, ok := csrfTokenFromRequest(r)
+	if !ok {
 		return false
 	}
 	header := strings.TrimSpace(r.Header.Get(csrfHeaderName))
-	if header == "" || len(header) != len(cookie.Value) {
+	if header == "" || len(header) != len(cookieToken) {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(header), []byte(cookie.Value)) == 1
+	return subtle.ConstantTimeCompare([]byte(header), []byte(cookieToken)) == 1
+}
+
+func csrfTokenFromRequest(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil {
+		return "", false
+	}
+	token := strings.TrimSpace(cookie.Value)
+	if token == "" {
+		return "", false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(decoded) != 32 {
+		return "", false
+	}
+	canonical := base64.RawURLEncoding.EncodeToString(decoded)
+	if len(canonical) != len(token) || subtle.ConstantTimeCompare([]byte(canonical), []byte(token)) != 1 {
+		return "", false
+	}
+	return token, true
 }
 
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, upstreamPath string, withBody bool) {

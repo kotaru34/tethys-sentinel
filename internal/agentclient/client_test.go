@@ -2,6 +2,7 @@ package agentclient
 
 import (
 	"context"
+	"errors"
 	"crypto/x509"
 	"encoding/pem"
 	"net/http"
@@ -65,6 +66,32 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 	}
 	if redirected {
 		t.Fatal("client followed redirect and risked forwarding capability")
+	}
+}
+
+func TestClientReturnsTypedHTTPError(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"valid capability required"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Config{
+		BaseURL:    server.URL,
+		Capability: strings.Repeat("x", 40),
+		CAFile:     writeServerCert(t, server),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Bootstrap(context.Background())
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected HTTPError, got %T %v", err, err)
+	}
+	if httpErr.StatusCode != http.StatusUnauthorized || httpErr.Message != "valid capability required" {
+		t.Fatalf("unexpected HTTPError: %+v", httpErr)
 	}
 }
 

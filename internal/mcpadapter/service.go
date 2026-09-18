@@ -127,13 +127,13 @@ func (s *Service) Exec(ctx context.Context, in ExecInput) (OperationResult, erro
 func (s *Service) ExecBatch(ctx context.Context, in ExecBatchInput) (OperationResult, error) {
 	target := strings.TrimSpace(in.Target)
 	if target == "" {
-		return OperationResult{}, errors.New("target is required")
+		return OperationResult{}, errors.New("INVALID_ARGUMENT: target is required.")
 	}
 	if len(in.Commands) == 0 {
-		return OperationResult{}, errors.New("commands must contain at least one command")
+		return OperationResult{}, errors.New("INVALID_ARGUMENT: commands must contain at least one command.")
 	}
 	if len(in.Commands) > 32 {
-		return OperationResult{}, errors.New("commands may contain at most 32 commands")
+		return OperationResult{}, errors.New("INVALID_ARGUMENT: commands may contain at most 32 commands.")
 	}
 	steps := make([]OperationStep, len(in.Commands))
 	for i, command := range in.Commands {
@@ -152,13 +152,13 @@ func (s *Service) ExecBatch(ctx context.Context, in ExecBatchInput) (OperationRe
 
 func (s *Service) Code(ctx context.Context, in CodeInput) (OperationResult, error) {
 	if !s.allowCode {
-		return OperationResult{}, errors.New("arbitrary code is not permitted by this Sentinel capability")
+		return OperationResult{}, errors.New("SHELL_AUTHORITY_REQUIRED: Current capability does not allow arbitrary code. Use sentinel_exec when possible or ask the operator for shell authority.")
 	}
 	if err := validateTimeout(in.TimeoutSeconds); err != nil {
 		return OperationResult{}, err
 	}
 	if strings.TrimSpace(in.Source) == "" {
-		return OperationResult{}, errors.New("source is required")
+		return OperationResult{}, errors.New("INVALID_ARGUMENT: source is required.")
 	}
 	argv := []string{"python3", "-c", in.Source}
 	classified := risk.Classify(argv)
@@ -184,7 +184,7 @@ func (s *Service) Check(ctx context.Context, in CheckInput) (OperationResult, er
 		return OperationResult{}, operationLookupError(err)
 	}
 	if err := s.validateStoredOperation(op); err != nil {
-		return OperationResult{}, errors.New("stored Sentinel MCP operation failed validation")
+		return OperationResult{}, errors.New("OPERATION_INVALID: Stored operation failed validation. Stop and report this to the operator.")
 	}
 	return s.runOperation(ctx, op)
 }
@@ -195,7 +195,7 @@ func (s *Service) Output(ctx context.Context, in OutputInput) (OperationResult, 
 		return OperationResult{}, operationLookupError(err)
 	}
 	if err := s.validateStoredOperation(op); err != nil {
-		return OperationResult{}, errors.New("stored Sentinel MCP operation failed validation")
+		return OperationResult{}, errors.New("OPERATION_INVALID: Stored operation failed validation. Stop and report this to the operator.")
 	}
 	index, err := outputStepIndex(op, in.Step)
 	if err != nil {
@@ -203,7 +203,7 @@ func (s *Service) Output(ctx context.Context, in OutputInput) (OperationResult, 
 	}
 	job, err := s.api.Request(ctx, op.Steps[index].RequestID)
 	if err != nil {
-		return OperationResult{}, errors.New("Sentinel output is not available for this operation yet")
+		return OperationResult{}, errors.New("OUTPUT_NOT_READY: Output is not available yet. Use sentinel_check to inspect this operation before retrying output.")
 	}
 	step := resultFromJob(index, job, outputReadBytes, true, in.Query)
 	return OperationResult{
@@ -221,7 +221,7 @@ func (s *Service) Output(ctx context.Context, in OutputInput) (OperationResult, 
 func (s *Service) createOperation(kind OperationKind, target string, parallel bool, steps []OperationStep) (Operation, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
-		return Operation{}, errors.New("target is required")
+		return Operation{}, errors.New("INVALID_ARGUMENT: target is required.")
 	}
 	for i := range steps {
 		if steps[i].RequestID != "" {
@@ -402,24 +402,24 @@ func validateStructuredStep(argv []string, timeout int64) (OperationStep, error)
 		return OperationStep{}, err
 	}
 	if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
-		return OperationStep{}, errors.New("argv must contain a command")
+		return OperationStep{}, errors.New("INVALID_ARGUMENT: argv must contain a command.")
 	}
 	if len(argv) > 256 {
-		return OperationStep{}, errors.New("argv may contain at most 256 entries")
+		return OperationStep{}, errors.New("INVALID_ARGUMENT: argv may contain at most 256 entries.")
 	}
 	classified := risk.Classify(argv)
 	if classified.Decision == risk.Deny {
-		return OperationStep{}, errors.New("command is denied by Sentinel classification")
+		return OperationStep{}, errors.New("COMMAND_DENIED: Sentinel policy denies this command class. Do not retry the same command unchanged.")
 	}
 	if risk.RequiresShell(classified) {
-		return OperationStep{}, errors.New("command is not permitted through structured exec; use code only when structured execution is insufficient")
+		return OperationStep{}, errors.New("STRUCTURED_EXEC_REJECTED: This command requires arbitrary-code authority. Use sentinel_code only when structured execution is insufficient.")
 	}
 	return OperationStep{Argv: append([]string(nil), argv...), TimeoutSeconds: timeout}, nil
 }
 
 func validateTimeout(timeout int64) error {
 	if timeout < 0 || timeout > 900 {
-		return errors.New("timeout_seconds must be 0..900")
+		return errors.New("INVALID_ARGUMENT: timeout_seconds must be 0..900.")
 	}
 	return nil
 }
@@ -427,7 +427,7 @@ func validateTimeout(timeout int64) error {
 func outputStepIndex(op Operation, requested *int) (int, error) {
 	if op.Kind != OperationBatch {
 		if requested != nil && *requested != 0 {
-			return 0, errors.New("step is only meaningful for a batch operation")
+			return 0, errors.New("INVALID_ARGUMENT: step is only meaningful for a batch operation.")
 		}
 		return 0, nil
 	}
@@ -435,10 +435,10 @@ func outputStepIndex(op Operation, requested *int) (int, error) {
 		return 0, nil
 	}
 	if requested == nil {
-		return 0, errors.New("step is required for a batch operation with multiple commands")
+		return 0, errors.New("INVALID_ARGUMENT: step is required for a batch operation with multiple commands.")
 	}
 	if *requested < 0 || *requested >= len(op.Steps) {
-		return 0, errors.New("step is outside the batch range")
+		return 0, errors.New("INVALID_ARGUMENT: step is outside the batch range.")
 	}
 	return *requested, nil
 }
@@ -501,11 +501,11 @@ func modelStatus(status executionjob.Status) string {
 func operationLookupError(err error) error {
 	switch {
 	case errors.Is(err, ErrOperationNotFound):
-		return errors.New("unknown Sentinel MCP operation id")
+		return errors.New("OPERATION_NOT_FOUND: This operation id is unknown. Do not retry or invent ids; start a new operation if needed.")
 	case errors.Is(err, ErrSessionMismatch):
-		return errors.New("Sentinel MCP operation id belongs to another capability session")
+		return errors.New("OPERATION_SESSION_MISMATCH: This operation belongs to an older capability session and cannot be resumed. Do not retry this id.")
 	default:
-		return errors.New("could not read Sentinel MCP operation journal")
+		return errors.New("OPERATION_STORE_ERROR: The local operation journal could not be read. Stop and report this to the operator.")
 	}
 }
 

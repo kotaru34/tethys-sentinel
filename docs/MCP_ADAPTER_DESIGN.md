@@ -1,12 +1,12 @@
 # Tethys Sentinel MCP Adapter Design
 
-Status: dev.18 implementation baseline.
+Status: dev.20 implementation contract.
 
 The MCP adapter is a deliberately narrow model-facing facade over the accepted Sentinel Agent HTTPS API. It does not mirror raw HTTP or expose Control/admin authority. The first client is a Qwen-class local agent, so tool names, arguments and results are intentionally small and stable.
 
 ## Model-facing tools
 
-### `sentinel.exec`
+### `sentinel_exec`
 
 Run one structured command on one required logical target.
 
@@ -18,7 +18,7 @@ exec(target, argv, timeout_seconds?)
 
 Before creating any operation or contacting Sentinel, the adapter runs the existing Sentinel risk classifier. `exec` rejects commands classified as denied and rejects every category for which `risk.RequiresShell(...)` is true. Today that fail-closed boundary includes arbitrary-code carriers/interpreters, remote-execution tools and privilege launchers. Examples include shells, Python/Perl/Node, `ssh`, `sudo`, `env`, `xargs`, `find -exec`, container exec/run and similar escape paths already covered by the shared classifier. The adapter does not maintain a second hand-written blacklist.
 
-### `sentinel.exec_batch`
+### `sentinel_exec_batch`
 
 Run several independent structured commands against one required target.
 
@@ -30,7 +30,7 @@ Each command contains `argv` and optional `timeout_seconds`. `parallel` defaults
 
 Batch is orchestration only. There are no variables, dependencies, conditions, pipes or workflow language. If a later command depends on earlier output, the model should use separate `exec` calls.
 
-### `sentinel.code`
+### `sentinel_code`
 
 Explicit last-resort Python execution:
 
@@ -40,9 +40,9 @@ code(target, source, timeout_seconds?)
 
 There is no `args` field and no model-facing shell tool. The model does not choose an interpreter command; dev.18 uses the adapter-owned `python3 -c <source>` carrier. The adapter asserts that the shared Sentinel classifier still recognizes this carrier as requiring unstructured/arbitrary-code authority before submitting it.
 
-`sentinel.code` is registered only when the current capability has the accepted backend `shell` permission. That permission remains a legacy backend implementation detail; the model sees only `code`. Backend classification and approval still apply, so code is not a bypass around Sentinel approval semantics.
+`sentinel_code` remains discoverable in the stable five-tool surface. A capability without backend `shell` authority receives `SHELL_AUTHORITY_REQUIRED` at invocation time. Backend classification and approval still apply, so code is not a bypass around Sentinel approval semantics.
 
-### `sentinel.check`
+### `sentinel_check`
 
 Recover or continue an existing operation:
 
@@ -52,7 +52,7 @@ check(id)
 
 The model uses only the MCP operation `id`. The adapter reloads the durable operation, verifies it belongs to the current Sentinel capability session, and reuses the exact immutable request ID(s). Approval recovery therefore relies on Sentinel idempotence rather than model reconstruction of request, approval or job protocol state.
 
-### `sentinel.output`
+### `sentinel_output`
 
 Read more bounded output from an existing operation:
 
@@ -85,6 +85,20 @@ Stable model-facing statuses are `succeeded`, `failed`, `denied`, `awaiting_appr
 
 Do not normally expose request IDs, approval IDs, grant/session IDs, risk metadata, security epochs, hashes, Worker/Signer details or raw HTTP status machinery.
 
+## Model-facing error vocabulary
+
+Errors that the model can act on use a short stable code followed by one sentence. They do not expose raw HTTP/auth internals.
+
+- `CAPABILITY_MISSING`: no capability is installed; ask the operator to install one and stop retrying Sentinel tools.
+- `CAPABILITY_INVALID`: the capability is expired, revoked, malformed, unreadable, or no longer accepted; ask the operator to replace it and stop retrying.
+- `EXEC_AUTHORITY_REQUIRED` / `SHELL_AUTHORITY_REQUIRED`: the current capability lacks the requested authority.
+- `OPERATION_NOT_FOUND` / `OPERATION_SESSION_MISMATCH`: the operation cannot be recovered with the supplied id/current capability session.
+- `COMMAND_DENIED` / `STRUCTURED_EXEC_REJECTED`: the command class is denied or requires the explicit `sentinel_code` path.
+- `OUTPUT_NOT_READY`: inspect the operation with `sentinel_check` before retrying output.
+- `SENTINEL_UNAVAILABLE`: stop blind retries and report the service/connection problem to the operator.
+
+No MCP tool can refresh, recreate or restore a capability. In particular, `sentinel_check` only resumes a previously journaled operation in the current capability session.
+
 ## Durable operation journal
 
 The adapter generates an `op-...` ID and all immutable `req-...` IDs locally. It writes the complete operation to a versioned 0600 journal using temp-file write, file fsync, atomic rename and best-effort directory fsync **before the first network submission**.
@@ -116,13 +130,13 @@ Preview truncation uses head+tail excerpts. `output(query=...)` centers its boun
 
 ## MCP transport and process boundary
 
-Dev.18 uses the official `github.com/modelcontextprotocol/go-sdk` at `v1.8.0` and stdio transport. The inbound JSON-RPC frame buffer is explicitly capped at 1 MiB instead of accepting the SDK's larger default.
+Dev.20 uses the official Go MCP SDK with both stdio and a dedicated Streamable HTTP transport. Native HTTP is loopback-only by policy, remains healthy without a capability, and keeps the stable five-tool discovery surface. The inbound request/frame size is capped at 1 MiB.
 
 Stdout is reserved for MCP protocol traffic. Startup/version/error diagnostics go to stderr. Agent access keeps the already accepted `agentclient` TLS behavior: HTTPS only, no proxy environment routing, no redirect following and no insecure TLS mode.
 
-The adapter obtains its capability from the same secure file/environment pattern as `sentinelctl`. The durable journal path can be supplied by `--journal` / `SENTINEL_MCP_JOURNAL`; otherwise it defaults under XDG state or `~/.local/state/tethys-sentinel/`.
+The adapter obtains its capability from the same secure file/environment pattern as `sentinelctl` and re-reads/revalidates it for every tool call, so claim installation and capability rotation do not require MCP restart. The durable journal path can be supplied by `--journal` / `SENTINEL_MCP_JOURNAL`; otherwise it defaults under XDG state or `~/.local/state/tethys-sentinel/`.
 
-## Deliberate non-goals for dev.18
+## Deliberate non-goals
 
 Do not add model-facing tools for raw shell, raw HTTP submit/job/request/bootstrap operations, grant/policy/approval administration, Control/Worker/Signer/CA administration, generic upload/download, or a workflow engine.
 

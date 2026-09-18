@@ -180,6 +180,22 @@ func TestCheckReusesImmutableRequestAfterApproval(t *testing.T) {
 	}
 }
 
+func TestCodeWithoutShellAuthorityReturnsActionableError(t *testing.T) {
+	api := &fakeAPI{
+		submit:  func(gatewayapi.CommandRequest) (internalapi.SubmitCommandResponse, error) { return internalapi.SubmitCommandResponse{}, nil },
+		job:     func(string) (internalapi.AgentExecutionJob, error) { return internalapi.AgentExecutionJob{}, nil },
+		request: func(string) (internalapi.AgentExecutionJob, error) { return internalapi.AgentExecutionJob{}, nil },
+	}
+	svc, err := NewService(api, newMemoryJournal(), "session-a", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Code(context.Background(), CodeInput{Target: "host", Source: "print('hello')"})
+	if err == nil || !strings.HasPrefix(err.Error(), "SHELL_AUTHORITY_REQUIRED:") || !strings.Contains(err.Error(), "sentinel_exec") {
+		t.Fatalf("unexpected shell authority error: %v", err)
+	}
+}
+
 func TestCodeUsesExplicitPythonCarrierAndReturnsApprovalState(t *testing.T) {
 	var submitted gatewayapi.CommandRequest
 	api := &fakeAPI{
@@ -230,6 +246,8 @@ func TestCheckRejectsOperationFromPreviousCapabilitySession(t *testing.T) {
 	}
 	if _, err := svc.Check(context.Background(), CheckInput{ID: "op-old"}); err == nil {
 		t.Fatal("cross-session operation was accepted")
+	} else if !strings.HasPrefix(err.Error(), "OPERATION_SESSION_MISMATCH:") || !strings.Contains(err.Error(), "Do not retry") {
+		t.Fatalf("cross-session error is not actionable: %q", err)
 	}
 	if called {
 		t.Fatal("cross-session operation reached Sentinel Submit")
