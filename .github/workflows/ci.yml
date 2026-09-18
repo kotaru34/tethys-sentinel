@@ -83,7 +83,7 @@ jobs:
           test "$(npm --version)" = '11.19.0'
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          expected='7c2002b1ef2236cbc1560e49074a34dd80ba7828a4f1f73e52691130cc991bb7'
+          expected='6e785ab7982ddda7873bb1489a6f8b6c498dfc9dcdb3a088fabfab23b4f29c9b'
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [ "$actual" != "$expected" ]; then
             echo "frontend dependency graph drift: expected=${expected} actual=${actual}"

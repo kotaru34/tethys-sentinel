@@ -182,7 +182,9 @@ func TestCheckReusesImmutableRequestAfterApproval(t *testing.T) {
 
 func TestCodeWithoutShellAuthorityReturnsActionableError(t *testing.T) {
 	api := &fakeAPI{
-		submit:  func(gatewayapi.CommandRequest) (internalapi.SubmitCommandResponse, error) { return internalapi.SubmitCommandResponse{}, nil },
+		submit: func(gatewayapi.CommandRequest) (internalapi.SubmitCommandResponse, error) {
+			return internalapi.SubmitCommandResponse{}, nil
+		},
 		job:     func(string) (internalapi.AgentExecutionJob, error) { return internalapi.AgentExecutionJob{}, nil },
 		request: func(string) (internalapi.AgentExecutionJob, error) { return internalapi.AgentExecutionJob{}, nil },
 	}
