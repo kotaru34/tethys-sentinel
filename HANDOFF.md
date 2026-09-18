@@ -1,6 +1,6 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-16
+Updated: 2026-09-19
 Current accepted development version: `0.1.0-dev.18`
 Current candidate: `0.1.0-dev.19`
 Branch: `wip/mcp-usability`
@@ -9,7 +9,7 @@ Branch: `wip/mcp-usability`
 
 `0.1.0-dev.18` remains the latest version accepted on the intended infrastructure.
 
-`0.1.0-dev.19` MCP usability implementation is complete and has a frozen Linux/amd64 candidate. Source CI, PostgreSQL 15/18 integration tests, Operator frontend reproducibility checks, and the deterministic artifact build are green. **dev.19 has not yet been live-accepted and must not be merged until intended-infrastructure acceptance completes.**
+`0.1.0-dev.19` MCP usability implementation is complete and the frozen Linux/amd64 candidate has now passed its live functional/security acceptance gates on the intended infrastructure. Source CI, PostgreSQL 15/18 integration tests, Operator frontend reproducibility checks, deterministic artifact build, native MCP startup/discovery, one-time claim redemption, capability hot-rotation, session binding, approval recovery, model-driven execution, output readback, claim replay rejection, capability expiry, and REVOKE ALL behavior all passed. **dev.19 must still not be merged because live acceptance exposed an Operator CSRF/session-rotation bug in ordinary multi-tab use; fix it as dev.20 rather than modifying the frozen dev.19 source.**
 
 The dev.19 candidate removes Sentinel MCP's dependency on the shared Python MCP proxy by adding a dedicated loopback-only Streamable HTTP server, keeps a stable five-tool discovery surface, and adds one-time operator-issued claims for capability installation/rotation without restarting the MCP process.
 
@@ -196,23 +196,34 @@ The frozen source candidate `0152ba27c9822bdf23bc5dcd3800f6620d431fef` passed:
 - Operator dependency graph pinning, TypeScript typecheck, production build, no browser-persistent secret storage, CSP-compatible output, and byte-for-byte equality between fresh frontend build and embedded Operator assets;
 - reproducible Linux/amd64 builds of all dev.19-changed binaries from the frozen source.
 
-### Remaining dev.19 acceptance gates
+### dev.19 live acceptance evidence and blocker
 
-Live acceptance on the intended infrastructure must still prove:
+The frozen dev.19 candidate passed the intended-infrastructure functional/security acceptance gates:
 
-1. schema v4 migration and upgraded Control/Gateway/Operator operate correctly against the real PostgreSQL authority state;
-2. native Sentinel MCP starts without a capability and remains reachable while calls fail closed;
-3. the AI client uses Sentinel's native HTTP endpoint directly while unrelated MCP servers remain on the pinned shared proxy;
-4. all five tools remain discoverable before and after capability changes;
-5. one-time claim bootstrap installs a capability without exposing it in shell history and without restarting `sentinel-mcp`;
-6. capability rotation takes effect without restarting the MCP process or changing the MCP URL;
-7. `code` is denied at call time under `shell=false`, then works through the normal approval path under a short-lived `shell=true` grant;
-8. consumed and stale/expired claims fail closed;
-9. `REVOKE ALL` invalidates current authority while the native MCP endpoint itself stays alive;
-10. acceptance cleanup removes capability material and leaves authority disabled, recording the actual resulting epoch rather than assuming one.
+- PostgreSQL schema v4 migration and upgraded Control/Gateway/Operator operated correctly against live authority state.
+- Native MCP started healthy with no capability and exposed exactly the stable five-tool surface.
+- The real AI client connected to the native loopback Streamable HTTP endpoint through its own local proxy path; unrelated MCP servers remained independent on the pinned shared proxy.
+- One-time claim redemption atomically installed a mode-0600 capability and the running MCP process reloaded it without restart.
+- Capability rotation changed session/shell authority without changing MCP URL or process PID.
+- `sentinel.code` remained discoverable but failed closed under `shell=false`; after rotation to `shell=true` it entered the normal approval flow and completed only after `Allow once`.
+- Operation IDs remained bound to the exact capability session and old-session recovery was rejected after rotation.
+- Output readback was permission-gated: with `history.include_output=true`, both normal exec results and `sentinel.output` returned the expected stdout.
+- A real model-driven call completed end-to-end through llama-ui -> native MCP -> Sentinel -> target -> stdout -> model.
+- Reusing a consumed one-time claim was rejected.
+- Expired capabilities failed closed with HTTP 401 while the MCP process stayed healthy.
+- `REVOKE ALL` invalidated the current capability immediately, invalidated an unused pre-revoke claim, and left the native MCP process/health endpoint alive with the same PID.
 
-No merge until these live gates pass. An acceptance blocker requires a new development version rather than silently changing the frozen dev.19 candidate.
+Acceptance cleanup left autonomous authority disabled. The exact resulting security epoch remains intentionally unrecorded here.
 
+**Acceptance blocker:** Operator CSRF state is rotated by repeated `/api/v1/session` fetches while the CSRF cookie is shared across tabs. A token obtained in one tab can therefore be invalidated by another tab refreshing/opening the Operator UI, producing `CSRF validation failed` on mutation. A clean single-tab retry succeeded, confirming the underlying claim flow works. This is a normal multi-tab usability/reliability defect in the Operator security boundary and must be fixed in `0.1.0-dev.20`; do not merge dev.19.
+
+Agreed dev.20 fix direction:
+
+- reuse an existing valid CSRF cookie/token instead of rotating it on every session GET;
+- add deterministic tests proving repeated session GETs keep a stable token, a second tab cannot invalidate the first tab's mutation token, and same-origin mutation still succeeds;
+- preserve the existing strict Origin / `Sec-Fetch-Site` checks and HttpOnly `__Host-` cookie model.
+
+After dev.20 is built and accepted, merge the WIP branch, then perform the repository-wide public-release cleanup milestone.
 ## Public-release cleanup milestone
 
 After the dev.19 feature/acceptance work, perform a repository-wide public-release audit:
