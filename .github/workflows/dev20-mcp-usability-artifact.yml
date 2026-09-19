@@ -1,0 +1,140 @@
+name: dev20 MCP usability artifact
+
+on:
+  push:
+    branches:
+      - wip/mcp-usability
+    paths:
+      - .github/workflows/dev20-mcp-usability-artifact.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-frozen-runtime:
+    runs-on: ubuntu-24.04
+    env:
+      FROZEN_SHA: 99073383f1d231d0a3125a6d2eab79052de67079
+      VERSION_EXPECTED: 0.1.0-dev.20
+      GO_VERSION_EXPECTED: go1.27.1
+      PACKAGE_BASENAME: tethys-sentinel-0.1.0-dev.20-mcp-usability-linux-amd64-99073383
+    steps:
+      - name: Checkout frozen dev20 candidate
+        uses: actions/checkout@v6
+        with:
+          ref: 99073383f1d231d0a3125a6d2eab79052de67079
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up exact Go toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Verify frozen source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          test "$(cat VERSION)" = "$VERSION_EXPECTED"
+          test "$(go version | awk '{print $3}')" = "$GO_VERSION_EXPECTED"
+          test -f db/migrations/0004_mcp_claims.sql
+          test -z "$(git status --porcelain)"
+          printf 'source_sha=%s\nversion=%s\ngo=%s\n' \
+            "$FROZEN_SHA" "$VERSION_EXPECTED" "$(go version)"
+
+      - name: Build twice and prove reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          binaries=(sentinel-control sentinel-gateway sentinel-operator sentinel-mcp sentinelctl)
+          BUILD_A="$RUNNER_TEMP/dev20-build-a"
+          BUILD_B="$RUNNER_TEMP/dev20-build-b"
+          rm -rf "$BUILD_A" "$BUILD_B"
+          mkdir -p "$BUILD_A" "$BUILD_B"
+
+          for dir in "$BUILD_A" "$BUILD_B"; do
+            test -z "$(git status --porcelain)"
+            for name in "${binaries[@]}"; do
+              GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+                go build -trimpath -buildvcs=true \
+                -o "$dir/$name" "./cmd/$name"
+              chmod 0755 "$dir/$name"
+            done
+          done
+
+          for name in "${binaries[@]}"; do
+            cmp "$BUILD_A/$name" "$BUILD_B/$name"
+            go version -m "$BUILD_A/$name" | grep -F "vcs.revision=$FROZEN_SHA"
+            go version -m "$BUILD_A/$name" | grep -F 'vcs.modified=false'
+          done
+          test -z "$(git status --porcelain)"
+
+      - name: Package deterministic dev20 artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_A="$RUNNER_TEMP/dev20-build-a"
+          rm -rf package artifact
+          mkdir -p package/db/migrations artifact
+
+          for name in sentinel-control sentinel-gateway sentinel-operator sentinel-mcp sentinelctl; do
+            install -m 0755 "$BUILD_A/$name" "package/$name"
+          done
+          install -m 0644 db/migrations/0004_mcp_claims.sql package/db/migrations/0004_mcp_claims.sql
+
+          cat > package/BUILDINFO <<EOF
+          version=$VERSION_EXPECTED
+          source_sha=$FROZEN_SHA
+          go_version=$(go version)
+          goos=linux
+          goarch=amd64
+          cgo=disabled
+          build_flags=-trimpath -buildvcs=true
+          schema_required=4
+          components=sentinel-control,sentinel-gateway,sentinel-operator,sentinel-mcp,sentinelctl
+          migration=db/migrations/0004_mcp_claims.sql
+          EOF
+
+          (
+            cd package
+            sha256sum \
+              sentinel-control sentinel-gateway sentinel-operator sentinel-mcp sentinelctl \
+              db/migrations/0004_mcp_claims.sql > SHA256SUMS
+          )
+
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          tar --sort=name \
+            --mtime="@${SOURCE_DATE_EPOCH}" \
+            --owner=0 --group=0 --numeric-owner \
+            -C package -cf - . \
+            | gzip -n > "artifact/${PACKAGE_BASENAME}.tar.gz"
+
+          (
+            cd artifact
+            sha256sum "${PACKAGE_BASENAME}.tar.gz" > "${PACKAGE_BASENAME}.tar.gz.sha256"
+            sha256sum -c "${PACKAGE_BASENAME}.tar.gz.sha256"
+          )
+
+          rm -rf "$RUNNER_TEMP/dev20-verify"
+          mkdir -p "$RUNNER_TEMP/dev20-verify"
+          tar -xzf "artifact/${PACKAGE_BASENAME}.tar.gz" -C "$RUNNER_TEMP/dev20-verify"
+          (cd "$RUNNER_TEMP/dev20-verify" && sha256sum -c SHA256SUMS)
+          test "$(sed -n 's/^source_sha=//p' "$RUNNER_TEMP/dev20-verify/BUILDINFO")" = "$FROZEN_SHA"
+          test "$(sed -n 's/^schema_required=//p' "$RUNNER_TEMP/dev20-verify/BUILDINFO")" = '4'
+
+          cat "artifact/${PACKAGE_BASENAME}.tar.gz.sha256"
+          cat package/SHA256SUMS
+
+      - name: Upload frozen dev20 runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: tethys-sentinel-dev20-mcp-usability-linux-amd64-99073383
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: |
+            artifact/tethys-sentinel-0.1.0-dev.20-mcp-usability-linux-amd64-99073383.tar.gz
+            artifact/tethys-sentinel-0.1.0-dev.20-mcp-usability-linux-amd64-99073383.tar.gz.sha256
