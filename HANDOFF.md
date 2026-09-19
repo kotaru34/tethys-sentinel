@@ -224,6 +224,7 @@ Agreed dev.20 fix direction:
 - preserve the existing strict Origin / `Sec-Fetch-Site` checks and HttpOnly `__Host-` cookie model.
 
 After dev.20 is built and accepted, merge the WIP branch, then perform the repository-wide public-release cleanup milestone.
+
 ## dev.20 MCP/Operator usability hardening
 
 Version: `0.1.0-dev.20`.
@@ -248,6 +249,24 @@ Automated regression requirements:
 7. shell=false code invocation and cross-session operation recovery expose actionable stable codes;
 8. existing Go race tests, PostgreSQL 15/18 integration, Operator frontend reproducibility and security checks remain green.
 
+Automated/frozen candidate evidence:
+
+- frozen dev.20 runtime source: `99073383f1d231d0a3125a6d2eab79052de67079`;
+- green source CI: run `35407693769`;
+- artifact workflow commit: `073db70091815c69d2e8203055e34f828f5e8adf`;
+- green workflow-commit CI: run `35407790597`;
+- green frozen artifact run: `35407790653`;
+- artifact name: `tethys-sentinel-dev20-mcp-usability-linux-amd64-99073383`;
+- deterministic inner tar SHA-256: `a68a20dc62fd0c19c084b3ec582c9b572330170f446550716b2fe4e821a008c2`;
+- `sentinel-control`: `bb70f9995aa30bb3929bfc7025e6b117d8cfa79d08932b24bb598372eb5ba881`;
+- `sentinel-gateway`: `064a3e9b6215344c0157145209aaaac4bbc88537a36975c5172681d517ab8a8f`;
+- `sentinel-operator`: `5ce48d486f2f7d89741e68abc843bdc8a1226df6f509008976277f5722f4d0fb`;
+- `sentinel-mcp`: `ab8912a68610e195c73511d452744bce0a818f2815992001d1c6f8f1204b4d81`;
+- `sentinelctl`: `a52314c1380c4391e88cf07db882938aabaecb118186b9c90076bbc6ff0e3872`;
+- schema v4 migration remains unchanged: `3faa23ef23932f82ee1f04338e89e267e5f55918c3a39dd31f6c9d26b9a88a88`.
+
+The source CI covers gofmt/vet/race tests, both PostgreSQL 15/18 integration matrices, Operator frontend dependency/build/embed checks, the new multi-tab CSRF regression, underscore tool discovery, and actionable model-facing error tests.
+
 Live acceptance after green CI/artifact:
 
 - reproduce the two-tab Operator flow and confirm both tabs can mutate after either tab refreshes;
@@ -257,7 +276,7 @@ Live acceptance after green CI/artifact:
 - rotate/install a new capability without MCP restart and confirm normal execution resumes;
 - leave authority disabled and remove capability material after acceptance.
 
-dev.20 must pass these gates before the WIP branch is merged.
+dev.20 automated CI/artifact gates are green. Live intended-infrastructure acceptance is the remaining blocker before the WIP branch may be merged.
 
 ## Public-release cleanup milestone
 
