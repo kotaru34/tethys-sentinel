@@ -86,16 +86,19 @@ Completed on the public repository:
 - development-only frozen artifact workflows were removed;
 - a permanent tracked-tree privacy/secret guard was added to CI;
 - Go tidy/format/vet/race tests, PostgreSQL 15/18 integration, Operator frontend reproducibility/security, and the privacy scan passed on the sanitized snapshot;
-- public branch refs were moved away from the old development graph to the sanitized history;
-- `main` now contains only the original safe initialization commit plus sanitized public commits;
+- documentation-baseline commit `f0137bb4fb531650badf3690613aa6ee1704dbdf` passed the complete CI matrix, including the tracked-tree public privacy scan;
+- every remaining public branch ref was moved onto the sanitized history; at the post-docs audit checkpoint all branch names pointed to `f0137bb4fb531650badf3690613aa6ee1704dbdf`;
+- `main` contains only the original safe initialization commit plus sanitized public commits;
 - repository metadata currently has no release/tag publication path carrying the removed deployment evidence, and no forks were present when checked.
 
 Remaining server-side cleanup before the first public release:
 
 - historical merged pull-request refs/cached diff views still retain the pre-sanitization object graph even though normal branch history no longer does;
-- legacy Actions runs/artifacts that point at the old development SHAs must be deleted or allowed to expire;
-- GitHub Support must be asked to dereference the affected historical pull requests and purge cached views/server objects after the history rewrite;
-- obsolete branch names should be deleted after confirming they all point at the sanitized history;
+- the first known changed/sensitive-history commit `43a42cd0bca025f8e1ac9bf30a6e048495e26ffe` remains directly addressable by SHA on GitHub after the rewrite;
+- cached diffs for historical PRs #1-#4 still visibly contain deployment-specific evidence; PR #5 is also part of the affected pre-rewrite pull-request graph and should be included in the Support purge request;
+- legacy Actions runs/artifacts that point at pre-rewrite development SHAs must be deleted rather than retained as a second publication path for historical data;
+- GitHub Support must be asked to dereference/delete affected PR refs, run server-side garbage collection, and remove cached views after the history rewrite;
+- obsolete branch names may now be deleted: they have already been verified on sanitized history;
 - collaborators/local clones made before the rewrite must be discarded/re-cloned or carefully cleaned so an old merge/push cannot reintroduce the tainted graph.
 
 Do not call the repository public-release-ready until the GitHub-hosted historical references above are gone and a final negative scan is repeated.
