@@ -1,0 +1,233 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'wip/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Public privacy scan
+        run: bash scripts/public_privacy_scan.sh
+
+      - name: Module tidy check
+        shell: bash
+        run: |
+          go mod tidy
+          changes="$(git status --porcelain -- go.mod go.sum)"
+          if [ -n "$changes" ]; then
+            echo "go.mod/go.sum are not tidy:"
+            printf '%s\n' "$changes"
+            echo
+            git diff -- go.mod || true
+            if [ -f go.sum ]; then
+              echo "----- go.sum -----"
+              cat go.sum
+              echo "----- end go.sum -----"
+            fi
+            exit 1
+          fi
+
+      - name: Format check
+        shell: bash
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "The following files need gofmt:"
+            printf '%s\n' "$files"
+            echo
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test -race ./...
+
+  operator-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.20.0'
+
+      - name: Resolve and verify pinned frontend dependency graph
+        working-directory: web/operator
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = 'v24.20.0'
+          test "$(npm --version)" = '11.19.0'
+          rm -f package-lock.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          expected='6e785ab7982ddda7873bb1489a6f8b6c498dfc9dcdb3a088fabfab23b4f29c9b'
+          actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
+          if [ "$actual" != "$expected" ]; then
+            echo "frontend dependency graph drift: expected=${expected} actual=${actual}"
+            node <<'NODE'
+          const lock = require('./package-lock.json');
+          const rows = Object.entries(lock.packages || {})
+            .filter(([path, meta]) => path && meta && meta.version)
+            .map(([path, meta]) => `${path}\t${meta.version}\t${meta.integrity || ''}`)
+            .sort();
+          console.log('----- resolved frontend graph -----');
+          console.log(rows.join('\n'));
+          console.log('----- end resolved frontend graph -----');
+          NODE
+            exit 1
+          fi
+
+      - name: Install pinned frontend dependencies
+        working-directory: web/operator
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Typecheck operator UI
+        working-directory: web/operator
+        run: npm run typecheck
+
+      - name: Build operator UI
+        working-directory: web/operator
+        run: npm run build
+
+      - name: Assert browser secret-storage policy
+        shell: bash
+        run: |
+          if grep -R -n -E 'localStorage|sessionStorage' web/operator/src; then
+            echo 'Browser-persistent storage is forbidden for the operator UI.'
+            exit 1
+          fi
+
+      - name: Assert CSP-compatible generated HTML
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -q '<style' internal/operatorweb/dist/index.html
+          while IFS= read -r line; do
+            case "$line" in
+              *'<script'* )
+                case "$line" in
+                  *' src='* ) ;;
+                  * ) echo "inline script is forbidden: $line"; exit 1 ;;
+                esac
+                ;;
+            esac
+          done < internal/operatorweb/dist/index.html
+
+      - name: Upload reproducible frontend output
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-frontend-build
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            web/operator/package-lock.json
+            internal/operatorweb/dist
+
+      - name: Verify embedded frontend content matches the build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat internal/operatorweb/operator-dist.b64.* | tr -d '[:space:]' | base64 -d > /tmp/operator-dist-embedded.tar.gz
+          test "$(sha256sum /tmp/operator-dist-embedded.tar.gz | cut -d' ' -f1)" = \
+            'ba838f656d471a9630443156e64b7bfdafbf59fe1cbaf314271ff97596c48c16'
+          rm -rf /tmp/operator-dist-embedded
+          mkdir -p /tmp/operator-dist-embedded
+          tar --no-same-owner -xzf /tmp/operator-dist-embedded.tar.gz -C /tmp/operator-dist-embedded
+          diff -ru --no-dereference /tmp/operator-dist-embedded/dist internal/operatorweb/dist
+
+  postgres-schema:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['15', '18']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_PASSWORD: sentinel-ci-postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Bootstrap database roles
+        env:
+          PGPASSWORD: sentinel-ci-postgres
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d postgres -f db/bootstrap/roles.sql
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d postgres <<'SQL'
+          CREATE ROLE sentinel_deploy_ci LOGIN PASSWORD 'sentinel-ci-deploy';
+          GRANT sentinel_migrator TO sentinel_deploy_ci;
+          CREATE ROLE sentinel_control_ci LOGIN PASSWORD 'sentinel-ci-control';
+          GRANT sentinel_control TO sentinel_control_ci;
+          CREATE DATABASE sentinel_ci OWNER sentinel_owner;
+          SQL
+
+      - name: Apply schema as migrator
+        shell: bash
+        env:
+          PGPASSWORD: sentinel-ci-deploy
+        run: |
+          for migration in db/migrations/*.sql; do
+            echo "Applying ${migration}"
+            psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U sentinel_deploy_ci -d sentinel_ci -f "${migration}"
+          done
+
+      - name: Assert schema and privileges
+        env:
+          PGPASSWORD: sentinel-ci-postgres
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d sentinel_ci -f db/ci/assertions.sql
+
+      - name: PostgreSQL authority integration tests
+        env:
+          SENTINEL_TEST_POSTGRES_DSN: postgres://sentinel_control_ci@127.0.0.1:5432/sentinel_ci?sslmode=disable
+          PGPASSWORD: sentinel-ci-control
+        run: go test -race ./internal/postgresrepo -run '^TestIntegration' -count=1
