@@ -11,18 +11,19 @@ db/
 ├── migrations/
 │   ├── 0001_core.sql
 │   ├── 0002_allow_once_job_binding.sql
-│   └── 0003_execution_output.sql
+│   ├── 0003_execution_output.sql
+│   └── 0004_mcp_claims.sql
 └── ci/
     └── assertions.sql
 ```
 
-Current development schema version: **3**.
-
-The accepted dev.15 production deployment remains on schema version **2** until the dev.16 Agent HTTP/CLI candidate is deliberately migrated and accepted on the intended infrastructure.
+Current accepted schema version: **4**.
 
 `0002_allow_once_job_binding.sql` adds the durable approval-to-job binding used to prove that a consumed `allow_once` authorization belongs to exactly one execution job. This prevents a consumed one-shot approval from being reused by another staged job in the same risk scope.
 
-`0003_execution_output.sql` adds the separate one-to-one `sentinel.execution_job_output` table used by dev.16 bounded command-output readback. Raw output is deliberately not added to the general execution-job read model. PostgreSQL enforces a 256 KiB limit independently for stdout and stderr, while Control runtime receives only `SELECT`, `INSERT` and `UPDATE` on the new table.
+`0003_execution_output.sql` adds the separate one-to-one `sentinel.execution_job_output` table used for bounded command-output readback. Raw output is deliberately not added to the general execution-job read model. PostgreSQL enforces a 256 KiB limit independently for stdout and stderr, while Control runtime receives only `SELECT`, `INSERT` and `UPDATE` on the table.
+
+`0004_mcp_claims.sql` adds short-lived one-time MCP bootstrap claims. PostgreSQL stores only the claim-code SHA-256 plus the fixed grant scope/targets, grant TTL, security epoch, expiry and single-use state. Claim issuance and redemption serialize with `authority_state`; redemption atomically creates the normal hashed-capability grant and consumes the claim.
 
 ## Bootstrap order
 
@@ -56,7 +57,7 @@ for migration in db/migrations/*.sql; do
 done
 ```
 
-Migration filenames use zero-padded numeric prefixes, so lexical order is migration order. Each migration checks the schema version it expects before changing it: `0002` requires version 1 and advances to 2; `0003` requires version 2 and advances to 3.
+Migration filenames use zero-padded numeric prefixes, so lexical order is migration order. Each migration checks the schema version it expects before changing it: `0002` requires version 1 and advances to 2; `0003` requires version 2 and advances to 3; `0004` requires version 3 and advances to 4.
 
 The migrations use `SET LOCAL ROLE sentinel_owner`, so the migration session must have the reviewed owner membership path. Runtime `sentinel_control` has no such membership.
 
@@ -77,7 +78,7 @@ Fresh database creation therefore does not automatically enable AI authority. En
 
 For `sentinel.execution_job_output`, runtime access is limited to `SELECT`, `INSERT` and `UPDATE`. Output rows are job-bound and cannot be used to create or widen execution authority.
 
-Gateway, Worker and SSH Signer do not receive PostgreSQL credentials.
+Gateway, Worker, SSH Signer, `sentinel-operator`, `sentinel-mcp`, and `sentinelctl` do not receive PostgreSQL credentials.
 
 ## Runtime selection
 
@@ -104,6 +105,6 @@ SENTINEL_PERSISTENCE_BACKEND=file
 - Production startup fails if PostgreSQL is unavailable; there is no automatic file-store fallback.
 - Future migrations must explicitly grant any new runtime privileges rather than relying on broad default grants.
 - Destructive/down migrations are not automatic. Authority/audit rollback requires an explicit operator recovery procedure.
-- Apply schema v3 before starting a dev.16 Control binary; a dev.16 Control must fail closed against the still-v2 production database rather than silently running without its output table.
+- Apply every reviewed migration through schema v4 before starting the current Control binary; Control must fail closed against an incompatible schema rather than silently running with missing persistence semantics.
 
 See `docs/POSTGRESQL_PERSISTENCE.md` for transaction, output-persistence and cutover semantics.

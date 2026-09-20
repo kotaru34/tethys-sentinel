@@ -78,7 +78,7 @@
                  +-----------------------+
 ```
 
-PostgreSQL is the production-candidate persistence/transaction boundary. File-backed stores remain available only through explicit development selection. Trust-0 context, SSH target inventory, signer key/policy and external worker-egress policy deliberately remain separate operator-owned configuration boundaries.
+PostgreSQL is the production persistence/transaction boundary. File-backed stores remain available only through explicit development selection. Trust-0 context, SSH target inventory, signer key/policy and external worker-egress policy deliberately remain separate operator-owned configuration boundaries.
 
 Operator UI v1 adds another deliberate boundary rather than exposing the Control admin listener to a browser. `sentinel-operator` authenticates operators with a dedicated TLS client-certificate trust root, owns the browser CSRF/origin boundary, and forwards only an explicit operator route allowlist to loopback Control using a server-held admin credential. It receives no PostgreSQL, Worker, Signer/CA, target-key or PVE credential.
 
@@ -90,7 +90,7 @@ Human/operator authority. Owns grant creation/revocation, global security epoch,
 
 Only Control Plane receives PostgreSQL runtime credentials and only Control Plane may call SSH Signer. Gateway, Worker, Signer and `sentinel-operator` receive no database credential.
 
-Production-candidate mutable state is opened through explicit `SENTINEL_PERSISTENCE_BACKEND=postgres`. Failure to connect, validate schema version or validate runtime role terminates startup; there is no fallback to file authority.
+Production mutable state is opened through explicit `SENTINEL_PERSISTENCE_BACKEND=postgres`. Failure to connect, validate schema version or validate runtime role terminates startup; there is no fallback to file authority.
 
 Authoritative context comes from `SENTINEL_CONTEXT_FILE`. SSH transport resolution comes from `SENTINEL_SSH_TARGETS_FILE`; jobs contain only logical target IDs.
 
@@ -115,13 +115,21 @@ The same mTLS/security wrapper protects both the embedded static UI and its `/ap
 
 See `docs/OPERATOR_UI.md` and `docs/OPERATOR_DEPLOYMENT.md`.
 
+### Agent clients and MCP adapter
+
+`sentinelctl` and `sentinel-mcp` are clients of the capability-scoped Agent API, not additional authority planes. The MCP adapter exposes only the stable five-tool surface and keeps its operation journal locally; it cannot issue grants, decide approvals, edit policy/targets, reach Worker/Signer authority, or access PostgreSQL.
+
+A human-issued one-time MCP claim is only a bootstrap credential. Redemption goes through Gateway/Control, is bound to the current security epoch, and yields a normal scoped Sentinel capability.
+
 ### PostgreSQL transaction boundary
 
-Schema version 2 persists:
+Schema version 4 persists:
 
 - grants and target/permission/history scope;
 - approvals, decisions and durable one-shot approval-to-job binding;
-- execution jobs and hashed claim secrets;
+- execution jobs and hashed worker claim secrets;
+- bounded execution output in a separate job-bound table;
+- one-time MCP claim hashes, fixed scope/targets, expiry and consumption state;
 - emergency authority epoch/state;
 - canonical hash-chained audit/history;
 - Trust-2 continuity notes.
@@ -261,7 +269,7 @@ File development mode uses local integrity protection. PostgreSQL mode instead r
 
 ## Persistent state and recovery
 
-PostgreSQL is the production candidate. Fresh databases start globally disabled. File-to-PostgreSQL cutover never imports old live bearer authority as active.
+PostgreSQL is the production persistence/transaction boundary. Fresh databases start globally disabled. File-to-PostgreSQL cutover never imports old live bearer authority as active.
 
 Database backup/PITR is sensitive because restoring an older point can restore an older security epoch. A restored database must come up disabled/network-isolated and receive an operator-controlled revoke/epoch bump before Gateway/Worker authority resumes.
 

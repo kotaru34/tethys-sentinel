@@ -2,9 +2,7 @@
 
 ## Status
 
-This document defines the first operator-facing web UI milestone for Tethys Sentinel after the accepted `0.1.0-dev.13` security-core merge.
-
-The intended release milestone is `0.1.0-dev.14 — Operator UI v1` once the complete runnable operator surface is implemented and accepted. Documentation-only planning on `wip/operator-ui` does not change the version.
+This document defines the accepted Operator UI/BFF contract in the current `0.1.0-dev.20` baseline. Operator UI v1 is implemented and accepted; the current baseline also includes stable multi-tab CSRF handling and the one-time MCP capability-claim bootstrap flow.
 
 ## Goal
 
@@ -18,6 +16,7 @@ The UI must make the common operator tasks fast:
 - inspect active/recent execution jobs;
 - inspect the verified audit trail;
 - inspect the protected target inventory and current authoritative context;
+- issue short-lived one-time MCP bootstrap claims without exposing persistent operator authority;
 - perform global emergency revoke/enable actions.
 
 The UI is an operator tool, not an AI-facing interface and not an infrastructure shell.
@@ -35,7 +34,7 @@ The first UI does not provide:
 - worker-control/debug endpoints;
 - direct PostgreSQL access from the browser or operator service;
 - a generic backend/admin API for future AI/MCP use;
-- raw stdout/stderr retention that the current execution model intentionally does not persist.
+- direct browsing of raw execution stdout/stderr in normal Operator job views. Bounded output may be persisted for capability-gated Agent/MCP readback, but it remains outside the Operator job read model.
 
 Those boundaries remain operator-owned outside the UI unless a later milestone explicitly designs and re-accepts them.
 
@@ -240,6 +239,14 @@ The plaintext capability returned by grant issuance is shown exactly once in a d
 
 Revocation reduces authority and should be quick but explicit: show grant identity/scope in a confirmation dialog and wait for server confirmation.
 
+### MCP bootstrap
+
+The global `Connect MCP` action creates a short-lived one-time claim rather than handing a long-lived admin credential to an MCP host.
+
+The operator selects the agent name, purpose, protected target set, claim TTL (30..300 seconds), resulting grant TTL, shell authority and output-readback scope. Execution authority is always enabled for this bootstrap flow; upload/download/notes and broader history permissions remain disabled by the UI.
+
+The plaintext claim is shown exactly once. The UI instructs the operator to redeem it on the MCP host with `sentinelctl mcp claim`. First successful redemption consumes the claim and installs the resulting capability atomically; expiry, reuse, global disable or a changed security epoch makes the claim unusable. A running `sentinel-mcp` reloads capability state per call, so it does not need to restart after rotation.
+
 ### Jobs
 
 Provide live/recent execution visibility without inventing raw command output.
@@ -348,11 +355,11 @@ Both actions collect a human-readable reason in the UI and display the resulting
 
 The UI must explain that enable does not revive grants from an older epoch.
 
-## Operator read API required from Control
+## Operator API surface
 
-The current admin API is intentionally mutation-heavy and does not expose enough read state for the UI. v1 therefore adds a narrow operator read model under the existing admin authentication boundary.
+The accepted implementation uses a narrow operator read model under the existing admin authentication boundary.
 
-Target Control routes:
+Control read routes:
 
 ```text
 GET  /admin/v1/overview
@@ -371,6 +378,7 @@ Existing mutations remain:
 ```text
 POST /admin/v1/grants
 POST /admin/v1/grants/{id}/revoke
+POST /admin/v1/mcp/claims
 POST /admin/v1/approvals/{id}/decision
 GET  /admin/v1/emergency/state
 POST /admin/v1/emergency/revoke-all
@@ -425,9 +433,9 @@ The UI must show stale/offline state if the operator API cannot be reached. It m
 - confirmations identify the exact grant/approval/action they affect;
 - server errors preserve enough detail for an operator to understand conflict vs transport failure without exposing secrets.
 
-## dev.14 acceptance criteria
+## Operator UI regression criteria
 
-`0.1.0-dev.14` is accepted only when all of the following pass.
+The accepted Operator UI boundary must continue to satisfy all of the following.
 
 ### Boundary/authentication
 
@@ -445,6 +453,7 @@ The UI must show stale/offline state if the operator API cannot be reached. It m
 - pending approval appears and can be denied/allowed once;
 - `Allow this session` appears only where backend policy allows it;
 - grant can be issued and its capability is displayed once only;
+- one-time MCP claim can be issued, revealed once, redeemed once, and becomes unusable after expiry/reuse/security-epoch invalidation;
 - existing grant can be revoked;
 - jobs and their factual lifecycle/result are inspectable;
 - audit events are inspectable through a verified read path;
@@ -461,22 +470,18 @@ The UI must show stale/offline state if the operator API cannot be reached. It m
 - keyboard focus/navigation works for all mutation controls;
 - errors/offline state cannot be mistaken for successful/current authority state.
 
-## Implementation order
+## Current implementation notes
 
-1. Add backend-neutral operator read interfaces and Control admin read endpoints with tests.
-2. Add operator identity propagation/audit handling for admin mutations.
-3. Add `sentinel-operator` service with strict TLS/mTLS, CSRF/origin enforcement and embedded static assets.
-4. Build the shared UI shell/navigation/design tokens.
-5. Implement Overview, Approvals and Security first because they form the core supervision path.
-6. Implement Grants and one-time capability reveal.
-7. Implement Jobs + audit-linked timeline and Audit browser.
-8. Implement read-only Targets and Context.
-9. Add targeted security/HTTP/frontend tests, CI build steps and deployment docs.
-10. Bump to `0.1.0-dev.14`, deploy on the accepted topology and run the operator UI acceptance checklist before merge.
+- `sentinel-operator` is a separate Go BFF/web process with embedded frontend assets.
+- The BFF uses an explicit route allowlist; unknown admin routes are unreachable from the browser.
+- CSRF state is stable across concurrent tabs by reusing a valid high-entropy `__Host-tethys_csrf` cookie/token rather than rotating it on every session read.
+- The one-time MCP claim launcher is an explicit privileged mutation, not a generic MCP/admin console.
+- Frontend reproducibility/security checks and Operator Go tests run in CI.
 
-## Invariants carried from dev.13
+## Invariants
 
-Operator UI work must not weaken:
+
+Operator UI changes must not weaken:
 
 - opaque capability + hash-only persistence;
 - monotonic security epoch/non-revival;

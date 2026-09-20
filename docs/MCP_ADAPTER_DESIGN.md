@@ -38,7 +38,7 @@ Explicit last-resort Python execution:
 code(target, source, timeout_seconds?)
 ```
 
-There is no `args` field and no model-facing shell tool. The model does not choose an interpreter command; dev.18 uses the adapter-owned `python3 -c <source>` carrier. The adapter asserts that the shared Sentinel classifier still recognizes this carrier as requiring unstructured/arbitrary-code authority before submitting it.
+There is no `args` field and no model-facing shell tool. The model does not choose an interpreter command; the adapter uses the fixed `python3 -c <source>` carrier. The adapter asserts that the shared Sentinel classifier still recognizes this carrier as requiring unstructured/arbitrary-code authority before submitting it.
 
 `sentinel_code` remains discoverable in the stable five-tool surface. A capability without backend `shell` authority receives `SHELL_AUTHORITY_REQUIRED` at invocation time. Backend classification and approval still apply, so code is not a bypass around Sentinel approval semantics.
 
@@ -107,7 +107,7 @@ Each journal record is permanently bound to the `session_id` returned by Sentine
 
 The journal intentionally stores immutable operation identity and request mapping rather than a second mutable copy of backend job state. `check` reconciles state from Sentinel by resubmitting the same immutable request ID and then reading the resulting job.
 
-This journal does not solve a different problem: if an MCP response is completely lost and the model invents a brand-new, semantically identical tool call instead of using the original `id`, dev.18 does not attempt content-based deduplication across those distinct operations.
+This journal does not solve a different problem: if an MCP response is completely lost and the model invents a brand-new, semantically identical tool call instead of using the original `id`, the current adapter does not attempt content-based deduplication across those distinct operations.
 
 ## Output trust and bounds
 
@@ -130,7 +130,7 @@ Preview truncation uses head+tail excerpts. `output(query=...)` centers its boun
 
 ## MCP transport and process boundary
 
-Dev.20 uses the official Go MCP SDK with both stdio and a dedicated Streamable HTTP transport. Native HTTP is loopback-only by policy, remains healthy without a capability, and keeps the stable five-tool discovery surface. The inbound request/frame size is capped at 1 MiB.
+The accepted dev.20 baseline uses the official Go MCP SDK with both stdio and a dedicated Streamable HTTP transport. Native HTTP is loopback-only by policy, remains healthy without a capability, and keeps the stable five-tool discovery surface. The inbound request/frame size is capped at 1 MiB.
 
 Stdout is reserved for MCP protocol traffic. Startup/version/error diagnostics go to stderr. Agent access keeps the already accepted `agentclient` TLS behavior: HTTPS only, no proxy environment routing, no redirect following and no insecure TLS mode.
 

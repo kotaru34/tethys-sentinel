@@ -1,13 +1,8 @@
 # Agent HTTP API and `sentinelctl`
 
-This document defines the agent-facing execution surface introduced in `0.1.0-dev.16`.
+This document defines the current agent-facing execution surface in the accepted `0.1.0-dev.20` baseline.
 
-The design has two supported clients:
-
-1. the HTTPS Agent API itself, usable with `curl` as the reference/raw interface;
-2. `sentinelctl`, a small first-party client over exactly the same API.
-
-MCP is intentionally not part of this milestone. A future MCP adapter must remain a thin client over the accepted Agent HTTP API rather than becoming a second authority model.
+The canonical authority surface is the HTTPS Agent API itself. `sentinelctl` is the first-party CLI over the same API, and `sentinel-mcp` is a deliberately narrow model-facing adapter over that accepted contract rather than a second authority model.
 
 ## Security model
 
@@ -31,7 +26,7 @@ Without that flag, job status and result metadata remain readable but the output
 
 ## Public endpoints
 
-The Gateway exposes these execution endpoints:
+The Gateway exposes these capability-scoped execution endpoints:
 
 ```text
 GET  /v1/bootstrap
@@ -40,13 +35,35 @@ GET  /v1/jobs/{id}
 GET  /v1/requests/{request_id}
 ```
 
-All require:
+They require:
 
 ```text
 Authorization: Bearer <capability>
 ```
 
+Gateway additionally exposes one bootstrap endpoint:
+
+```text
+POST /v1/mcp/claims/redeem
+```
+
+That endpoint does not require an existing capability. The short-lived one-time MCP claim is the credential and is exchanged once for a normal scoped Sentinel capability.
+
 `/v1/jobs/{id}` and `/v1/requests/{request_id}` are capability-scoped. A grant cannot read jobs belonging to another grant, even when it knows the job ID or request ID.
+
+### Redeem a one-time MCP claim
+
+An operator can issue a claim through the protected Operator surface. The claim expires after 30..300 seconds and is bound to a fixed target/permission/history scope plus the current security epoch.
+
+Redeem it on the MCP host with:
+
+```bash
+sentinelctl mcp claim
+```
+
+The command reads the claim from a hidden prompt/stdin, `SENTINEL_MCP_CLAIM`, or a protected `--claim-file`; it never accepts the claim as a command-line argv value. Successful redemption installs the returned capability atomically into the configured capability file with strict permissions and verifies it immediately through bootstrap.
+
+A claim is single-use. It is rejected when expired, already consumed, issued in an older security epoch, or while global authority is disabled. `REVOKE ALL` therefore invalidates both existing capabilities and any outstanding pre-revoke claims.
 
 ### Bootstrap
 
@@ -213,9 +230,9 @@ JSON mode preserves the byte-exact base64 fields `stdout_b64` and `stderr_b64` r
 
 ## Output persistence
 
-PostgreSQL schema version 3 adds `sentinel.execution_job_output`, keyed one-to-one by execution job ID. The runtime Control role has only SELECT/INSERT/UPDATE on this table. Per-stream database constraints enforce the same 256 KiB capture bound.
+PostgreSQL schema v4 retains the schema-v3 `sentinel.execution_job_output` table, keyed one-to-one by execution job ID. The runtime Control role has only SELECT/INSERT/UPDATE on this table. Per-stream database constraints enforce the same 256 KiB capture bound.
 
-PostgreSQL terminal job completion, bounded output persistence and the required completion audit event occur in one transaction.
+PostgreSQL terminal job completion, bounded output persistence and the required completion audit event occur in one transaction. Schema v4 additionally persists one-time MCP claim hashes/scope and consumes a claim atomically with creation of the resulting normal grant and audit records.
 
 File-mode development compatibility uses a separate private execution-output store. Existing stores must be regular non-symlink files and, on Unix, must not be accessible by group/other users. New stores are written as mode `0600`.
 

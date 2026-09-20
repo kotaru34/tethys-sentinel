@@ -22,14 +22,14 @@ Gateway, Worker and Signer still receive no PostgreSQL credentials. Only Control
 
 The existing cluster must satisfy all of the following before acceptance:
 
-- PostgreSQL major supported by the current CI matrix (15 or 18 for `0.1.0-dev.13`);
+- PostgreSQL major supported by the current CI matrix (currently 15 or 18);
 - TLS enabled and verifiable from the Control VM;
 - a dedicated `tethys_sentinel` database;
 - repository bootstrap roles `sentinel_owner`, `sentinel_migrator`, and `sentinel_control`;
 - a deployment LOGIN granted only `sentinel_migrator` for migrations;
 - a separate runtime LOGIN granted only `sentinel_control`;
 - runtime `hostssl` access limited to the Control VM source address;
-- schema migrations applied in numeric order through schema version 2;
+- schema migrations applied in numeric order through schema version 4;
 - fresh Sentinel authority state verified as `epoch=0, disabled=true`;
 - no automatic fallback to the file backend.
 
@@ -66,10 +66,10 @@ psql 'host=<DB_IP_OR_VERIFIED_NAME> port=5432 dbname=tethys_sentinel user=sentin
   -X -Atc 'select version from sentinel.schema_version where id=1; select epoch,disabled from sentinel.authority_state where id=1;'
 ```
 
-Expected fresh state:
+Expected fresh state for the current baseline:
 
 ```text
-2
+4
 0|t
 ```
 

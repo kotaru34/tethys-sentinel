@@ -1,6 +1,6 @@
 # Emergency controls
 
-`0.1.0-dev.10` introduced the monotonic global security epoch and active worker authority monitoring. `0.1.0-dev.11` moves the mutable emergency state and its coupled job/audit transitions into PostgreSQL transactions for the production-candidate backend.
+`0.1.0-dev.10` introduced the monotonic global security epoch and active worker authority monitoring. `0.1.0-dev.11` moved the mutable emergency state and its coupled job/audit transitions into PostgreSQL transactions; PostgreSQL is now the accepted production persistence boundary.
 
 The objective is stronger than "stop issuing new tokens": an operator emergency action must invalidate existing agent capabilities, stop jobs that have not begun executing, prevent new SSH credentials from being issued, and make active workers terminate their execution transport when authority is lost.
 

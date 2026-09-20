@@ -1,8 +1,8 @@
 # Constrained infrastructure acceptance
 
-This runbook is the repeatable real-infrastructure acceptance procedure for `0.1.0-dev.13`. It is deliberately conservative: use disposable/constrained guests, keep the Gateway non-public during acceptance, and do not merge to `main` until every required positive and negative check passes.
+This runbook is the repeatable core real-infrastructure acceptance procedure for the current `0.1.0-dev.20` baseline. It is deliberately conservative: use disposable/constrained guests, keep the Gateway non-public during acceptance, and do not treat a deployment/release candidate as accepted until every required positive and negative check passes.
 
-The first dev.13 run on the intended PVE topology passed the hard-boundary checks described here. `HANDOFF.md` is the evidence record for that run; this document remains the reproducible procedure.
+The original constrained run established these broker hard boundaries; later accepted milestones added Agent HTTP/CLI, Operator UI, bounded output, MCP, and one-time claim behavior without replacing them. `HANDOFF.md` records the current accepted baseline. This document remains the reproducible core procedure; use the Agent/Operator/MCP-specific documentation for their additional checks.
 
 The purpose is to prove the boundaries together, not merely prove that each binary starts.
 
@@ -34,7 +34,7 @@ sentinel-signer       1 vCPU / 512 MiB RAM
 target-test  1 vCPU / 512 MiB RAM
 ```
 
-Debian 13 minimal is suitable for the application guests. Use PostgreSQL 18 for this first acceptance because it is directly covered by the CI matrix. PostgreSQL 15 is also covered by CI.
+Debian 13 minimal is suitable for the application guests. PostgreSQL 15 and 18 are covered by the current CI matrix; use a supported major that matches the intended deployment.
 
 Do not publish the Gateway to the Internet yet. Reach it from an operator workstation/LAN only.
 
@@ -73,17 +73,20 @@ Before using the rest of this runbook:
 
 Never use production infrastructure as `target-test` for this acceptance.
 
-## Build the accepted source
+## Build the source under acceptance
 
-Build from the accepted `0.1.0-dev.13` release state, not an arbitrary moving branch checkout:
+Build from the exact source commit being accepted, not an arbitrary moving branch checkout:
 
 ```sh
 git clone https://github.com/kotaru34/tethys-sentinel.git
 cd tethys-sentinel
-git checkout bd6796aae2ee192fd9d007bab39a40ab6870dbcc
+git checkout <commit-being-accepted>
+git rev-parse HEAD
 cat VERSION
-# expected: 0.1.0-dev.13
+# current accepted baseline: 0.1.0-dev.20
 ```
+
+Record the selected source commit and resulting binary hashes in private operator acceptance notes rather than hard-coding deployment-specific checkpoints in this public runbook.
 
 Use Go 1.27.1, matching CI. Build static binaries on a trusted build host before the Worker firewall is locked down:
 
@@ -257,10 +260,10 @@ psql 'host=<DB_IP> port=5432 dbname=tethys_sentinel user=sentinel_control_login 
   -X -Atc 'select version from sentinel.schema_version where id=1; select epoch,disabled from sentinel.authority_state where id=1;'
 ```
 
-Expected:
+Expected for the current baseline:
 
 ```text
-2
+4
 0|t
 ```
 
@@ -643,7 +646,7 @@ Only after the egress and TLS boundaries pass, enable authority:
 curl -fsS -X POST \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"reason":"dev.13 constrained infrastructure acceptance"}' \
+  -d '{"reason":"constrained infrastructure acceptance"}' \
   http://127.0.0.1:8081/admin/v1/emergency/enable
 ```
 
@@ -657,7 +660,7 @@ GRANT_JSON="$({ curl -fsS -X POST \
   -H 'Content-Type: application/json' \
   -d '{
     "agent":"acceptance-agent",
-    "purpose":"dev.13 constrained infrastructure acceptance",
+    "purpose":"constrained infrastructure acceptance",
     "targets":["target-test"],
     "permissions":{"exec":true,"shell":false,"history_read":true,"notes_read":true,"notes_write":true},
     "history":{"current_session":true,"previous_sessions":false,"other_agents":false,"include_output":false},
@@ -683,7 +686,7 @@ curl --fail --silent --show-error \
     "request_id":"acceptance-true-dev13-0001",
     "target":"target-test",
     "argv":["true"],
-    "agent_reason":"non-destructive dev.13 infrastructure acceptance"
+    "agent_reason":"non-destructive infrastructure acceptance"
   }' \
   "https://${GATEWAY_IP}:8443/v1/commands/submit"
 ```
@@ -706,7 +709,7 @@ curl -fsS -X POST \
 
 Resubmit the **same** request ID and command. Expected: accepted and executed once. Confirm the marker is gone and the replay marker exists.
 
-Then submit the same command with a **new** request ID. It must not reuse the consumed one-shot approval; a new operator decision must be required. This is the real-infrastructure proof of the schema-v2 `consumed_by_job_id` invariant.
+Then submit the same command with a **new** request ID. It must not reuse the consumed one-shot approval; a new operator decision must be required. This is the real-infrastructure proof of the durable `consumed_by_job_id` one-shot invariant introduced by migration 0002.
 
 ## Test 3: individual revoke during execution
 
@@ -735,7 +738,7 @@ Expected:
 - Worker authority lease turns false;
 - Worker cancels the execution context/SSH transport;
 - job becomes terminal and does not remain stuck `running`;
-- factual terminal error is `execution_authority_lost` for the accepted dev.13 path;
+- factual terminal error is `execution_authority_lost` for the accepted active-revoke path;
 - target sshd closes the session and the foreground `sleep` process disappears;
 - the revoked capability cannot submit new work.
 
@@ -749,7 +752,7 @@ Enable authority if required, issue another short grant, and run another bounded
 curl -fsS -X POST \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"reason":"dev.13 active global revoke acceptance"}' \
+  -d '{"reason":"active global revoke acceptance"}' \
   http://127.0.0.1:8081/admin/v1/emergency/revoke-all
 ```
 
@@ -780,7 +783,7 @@ Finish/cancel active work, then perform a controlled Control Plane restart while
 
 Verify after restart:
 
-- schema version is still 2;
+- schema version is still 4;
 - current epoch/disabled state is unchanged;
 - revoked/stale grants do not revive;
 - audit history verifies;
@@ -866,7 +869,7 @@ Do **not** store bearer tokens, worker claim tokens, DB passwords, TLS private k
 
 ## Pass/fail rule
 
-The first WIP merge is allowed only when all of these are true:
+Acceptance passes only when all of these are true:
 
 - all components use authenticated TLS/mTLS as designed;
 - PostgreSQL schema/runtime role checks pass;

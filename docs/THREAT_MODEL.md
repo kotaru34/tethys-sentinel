@@ -46,7 +46,7 @@ Target-side replay protection is independent: a root-only helper atomically cons
 
 The explicit file development backend protects local job records with HMAC-SHA-256 using a Control-Plane-only integrity key. Unauthorized target/argv/status/approval changes fail closed, but this does not defend a fully compromised Control Plane holding that key.
 
-The production-candidate PostgreSQL backend instead relies on database ownership/least privilege, constraints, ordered transactions, WAL/backups, immutable command bindings and the canonical transactional audit chain. Security-sensitive state changes and required audit records commit together. PostgreSQL does not silently fall back to file authority if connection/schema/runtime-role validation fails.
+The production PostgreSQL backend instead relies on database ownership/least privilege, constraints, ordered transactions, WAL/backups, immutable command bindings and the canonical transactional audit chain. Security-sensitive state changes and required audit records commit together. PostgreSQL does not silently fall back to file authority if connection/schema/runtime-role validation fails.
 
 A fully compromised Control Plane or database authority remains outside what application-level persistence checks can defeat; operator and host boundaries remain required.
 
@@ -329,6 +329,6 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 
 ## Infrastructure acceptance status
 
-The dev.13 constrained PVE run completed the planned hard-boundary acceptance on the intended topology. Evidence in `HANDOFF.md` includes real end-to-end pinned SSH execution, multi-host-key negotiation, packet-level Worker egress tests, individual/global active revoke, epoch non-revival, PostgreSQL no-fallback startup failure, Worker sensitive-material/service-account/mTLS checks, and absence of a routed IPv6 bypass.
+The current accepted `0.1.0-dev.20` baseline retains the constrained hard-boundary evidence for end-to-end pinned SSH execution, multi-host-key negotiation, packet-level Worker egress, individual/global active revoke, epoch non-revival, PostgreSQL fail-closed startup, Worker sensitive-material/service-account/mTLS checks, and absence of a routed IPv6 bypass. Later acceptance additionally covers bounded output, the Operator boundary, native MCP transport, one-time claim rotation, and stale-capability behavior. `HANDOFF.md` is the current evidence summary.
 
-That acceptance does not eliminate the residual assumptions above. Future changes that alter these boundaries must repeat the relevant automated and real-infrastructure checks. `docs/INFRASTRUCTURE_ACCEPTANCE.md` is the repeatable procedure.
+That acceptance does not eliminate the residual assumptions above. Future changes that alter these boundaries must repeat the relevant automated and real-infrastructure checks. `docs/INFRASTRUCTURE_ACCEPTANCE.md` is the repeatable core procedure.

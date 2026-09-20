@@ -175,7 +175,7 @@ OpenSSH certificates themselves do not provide an instant server-side revocation
 
 `SENTINEL_PERSISTENCE_BACKEND=file` remains an explicit development compatibility mode. File-backed execution records use local integrity protection and are not the production durability model.
 
-`SENTINEL_PERSISTENCE_BACKEND=postgres` is the production-candidate backend. PostgreSQL schema version 2 persists mutable grants, approvals, jobs, emergency authority, audit/history and Trust-2 notes. Security-sensitive transitions and their required audit events commit transactionally, and the runtime role has least privilege.
+`SENTINEL_PERSISTENCE_BACKEND=postgres` is the production backend. PostgreSQL schema v4 persists mutable grants, approvals, jobs, bounded execution output, one-time MCP claims, emergency authority, audit/history and Trust-2 notes. Security-sensitive transitions and their required audit events commit transactionally, and the runtime role has least privilege.
 
 PostgreSQL startup is explicit and fail-closed: unavailable/invalid PostgreSQL never silently falls back to file-backed authority.
 
@@ -223,14 +223,14 @@ The target replay semantic is deliberately at-most-once: once the root-protected
 - Periodic authority loss actively cancels SSH transport.
 - Stdout/stderr accounting is bounded per stream.
 - Output overflow actively closes the SSH transport.
-- Raw stdout/stderr is not persisted by the current worker.
+- Bounded stdout/stderr may be persisted in the separate execution-output store; it remains non-authoritative and is returned only through capability-gated Agent/MCP readback when `history.include_output=true`.
 
-## Current non-goals / remaining work
+## Current status and residual non-goals
 
-The dev.13 execution protocol and its intended infrastructure boundaries have passed constrained real-infrastructure acceptance. Current non-goals/future work include:
+The execution protocol remains part of the accepted `0.1.0-dev.20` baseline. Operator UI and MCP sit above this broker contract and do not bypass its grant, policy, approval, immutable-job, Worker, Signer, replay, or active-authority checks.
 
-- a production operator UI;
-- the deliberately narrow AI/MCP tool surface that will sit above the accepted broker APIs;
+Residual non-goals include:
+
 - external audit sealing against an attacker able to coherently rewrite all trusted database state;
 - formal verification;
 - a generic guarantee that every detached/daemonized descendant process on every supported target OS dies immediately when an SSH transport is canceled.

@@ -241,7 +241,7 @@ Automated tests cover, among other cases:
 
 ## Real infrastructure acceptance
 
-The dev.13 constrained infrastructure run completed the previously outstanding SSH acceptance on the intended PVE topology. Evidence in `HANDOFF.md` proves:
+The current accepted baseline retains constrained real-infrastructure SSH acceptance on the intended PVE topology. Evidence summarized in `HANDOFF.md` includes:
 
 - mTLS/TLS between real component VMs;
 - PostgreSQL schema/runtime role, persistence and fail-closed startup behavior;

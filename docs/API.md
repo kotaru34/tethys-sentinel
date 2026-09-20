@@ -1,6 +1,6 @@
 # API surface (development)
 
-This document describes the current development API surface through the `0.1.0-dev.14` Operator UI v1 release candidate. It is not yet a stable public contract.
+This document describes the current accepted development API surface for `0.1.0-dev.20` with PostgreSQL schema v4. It is a development contract, not yet a stable public API.
 
 Sentinel deliberately has several different API boundaries. They are not interchangeable:
 
@@ -34,7 +34,7 @@ Every grant carries a server-owned `security_epoch`. A grant authenticates only 
 
 ## AI Gateway
 
-Gateway accepts opaque capability bearer tokens over TLS. It has no grant-management, policy-management, emergency-control, inventory-write, audit-control, worker-control, SSH-certificate, SSH-target-resolution, PostgreSQL, or CA endpoint.
+Gateway accepts opaque capability bearer tokens over TLS and also exposes one narrowly scoped one-time MCP claim redemption endpoint. It has no general grant-management, policy-management, emergency-control, inventory-write, audit-control, worker-control, SSH-certificate, SSH-target-resolution, PostgreSQL, or CA endpoint.
 
 All capability-facing requests use:
 
@@ -89,6 +89,22 @@ A successful accepted response contains a job receipt, never worker claim secret
 
 For PostgreSQL, staged authorization is a transactional semantic operation. It revalidates current authority, grant, `exec`, target/agent binding, immutable command hash, current policy and any bound approval before publishing the job.
 
+### `GET /v1/jobs/{id}`
+
+Returns the capability-scoped job state. A grant cannot read a job owned by another grant even when it knows the job ID.
+
+Terminal state includes factual result metadata. When the authenticating grant has `history.include_output=true`, bounded stdout/stderr may additionally be returned from the separate execution-output store as base64 byte fields. Raw output remains non-authoritative `TRUST_2` data.
+
+### `GET /v1/requests/{request_id}`
+
+Recovers the job associated with the same capability and immutable request ID after a lost/disconnected submission response. Request IDs are not globally readable.
+
+### `POST /v1/mcp/claims/redeem`
+
+Exchanges a short-lived one-time MCP claim code for a normal Sentinel capability. This endpoint does not require an existing capability; the one-time claim itself is the credential.
+
+Gateway hashes the claim code before forwarding redemption to Control. Redemption fails closed when global authority is disabled or the claim is unknown, expired, already used, or bound to a stale security epoch. Successful redemption atomically creates the scoped grant and consumes the claim.
+
 ## Approval semantics
 
 Admin decisions:
@@ -101,7 +117,7 @@ allow_session
 
 `allow_session` is allowed only where current policy defines a stable reusable narrow scope. `ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, and `REMOTE_EXEC` are strictly `allow_once`.
 
-PostgreSQL schema version 2 durably binds a consumed one-shot approval to `consumed_by_job_id`. Consumption, that binding, `staged -> pending` publication and the authorization audit event commit in one transaction. A consumed one-shot approval cannot authorize another job in the same scope.
+PostgreSQL schema v4 retains the durable `consumed_by_job_id` one-shot approval binding introduced by migration 0002. Consumption, that binding, `staged -> pending` publication and the authorization audit event commit in one transaction. A consumed one-shot approval cannot authorize another job in the same scope.
 
 ## Control admin API
 
@@ -143,6 +159,7 @@ List limits are bounded server-side. Persistence implementations own cursor sema
 ```text
 POST /admin/v1/grants
 POST /admin/v1/grants/{id}/revoke
+POST /admin/v1/mcp/claims
 POST /admin/v1/approvals/{id}/decision
 POST /admin/v1/emergency/revoke-all
 POST /admin/v1/emergency/enable
@@ -184,6 +201,14 @@ TTL must be 30..28800 seconds. Plaintext capability token is returned once; only
 
 In PostgreSQL mode, grant insertion/targets/audit use a semantic transaction and serialize with global revoke through `authority_state`.
 
+### Issue one-time MCP claim
+
+`POST /admin/v1/mcp/claims` creates a short-lived, single-use bootstrap credential whose scope is fixed by the operator. Claim TTL is 30..300 seconds; the resulting grant TTL is 30..28800 seconds.
+
+The plaintext claim code is returned exactly once. PostgreSQL stores only its SHA-256 plus the fixed grant template, target set, current security epoch, expiry, and consumption timestamp. Issuance serializes with `authority_state`, and successful redemption creates the normal hashed-capability grant and marks the claim used in one transaction with its audit records.
+
+The Operator BFF exposes this only as the fixed `POST /api/v1/mcp/claims` mutation; there is no generic browser grant/admin proxy.
+
 ### Individual revoke
 
 `POST /admin/v1/grants/{id}/revoke` revokes the grant, cancels its non-running executable jobs/claim material as applicable, and records the required audit event transactionally in PostgreSQL. Running jobs lose their authority lease through the already-accepted active-revoke path.
@@ -209,7 +234,7 @@ Example:
   "epoch": 3,
   "disabled": true,
   "updated_at": "2026-09-14T19:17:03Z",
-  "reason": "dev.13 acceptance complete; first WIP merge finished"
+  "reason": "operator emergency stop"
 }
 ```
 
@@ -275,6 +300,7 @@ Query strings for bounded list/filter operations are forwarded only to the corre
 ```text
 POST /api/v1/grants
 POST /api/v1/grants/{id}/revoke
+POST /api/v1/mcp/claims
 POST /api/v1/approvals/{id}/decision
 POST /api/v1/emergency/revoke-all
 POST /api/v1/emergency/enable
@@ -386,7 +412,7 @@ SENTINEL_PERSISTENCE_BACKEND=postgres
 
 `file` remains development compatibility mode. `postgres` requires `SENTINEL_POSTGRES_DSN`, exact supported schema version and an appropriately restricted runtime role. Production PostgreSQL TLS must verify the server. If PostgreSQL cannot be opened/validated, Control Plane exits and never falls back to file state.
 
-PostgreSQL schema version 2 is authoritative for mutable grants/targets, approvals, execution jobs/claim hashes, emergency authority, audit/history and Trust-2 notes. Trust-0 context, SSH target inventory, signer key/policy and external PVE worker-egress policy remain separate operator-owned boundaries.
+PostgreSQL schema v4 is authoritative for mutable grants/targets, approvals, execution jobs/claim hashes, bounded execution output, one-time MCP claims, emergency authority, audit/history and Trust-2 notes. Trust-0 context, SSH target inventory, signer key/policy and external PVE worker-egress policy remain separate operator-owned boundaries.
 
 Gateway, Worker, Signer and `sentinel-operator` do not receive the PostgreSQL runtime credential.
 

@@ -2,7 +2,7 @@
 
 Updated: 2026-09-20  
 Current accepted development version: `0.1.0-dev.20`  
-Branch: `public-release-cleanup`
+Branch: `main`
 
 ## Status
 
@@ -81,6 +81,8 @@ No dev.20 runtime acceptance blocker remains.
 Completed on the public repository:
 
 - current source/docs/config examples were sanitized to documentation-only addresses and names;
+- public documentation was normalized to the accepted `0.1.0-dev.20` / PostgreSQL schema v4 baseline, including the current Agent API, Operator, bounded-output, MCP and one-time claim contracts;
+- database/runbook documentation now includes migration `0004_mcp_claims.sql` and schema v4 rather than presenting dev.13-dev.16 checkpoints as the current deployment state;
 - development-only frozen artifact workflows were removed;
 - a permanent tracked-tree privacy/secret guard was added to CI;
 - Go tidy/format/vet/race tests, PostgreSQL 15/18 integration, Operator frontend reproducibility/security, and the privacy scan passed on the sanitized snapshot;

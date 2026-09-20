@@ -18,7 +18,7 @@ sentinel-control 127.0.0.1:8081
 
 `sentinel-operator` runs on the Control host as a separate unprivileged systemd service. The public AI Gateway does not receive operator routes.
 
-The accepted dev.15 deployment keeps operator configuration under a separate `/etc/tethys-sentinel-operator` root. Do **not** grant the operator service traversal of `/etc/tethys-sentinel`; that directory belongs to the `sentinel-control` security boundary.
+The recommended deployment keeps operator configuration under a separate `/etc/tethys-sentinel-operator` root. Do **not** grant the operator service traversal of `/etc/tethys-sentinel`; that directory belongs to the `sentinel-control` security boundary.
 
 ## Credential boundary
 
@@ -46,21 +46,16 @@ The deployed host does not need Node.js.
 
 The browser source lives in `web/operator` and is built with TypeScript, Preact and Vite. CI verifies that generated files match the frontend archive embedded into the Go binary.
 
-Build from the exact accepted source checkpoint:
+Build from the exact source commit you intend to deploy and record that commit plus the resulting binary hash in private operator records:
 
 ```bash
-git checkout 41c343e83596d299af05cf92945395ec008f0fd9
+git rev-parse HEAD
 cat VERSION
-# expected: 0.1.0-dev.15
+# current accepted baseline: 0.1.0-dev.20
 
 go test ./internal/operatorweb ./internal/operatorproxy ./cmd/sentinel-operator
 CGO_ENABLED=0 go build -trimpath -o sentinel-operator ./cmd/sentinel-operator
-```
-
-The accepted dev.15 `sentinel-operator` binary built with Go 1.27.1 has SHA-256:
-
-```text
-ea50c402b93d39e592f18106b3340b8615ede04e94e9957eb2f27abde236956c
+sha256sum sentinel-operator
 ```
 
 `sentinel-operator` intentionally has no runtime dependency on a checkout, `node_modules`, npm or Vite.
@@ -90,7 +85,7 @@ sudo install -d \
 
 Install `config/systemd/sentinel-operator.service` as `/etc/systemd/system/sentinel-operator.service`.
 
-The accepted Control directory remains separately protected, for example:
+The Control directory remains separately protected, for example:
 
 ```text
 /etc/tethys-sentinel          0750 root:sentinel-control
@@ -263,6 +258,9 @@ Run acceptance against the exact release candidate binary and record the source 
 - A consumed `allow_once` cannot authorize a second request ID with the same risk scope.
 - A grant can be issued and its plaintext capability appears only in the immediate reveal state.
 - Dismissing the reveal removes the token from application state; it is not in localStorage/sessionStorage.
+- A one-time MCP claim can be issued from the UI, appears only in the immediate reveal state, expires within its configured 30..300 second TTL, and cannot be redeemed twice.
+- Redeeming a claim with `sentinelctl mcp claim` installs a normal scoped capability without exposing the Control admin credential to the MCP host.
+- A claim issued before `REVOKE ALL` cannot be redeemed after the epoch changes, even after authority is re-enabled.
 - A grant can be revoked.
 - Jobs expose immutable command binding, timestamps and terminal result without inventing raw stdout/stderr.
 - Audit, Targets and Trust-0 Context are readable and remain non-mutable in the browser.
@@ -275,12 +273,4 @@ Run acceptance against the exact release candidate binary and record the source 
 - `Enable AI access` requires an explicit human reason/confirmation.
 - Re-enable preserves the current epoch and does not revive an older capability.
 
-The accepted dev.15 run completed grant and approval mutation acceptance and ended with:
-
-```text
-security epoch: 5
-disabled: true
-reason: dev.15 approval workflow acceptance complete
-```
-
-Epochs 0 through 4 are permanently stale. Leave authority in the intended fail-closed state after acceptance and never reuse an expired/revoked/stale acceptance capability.
+Leave authority in the intended fail-closed state after acceptance and never reuse an expired, revoked, stale, or already-consumed acceptance credential. Record deployment-specific epochs, reasons, source commits, binary hashes and PKI fingerprints only in private operator records; do not commit them to this public guide.
