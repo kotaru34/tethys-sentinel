@@ -76,6 +76,28 @@ The accepted intended-infrastructure run proved:
 
 No dev.20 runtime acceptance blocker remains.
 
+## Public-release cleanup status
+
+Completed on the public repository:
+
+- current source/docs/config examples were sanitized to documentation-only addresses and names;
+- development-only frozen artifact workflows were removed;
+- a permanent tracked-tree privacy/secret guard was added to CI;
+- Go tidy/format/vet/race tests, PostgreSQL 15/18 integration, Operator frontend reproducibility/security, and the privacy scan passed on the sanitized snapshot;
+- public branch refs were moved away from the old development graph to the sanitized history;
+- `main` now contains only the original safe initialization commit plus sanitized public commits;
+- repository metadata currently has no release/tag publication path carrying the removed deployment evidence, and no forks were present when checked.
+
+Remaining server-side cleanup before the first public release:
+
+- historical merged pull-request refs/cached diff views still retain the pre-sanitization object graph even though normal branch history no longer does;
+- legacy Actions runs/artifacts that point at the old development SHAs must be deleted or allowed to expire;
+- GitHub Support must be asked to dereference the affected historical pull requests and purge cached views/server objects after the history rewrite;
+- obsolete branch names should be deleted after confirming they all point at the sanitized history;
+- collaborators/local clones made before the rewrite must be discarded/re-cloned or carefully cleaned so an old merge/push cannot reintroduce the tainted graph.
+
+Do not call the repository public-release-ready until the GitHub-hosted historical references above are gone and a final negative scan is repeated.
+
 ## Public-release cleanup gate
 
 Before the first public release:
