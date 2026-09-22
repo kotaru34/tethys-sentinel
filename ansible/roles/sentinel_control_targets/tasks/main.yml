@@ -141,6 +141,7 @@
     owner: root
     group: "{{ sentinel_control_service_group }}"
     mode: "0640"
+  changed_when: false
   no_log: true
 
 - name: Render authoritative context candidate
@@ -150,6 +151,7 @@
     owner: root
     group: "{{ sentinel_control_service_group }}"
     mode: "0640"
+  changed_when: false
   no_log: true
 
 - name: Validate candidate JSON syntax
@@ -236,6 +238,7 @@
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
+      changed_when: false
       loop:
         - "{{ sentinel_registry_candidate }}"
         - "{{ sentinel_context_candidate }}"
