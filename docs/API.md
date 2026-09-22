@@ -48,7 +48,7 @@ Returns current grant scope, Trust-0 authoritative operating statement, and reso
 
 ### `GET /v1/context`
 
-Returns the scoped `TRUST_0` context bundle. Inventory/runbooks are filtered by grant scope. There is no AI-facing Trust-0 write API.
+Returns the scoped `TRUST_0` context bundle. Inventory/runbooks are filtered by grant scope, and host network `addresses` are removed from the AI-facing `INFRASTRUCTURE.json` view. The privileged operator context snapshot retains the configured addresses for inspection. There is no AI-facing Trust-0 write API.
 
 ### `GET /v1/history?limit=50`
 
