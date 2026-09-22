@@ -42,7 +42,9 @@ dev.22 fixes that blocker by synchronizing the embedded runtime version and adds
 
 CI for exact dev.22 candidate commit `5b43a62c0481db183a42417ce3c0413403c3c15b` is green across the version-consistency gate, Go privacy/tidy/format/vet/race suite, PostgreSQL 15/18 integration, operator-frontend reproducibility/security checks, and the linux/amd64 deployment-artifact build. The published deployment binaries are built with Go 1.27.1, CGO disabled, and carry `version=0.1.0-dev.22` in build metadata.
 
-dev.22 is **not accepted yet**. Before merge, deploy the correctly identified dev.22 Control binary, prove privileged context retains host addresses while the Agent bundle redacts them, regenerate/reinstall the Worker policy from the dev.22 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, and repeat a harmless end-to-end execution.
+Live dev.22 Control deployment is now accepted for the context-privacy fix. The installed binary hash matches the published dev.22 artifact and the service reports `0.1.0-dev.22` at startup. With the operator-owned context restored to include the target address, the privileged Operator `/admin/v1/context` view retains that address while the public capability-scoped Agent `/v1/context` `INFRASTRUCTURE.json` view omits the `addresses` field; a machine assertion confirmed no scoped host exposes it.
+
+dev.22 is **not accepted yet**. Before merge, regenerate/reinstall the Worker policy from the dev.22 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, repeat a harmless end-to-end execution, and revoke the acceptance capability.
 
 ## Operator-mandated development rules
 
