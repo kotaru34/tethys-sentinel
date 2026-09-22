@@ -40,7 +40,9 @@ The first live deployment attempt of dev.21 exposed a release-version consistenc
 
 dev.22 fixes that blocker by synchronizing the embedded runtime version and adds a CI version-consistency gate so `VERSION` and `internal/buildinfo.Version` cannot drift again. The functional NTP/context changes are unchanged from the blocked dev.21 candidate.
 
-dev.22 is **not accepted yet**. Before merge, require green CI on the exact dev.22 candidate, deploy the correctly identified dev.22 Control binary, prove privileged context retains host addresses while the Agent bundle redacts them, regenerate/reinstall the Worker policy from the dev.22 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, and repeat a harmless end-to-end execution.
+CI for exact dev.22 candidate commit `5b43a62c0481db183a42417ce3c0413403c3c15b` is green across the version-consistency gate, Go privacy/tidy/format/vet/race suite, PostgreSQL 15/18 integration, operator-frontend reproducibility/security checks, and the linux/amd64 deployment-artifact build. The published deployment binaries are built with Go 1.27.1, CGO disabled, and carry `version=0.1.0-dev.22` in build metadata.
+
+dev.22 is **not accepted yet**. Before merge, deploy the correctly identified dev.22 Control binary, prove privileged context retains host addresses while the Agent bundle redacts them, regenerate/reinstall the Worker policy from the dev.22 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, and repeat a harmless end-to-end execution.
 
 ## Operator-mandated development rules
 
