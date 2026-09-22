@@ -87,7 +87,10 @@ jobs:
           mkdir -p out
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-control ./cmd/sentinel-control
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
-          sha256sum out/sentinel-control out/sentinel-egress-policy > out/SHA256SUMS
+          (
+            cd out
+            sha256sum sentinel-control sentinel-egress-policy > SHA256SUMS
+          )
           {
             echo "commit=$(git rev-parse HEAD)"
             echo "version=$(cat VERSION)"
