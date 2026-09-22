@@ -1,6 +1,6 @@
 # API surface (development)
 
-This document describes the `0.1.0-dev.22` candidate API surface with PostgreSQL schema v4. The previously accepted runtime baseline is `0.1.0-dev.20`. It is a development contract, not yet a stable public API.
+This document describes the accepted `0.1.0-dev.22` API surface with PostgreSQL schema v4. It is a development contract, not yet a stable public API.
 
 Sentinel deliberately has several different API boundaries. They are not interchangeable:
 
