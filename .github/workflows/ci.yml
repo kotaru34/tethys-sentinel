@@ -64,6 +64,48 @@ jobs:
       - name: Unit tests
         run: go test -race ./...
 
+
+  linux-amd64-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Build affected dev.21 binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat VERSION)" = '0.1.0-dev.21'
+          mkdir -p out
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-control ./cmd/sentinel-control
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
+          sha256sum out/sentinel-control out/sentinel-egress-policy > out/SHA256SUMS
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "version=$(cat VERSION)"
+            go version
+          } > out/BUILDINFO.txt
+
+      - name: Upload linux amd64 deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev21-linux-amd64
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            out/sentinel-control
+            out/sentinel-egress-policy
+            out/SHA256SUMS
+            out/BUILDINFO.txt
+
   operator-frontend:
     runs-on: ubuntu-latest
     steps:
