@@ -227,7 +227,7 @@ The target replay semantic is deliberately at-most-once: once the root-protected
 
 ## Current status and residual non-goals
 
-The execution protocol remains part of the accepted `0.1.0-dev.20` baseline. Operator UI and MCP sit above this broker contract and do not bypass its grant, policy, approval, immutable-job, Worker, Signer, replay, or active-authority checks.
+The execution protocol remains part of the accepted `0.1.0-dev.22` baseline. Operator UI and MCP sit above this broker contract and do not bypass its grant, policy, approval, immutable-job, Worker, Signer, replay, or active-authority checks.
 
 Residual non-goals include:
 
