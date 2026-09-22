@@ -1,0 +1,32 @@
+---
+- name: Configure Sentinel target guests
+  hosts: sentinel_targets
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - role: sentinel_target
+      tags:
+        - target
+
+- name: Reconcile Sentinel Control target inventory
+  hosts: sentinel_control
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  serial: 1
+  roles:
+    - role: sentinel_control_targets
+      tags:
+        - control
+
+- name: Reconcile Sentinel Worker external egress
+  hosts: sentinel_pve
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  serial: 1
+  roles:
+    - role: sentinel_worker_egress
+      tags:
+        - egress
