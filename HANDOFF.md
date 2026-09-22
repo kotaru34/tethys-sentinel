@@ -44,7 +44,9 @@ CI for exact dev.22 candidate commit `5b43a62c0481db183a42417ce3c0413403c3c15b` 
 
 Live dev.22 Control deployment is now accepted for the context-privacy fix. The installed binary hash matches the published dev.22 artifact and the service reports `0.1.0-dev.22` at startup. With the operator-owned context restored to include the target address, the privileged Operator `/admin/v1/context` view retains that address while the public capability-scoped Agent `/v1/context` `INFRASTRUCTURE.json` view omits the `addresses` field; a machine assertion confirmed no scoped host exposes it.
 
-dev.22 is **not accepted yet**. Before merge, regenerate/reinstall the Worker policy from the dev.22 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, repeat a harmless end-to-end execution, and revoke the acceptance capability.
+Live dev.22 Worker egress acceptance is now complete. The generated policy was installed byte-for-byte into the Proxmox VM-interface firewall and the dev.22 verifier returned rc=0 against the installed policy, Datacenter firewall and Worker NIC activation. The compiled rules contain only the Control HTTPS destination, the registered target SSH destination and the trusted NTP UDP/123 destination before the outbound drop. After restarting the Worker time client, it synchronized to the trusted time source with sub-millisecond offset; Control and target TCP probes succeeded while generic Internet TCP egress remained blocked. The temporary manual dev.20 NTP rule/drift is therefore replaced by canonical dev.22 policy.
+
+dev.22 is **not accepted yet**. Before merge, repeat a harmless public end-to-end execution through the external Agent HTTP path, verify request-ID recovery resolves to the same job, revoke the acceptance grant/capability, and verify the revoked capability receives 401.
 
 ## Operator-mandated development rules
 
