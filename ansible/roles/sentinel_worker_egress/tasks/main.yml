@@ -12,19 +12,37 @@
       - sentinel_ntp_sources | length > 0
     fail_msg: "Worker egress reconciliation requires one Control host, Worker VMID/net, HTTPS Control URL, and at least one NTP source."
 
-- name: Check controller-side egress-policy binary
+- name: Check controller-side egress inputs
   ansible.builtin.stat:
-    path: "{{ sentinel_egress_policy_binary_src }}"
+    path: "{{ item }}"
+  loop:
+    - "{{ sentinel_egress_policy_binary_src }}"
+    - "{{ sentinel_artifact_checksum_file }}"
   delegate_to: localhost
   become: false
-  register: sentinel_egress_binary_local
+  register: sentinel_egress_controller_inputs
 
 - name: Require accepted egress-policy artifact
   ansible.builtin.assert:
     that:
-      - sentinel_egress_binary_local.stat.exists
-      - sentinel_egress_binary_local.stat.isreg
-    fail_msg: "sentinel-egress-policy is missing from sentinel_artifact_dir."
+      - item.stat.exists | default(false)
+      - item.stat.isreg | default(false)
+    fail_msg: "Required egress artifact input {{ item.item }} is missing."
+  loop: "{{ sentinel_egress_controller_inputs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Verify accepted linux-amd64 artifact checksums
+  ansible.builtin.command:
+    argv:
+      - sha256sum
+      - -c
+      - SHA256SUMS
+  args:
+    chdir: "{{ sentinel_artifact_dir }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
 
 - name: Require Proxmox firewall tooling
   ansible.builtin.shell: |
