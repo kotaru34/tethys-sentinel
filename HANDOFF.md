@@ -30,7 +30,9 @@ The dev.21 candidate makes those fixes structural:
 - Agent `INFRASTRUCTURE.json` automatically omits host `addresses`, while the privileged Operator context snapshot retains the configured inventory;
 - tests and infrastructure/egress/API documentation cover both boundaries.
 
-dev.21 is **not accepted yet**. Before merge, require CI success, regenerate/reinstall the Worker policy from the dev.21 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, repeat a harmless end-to-end execution, and complete the planned Gateway ingress firewall acceptance.
+Gateway ingress firewall acceptance is now complete on the intended deployment: only the intended reverse-proxy source and the intended direct MCP client can reach the Gateway listener, an unrelated internal source times out at TCP connect, and the public reverse-proxy path still reaches Gateway and returns the expected unauthenticated capability error rather than a proxy failure. The VM-interface firewall is active and the Proxmox firewall compiler accepted the configuration.
+
+dev.21 is **not accepted yet**. Before merge, require CI success, regenerate/reinstall the Worker policy from the dev.21 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, and repeat a harmless end-to-end execution.
 
 ## Operator-mandated development rules
 
