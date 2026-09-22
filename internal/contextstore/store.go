@@ -64,7 +64,7 @@ func (s *Store) Bundle(grant domain.Grant) (domain.ContextBundle, error) {
 	hosts := make([]Host, 0, len(grant.Targets))
 	for _, host := range cfg.Hosts {
 		if _, ok := allowed[host.Name]; ok {
-			hosts = append(hosts, host)
+			hosts = append(hosts, agentHost(host))
 		}
 	}
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Name < hosts[j].Name })
@@ -88,7 +88,7 @@ func (s *Store) Bundle(grant domain.Grant) (domain.ContextBundle, error) {
 			continue
 		}
 		id := strings.TrimSpace(rb.ID)
-		if id == "" || strings.ContainsAny(id, "/\\") {
+		if id == "" || strings.ContainsAny(id, "/\") {
 			return domain.ContextBundle{}, fmt.Errorf("invalid runbook id %q", rb.ID)
 		}
 		docs = append(docs, document("/sentinel/RUNBOOKS/"+id+".md", "text/markdown", rb.Content))
@@ -129,6 +129,11 @@ func (s *Store) load() (Config, string, error) {
 	}
 	h := sha256.Sum256(data)
 	return cfg, hex.EncodeToString(h[:]), nil
+}
+
+func agentHost(host Host) Host {
+	host.Addresses = nil
+	return host
 }
 
 func document(path, mediaType, content string) domain.ContextDocument {
