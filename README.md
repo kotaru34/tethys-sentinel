@@ -169,6 +169,7 @@ Schema v4 contains mutable authority, approvals, jobs, audit/history, bounded ex
 - `docs/SSH_CA.md` — Signer and SSH certificate constraints
 - `docs/SSH_EXECUTION.md` — SSH transport, target registry and replay boundary
 - `docs/INFRASTRUCTURE_ACCEPTANCE.md` — repeatable infrastructure acceptance
+- `ansible/README.md` — repeatable Debian/Ubuntu VM and unprivileged-LXC target onboarding
 - `HANDOFF.md` — current accepted baseline and public-release gate
 
 All public examples must use documentation-only names/addresses. Real deployment topology and acceptance evidence belong in private operator records.
