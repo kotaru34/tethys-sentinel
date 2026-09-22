@@ -21,12 +21,15 @@
 - name: Require target binaries and SSH CA public key
   ansible.builtin.assert:
     that:
-      - sentinel_target_controller_inputs.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
-      - sentinel_target_controller_inputs.results | selectattr('stat.isreg', 'equalto', false) | list | length == 0
+      - item.stat.exists | default(false)
+      - item.stat.isreg | default(false)
     fail_msg: >-
-      Missing controller-side onboarding inputs. Put the accepted linux-amd64
-      artifact in sentinel_artifact_dir and the SSH user-CA public key in
-      sentinel_target_ssh_ca_pub_file.
+      Missing controller-side onboarding input {{ item.item }}. Put the accepted
+      linux-amd64 artifact in sentinel_artifact_dir and the SSH user-CA public
+      key in sentinel_target_ssh_ca_pub_file.
+  loop: "{{ sentinel_target_controller_inputs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 - name: Validate target address is a non-local literal IP
   ansible.builtin.command:
