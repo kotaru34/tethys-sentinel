@@ -1,6 +1,6 @@
 # Constrained infrastructure acceptance
 
-This runbook is the repeatable core real-infrastructure acceptance procedure for the accepted `0.1.0-dev.20` baseline and the `0.1.0-dev.21` hardening candidate. It is deliberately conservative: use disposable/constrained guests, keep direct Gateway exposure private during acceptance, and do not treat a deployment/release candidate as accepted until every required positive and negative check passes.
+This runbook is the repeatable core real-infrastructure acceptance procedure for the accepted `0.1.0-dev.20` baseline and the `0.1.0-dev.22` hardening candidate. It is deliberately conservative: use disposable/constrained guests, keep direct Gateway exposure private during acceptance, and do not treat a deployment/release candidate as accepted until every required positive and negative check passes.
 
 The original constrained run established these broker hard boundaries; later accepted milestones added Agent HTTP/CLI, Operator UI, bounded output, MCP, and one-time claim behavior without replacing them. `HANDOFF.md` records the current accepted baseline. This document remains the reproducible core procedure; use the Agent/Operator/MCP-specific documentation for their additional checks.
 
@@ -85,7 +85,7 @@ cd tethys-sentinel
 git checkout <commit-being-accepted>
 git rev-parse HEAD
 cat VERSION
-# candidate described by this runbook update: 0.1.0-dev.21
+# candidate described by this runbook update: 0.1.0-dev.22
 # previously accepted baseline: 0.1.0-dev.20
 ```
 
