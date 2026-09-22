@@ -28,6 +28,18 @@ jobs:
       - name: Public privacy scan
         run: bash scripts/public_privacy_scan.sh
 
+      - name: Version consistency check
+        shell: bash
+        run: |
+          set -euo pipefail
+          declared="$(cat VERSION)"
+          embedded="$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/buildinfo/version.go)"
+          test -n "$embedded"
+          if [ "$declared" != "$embedded" ]; then
+            echo "version drift: VERSION=$declared buildinfo=$embedded"
+            exit 1
+          fi
+
       - name: Module tidy check
         shell: bash
         run: |
@@ -64,6 +76,51 @@ jobs:
       - name: Unit tests
         run: go test -race ./...
 
+
+  linux-amd64-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Build affected dev.22 binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat VERSION)" = '0.1.0-dev.22'
+          mkdir -p out
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-control ./cmd/sentinel-control
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
+          (
+            cd out
+            sha256sum sentinel-control sentinel-egress-policy > SHA256SUMS
+          )
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "version=$(cat VERSION)"
+            go version
+          } > out/BUILDINFO.txt
+
+      - name: Upload linux amd64 deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev22-linux-amd64
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            out/sentinel-control
+            out/sentinel-egress-policy
+            out/SHA256SUMS
+            out/BUILDINFO.txt
+
   operator-frontend:
     runs-on: ubuntu-latest
     steps:
@@ -86,7 +143,7 @@ jobs:
           test "$(npm --version)" = '11.19.0'
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          expected='6e785ab7982ddda7873bb1489a6f8b6c498dfc9dcdb3a088fabfab23b4f29c9b'
+          expected='c898414246de5d1c56d47f6434c66f791489007d57528faf4a0f8a325db8f081'
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [ "$actual" != "$expected" ]; then
             echo "frontend dependency graph drift: expected=${expected} actual=${actual}"

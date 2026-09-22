@@ -1,6 +1,6 @@
 # Agent HTTP API and `sentinelctl`
 
-This document defines the current agent-facing execution surface in the accepted `0.1.0-dev.20` baseline.
+This document defines the current agent-facing execution surface in the accepted `0.1.0-dev.22` baseline.
 
 The canonical authority surface is the HTTPS Agent API itself. `sentinelctl` is the first-party CLI over the same API, and `sentinel-mcp` is a deliberately narrow model-facing adapter over that accepted contract rather than a second authority model.
 

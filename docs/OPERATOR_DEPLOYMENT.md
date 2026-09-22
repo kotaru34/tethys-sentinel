@@ -51,7 +51,7 @@ Build from the exact source commit you intend to deploy and record that commit p
 ```bash
 git rev-parse HEAD
 cat VERSION
-# current accepted baseline: 0.1.0-dev.20
+# current accepted baseline: 0.1.0-dev.22
 
 go test ./internal/operatorweb ./internal/operatorproxy ./cmd/sentinel-operator
 CGO_ENABLED=0 go build -trimpath -o sentinel-operator ./cmd/sentinel-operator

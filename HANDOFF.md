@@ -1,16 +1,53 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-20  
-Current accepted development version: `0.1.0-dev.20`  
+Updated: 2026-09-22  
+Current accepted development version: `0.1.0-dev.22`  
 Branch: `main`
 
 ## Status
 
-`0.1.0-dev.20` is the accepted development baseline.
+`0.1.0-dev.22` is the accepted development baseline.
 
 The current milestone is repository-wide public-release cleanup. Runtime behavior is already accepted; this phase is limited to privacy sanitization, documentation cleanup, removal of obsolete development-only references, repository-history cleanup, and final public-release verification.
 
 The public repository must not contain site-specific deployment data. Real addresses, hostnames, VM identifiers, local usernames or home paths, certificate/SSH fingerprints, acceptance-only topology, capability material, tokens, or other operator-specific evidence belong in private operator records.
+
+## dev.22 acceptance status
+
+A live external-Agent-HTTP acceptance run against the accepted dev.20 deployment exercised the path through the public reverse-proxy boundary, Gateway, Control, Worker, short-lived SSH certificate issuance, pinned target execution, and bounded output retrieval.
+
+The run found two hardening gaps:
+
+- Worker deny-by-default egress did not model a trusted time source. With no permitted NTP path, Worker clock skew exceeded the Signer backdate tolerance and locally rejected a newly issued short-lived SSH certificate as not currently valid.
+- AI-facing `/v1/context` included configured host network addresses from the operator-owned context inventory even though agents only require logical target IDs.
+
+Operator-side temporary remediation proved both diagnoses: a narrowly allowed trusted NTP source restored clock synchronization and end-to-end execution, and removing addresses from the deployment context removed them from the AI bundle.
+
+The accepted dev.22 release carries the following structural fixes:
+
+- `sentinel-egress-policy` requires one or more operator-supplied literal-IP `-ntp` sources, includes exact UDP/123 rules in the canonical policy/hash/drift check, and still denies DNS/general Internet egress;
+- Agent `INFRASTRUCTURE.json` automatically omits host `addresses`, while the privileged Operator context snapshot retains the configured inventory;
+- tests and infrastructure/egress/API documentation cover both boundaries.
+
+The frontend reproducibility gate also detected a post-baseline registry drift. Reconstructing npm resolution with the timestamp of the last accepted CI run reproduced the previous lockfile hash exactly. The only current-registry difference was `electron-to-chromium` moving from `1.5.433` to `1.5.434`; it is a zero-runtime-dependency browser-version mapping package used through Browserslist. After review, the pinned graph hash was advanced. The full frontend typecheck/build, CSP/storage checks and embedded-distribution byte comparison then passed unchanged.
+
+CI for commit `4c403d64c671b6b153d7f283e6045cac36d69833` passed the Go privacy/tidy/format/vet/race suite, PostgreSQL 15/18 integration, and the complete operator-frontend reproducibility/security job.
+
+Gateway ingress firewall acceptance is now complete on the intended deployment: only the intended reverse-proxy source and the intended direct MCP client can reach the Gateway listener, an unrelated internal source times out at TCP connect, and the public reverse-proxy path still reaches Gateway and returns the expected unauthenticated capability error rather than a proxy failure. The VM-interface firewall is active and the Proxmox firewall compiler accepted the configuration.
+
+The first live deployment attempt of dev.21 exposed a release-version consistency blocker: `VERSION` said `0.1.0-dev.21`, but `internal/buildinfo.Version` was still `0.1.0-dev.20`, so the installed candidate logged itself as dev.20. Per the acceptance rule, dev.21 is blocked and must not be merged or accepted.
+
+dev.22 fixes that blocker by synchronizing the embedded runtime version and adds a CI version-consistency gate so `VERSION` and `internal/buildinfo.Version` cannot drift again. The functional NTP/context changes are unchanged from the blocked dev.21 candidate.
+
+CI for exact deployed dev.22 artifact commit `5389e429f2abbd9f22162d13dbde3ce1e8daf581` is green across the version-consistency gate, Go privacy/tidy/format/vet/race suite, PostgreSQL 15/18 integration, operator-frontend reproducibility/security checks, and the linux/amd64 deployment-artifact build. The deployed binaries are built with Go 1.27.1, CGO disabled, and carry `version=0.1.0-dev.22` in build metadata.
+
+Live dev.22 Control deployment is now accepted for the context-privacy fix. The installed binary hash matches the published dev.22 artifact and the service reports `0.1.0-dev.22` at startup. With the operator-owned context restored to include the target address, the privileged Operator `/admin/v1/context` view retains that address while the public capability-scoped Agent `/v1/context` `INFRASTRUCTURE.json` view omits the `addresses` field; a machine assertion confirmed no scoped host exposes it.
+
+Live dev.22 Worker egress acceptance is now complete. The generated policy was installed byte-for-byte into the Proxmox VM-interface firewall and the dev.22 verifier returned rc=0 against the installed policy, Datacenter firewall and Worker NIC activation. The compiled rules contain only the Control HTTPS destination, the registered target SSH destination and the trusted NTP UDP/123 destination before the outbound drop. After restarting the Worker time client, it synchronized to the trusted time source with sub-millisecond offset; Control and target TCP probes succeeded while generic Internet TCP egress remained blocked. The temporary manual dev.20 NTP rule/drift is therefore replaced by canonical dev.22 policy.
+
+Final external Agent HTTP acceptance is complete. A restricted public capability submitted a harmless structured `id` command through the public edge, Gateway, Control, Worker, short-lived SSH certificate path and target wrapper; the job succeeded with the expected unprivileged target identity. `GET /v1/requests/{request_id}` resolved to the same completed job, proving request-ID recovery. The acceptance grant was then revoked through the protected Control admin surface, and the same bearer immediately received HTTP 401 with `valid capability required` on bootstrap. No acceptance capability remains active.
+
+`0.1.0-dev.22` is accepted on the intended infrastructure and may be merged. This acceptance is independent of the separate public-release historical-ref/cache purge still awaiting GitHub Support.
 
 ## Operator-mandated development rules
 
@@ -42,7 +79,7 @@ The public repository must not contain site-specific deployment data. Real addre
 
 ## Accepted runtime baseline
 
-The accepted runtime is `0.1.0-dev.20` with PostgreSQL schema v4.
+The accepted runtime is `0.1.0-dev.22` with PostgreSQL schema v4.
 
 The Agent HTTP contract remains the canonical authority boundary beneath MCP:
 
@@ -81,7 +118,7 @@ No dev.20 runtime acceptance blocker remains.
 Completed on the public repository:
 
 - current source/docs/config examples were sanitized to documentation-only addresses and names;
-- public documentation was normalized to the accepted `0.1.0-dev.20` / PostgreSQL schema v4 baseline, including the current Agent API, Operator, bounded-output, MCP and one-time claim contracts;
+- public documentation is normalized to the accepted `0.1.0-dev.22` / PostgreSQL schema v4 baseline, including the current Agent API, Operator, bounded-output, MCP, one-time claim, trusted-time egress and Agent-context privacy contracts;
 - database/runbook documentation now includes migration `0004_mcp_claims.sql` and schema v4 rather than presenting dev.13-dev.16 checkpoints as the current deployment state;
 - development-only frozen artifact workflows were removed;
 - a permanent tracked-tree privacy/secret guard was added to CI;

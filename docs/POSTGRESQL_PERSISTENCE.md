@@ -1,6 +1,6 @@
 # PostgreSQL persistence boundary
 
-This document defines the current PostgreSQL persistence boundary for the accepted `0.1.0-dev.20` baseline. PostgreSQL schema v4 includes transactional authority state, bounded execution output, and the one-time MCP claim lifecycle.
+This document defines the current PostgreSQL persistence boundary for the accepted `0.1.0-dev.22` baseline. PostgreSQL schema v4 includes transactional authority state, bounded execution output, and the one-time MCP claim lifecycle.
 
 PostgreSQL is not a SQL mirror of the development JSON/JSONL stores. It is the authoritative **transaction engine** for mutable security state so security-sensitive transitions and their required audit records either commit together or do not commit at all.
 
@@ -271,7 +271,7 @@ Current integration coverage includes:
 
 ## Real infrastructure acceptance
 
-The current accepted baseline is `0.1.0-dev.20` with PostgreSQL schema v4. The intended-infrastructure acceptance record in `HANDOFF.md` covers the retained transactional authority model together with bounded output, the Operator boundary, native MCP transport, one-time claim redemption/rotation, and stale-capability behavior after `REVOKE ALL`.
+The current accepted baseline is `0.1.0-dev.22` with PostgreSQL schema v4. The intended-infrastructure acceptance record in `HANDOFF.md` covers the retained transactional authority model together with bounded output, the Operator boundary, native MCP transport, one-time claim redemption/rotation, and stale-capability behavior after `REVOKE ALL`.
 
 Earlier dev.13/dev.15/schema-v2 acceptance is historical provenance only; it is not the current deployment baseline.
 

@@ -168,7 +168,9 @@ A worker or agent must not gain a privileged mechanism for widening its own exte
 
 `sentinel-egress-policy` is intentionally render/verify-only. It accepts protected target inventory plus a literal Control Plane endpoint and produces deterministic policy; it does not apply PVE configuration and must not be exposed through the AI/MCP surface. Worker identities must have no credentials or filesystem/API path that can modify `/etc/pve`, VM NIC firewall flags or equivalent external network policy.
 
-Normal runtime egress is limited to the literal-IP Control Plane HTTPS endpoint and global-unicast literal target SSH IP:port endpoints. DNS, generic LAN access, broad RFC1918 ranges, package mirrors and arbitrary Internet/HTTPS are not implicit runtime permissions.
+Normal runtime egress is limited to the literal-IP Control Plane HTTPS endpoint, global-unicast literal target SSH IP:port endpoints, and exact operator-configured literal NTP IPs on UDP/123. DNS, generic LAN access, broad RFC1918 ranges, package mirrors, unrestricted NTP and arbitrary Internet/HTTPS are not implicit runtime permissions.
+
+Trusted time is required for security correctness rather than convenience: Worker rejects a newly issued short-lived SSH certificate when its local clock falls outside the Signer's validity/backdate window. The external policy therefore models the trusted NTP path explicitly instead of relying on hidden/default Internet access.
 
 ### Firewall policy drift or inactive enforcement
 
@@ -190,7 +192,7 @@ Application inventory and external firewall are separate authority layers and ca
 
 A newly added target that has reached Control Plane inventory but not external egress policy should fail closed at the network layer. Target removal should preferably narrow external egress first where practical; Control Plane removal independently blocks new normal jobs.
 
-The generated policy includes a canonical SHA-256 over Control Plane + target destination set, and `-check` is intended for operator/Ansible reconciliation to detect drift without granting reconciliation authority to the worker.
+The generated policy includes a canonical SHA-256 over Control Plane + target + trusted NTP destination set, and `-check` is intended for operator/Ansible reconciliation to detect drift without granting reconciliation authority to the worker.
 
 ### Established connection survives firewall shrink
 
@@ -307,7 +309,8 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 - Signer caller cannot broaden principal/force-command/source/extensions/TTL.
 - Certificate does not outlive job and grants no PTY/agent/port/X11 forwarding.
 - Worker target is global-unicast literal IP from operator-owned inventory; host-key negotiation is bound to the configured pin family and the negotiated raw key must exactly match the pin.
-- Worker runtime egress is externally deny-by-default and limited to Control Plane HTTPS plus registered target SSH endpoints.
+- Worker runtime egress is externally deny-by-default and limited to Control Plane HTTPS, registered target SSH endpoints, and exact trusted NTP UDP/123 destinations.
+- Worker local time must remain synchronized closely enough to validate short-lived SSH certificates; certificate backdate is tolerance, not a replacement for trusted NTP.
 - Worker/AI identities cannot apply, widen or reconcile the external PVE egress policy.
 - Generated egress policy drift and PVE Datacenter/NIC activation are operator-verifiable and fail closed on mismatch.
 - Packet-level worker-VM egress behavior must be tested before treating the infrastructure boundary as accepted.
@@ -329,6 +332,6 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 
 ## Infrastructure acceptance status
 
-The current accepted `0.1.0-dev.20` baseline retains the constrained hard-boundary evidence for end-to-end pinned SSH execution, multi-host-key negotiation, packet-level Worker egress, individual/global active revoke, epoch non-revival, PostgreSQL fail-closed startup, Worker sensitive-material/service-account/mTLS checks, and absence of a routed IPv6 bypass. Later acceptance additionally covers bounded output, the Operator boundary, native MCP transport, one-time claim rotation, and stale-capability behavior. `HANDOFF.md` is the current evidence summary.
+The current accepted `0.1.0-dev.22` baseline retains the constrained hard-boundary evidence for end-to-end pinned SSH execution, multi-host-key negotiation, packet-level Worker egress, individual/global active revoke, epoch non-revival, PostgreSQL fail-closed startup, Worker sensitive-material/service-account/mTLS checks, and absence of a routed IPv6 bypass. Later acceptance additionally covers bounded output, the Operator boundary, native MCP transport, one-time claim rotation, stale-capability behavior, trusted Worker time egress, and Agent-context address redaction. `HANDOFF.md` is the current evidence summary.
 
 That acceptance does not eliminate the residual assumptions above. Future changes that alter these boundaries must repeat the relevant automated and real-infrastructure checks. `docs/INFRASTRUCTURE_ACCEPTANCE.md` is the repeatable core procedure.

@@ -16,7 +16,7 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 )
 
-const Version = "sentinel-egress-v1"
+const Version = "sentinel-egress-v2"
 
 type Destination struct {
 	IP    string   `json:"ip"`
@@ -28,15 +28,20 @@ type Policy struct {
 	Version string        `json:"version"`
 	Control Destination   `json:"control"`
 	Targets []Destination `json:"targets"`
+	NTP     []Destination `json:"ntp"`
 }
 
-func Build(controlURL string, targets []sshtarget.Spec) (Policy, error) {
+func Build(controlURL string, targets []sshtarget.Spec, ntpSources []string) (Policy, error) {
 	control, err := parseControl(controlURL)
 	if err != nil {
 		return Policy{}, err
 	}
 	if len(targets) == 0 {
 		return Policy{}, errors.New("egress policy requires at least one SSH target")
+	}
+	ntp, err := parseNTPSources(ntpSources)
+	if err != nil {
+		return Policy{}, err
 	}
 
 	type aggregate struct {
@@ -63,7 +68,12 @@ func Build(controlURL string, targets []sshtarget.Spec) (Policy, error) {
 		agg.names[name] = struct{}{}
 	}
 
-	out := Policy{Version: Version, Control: control, Targets: make([]Destination, 0, len(byEndpoint))}
+	out := Policy{
+		Version: Version,
+		Control: control,
+		Targets: make([]Destination, 0, len(byEndpoint)),
+		NTP:     ntp,
+	}
 	for _, agg := range byEndpoint {
 		names := make([]string, 0, len(agg.names))
 		for name := range agg.names {
@@ -109,6 +119,19 @@ func RenderPVE(p Policy) ([]byte, error) {
 			return nil, fmt.Errorf("invalid target destination: %w", err)
 		}
 	}
+	if len(p.NTP) == 0 {
+		return nil, errors.New("egress policy requires at least one NTP destination")
+	}
+	for _, destination := range p.NTP {
+		if _, port, err := parseLiteralDestination(destination); err != nil {
+			return nil, fmt.Errorf("invalid NTP destination: %w", err)
+		} else if port != 123 {
+			return nil, errors.New("NTP destination port must be 123")
+		}
+		if len(destination.Names) != 0 {
+			return nil, errors.New("NTP destination must not contain labels")
+		}
+	}
 	hash, err := p.SHA256()
 	if err != nil {
 		return nil, err
@@ -119,9 +142,12 @@ func RenderPVE(p Policy) ([]byte, error) {
 	b.WriteString("# policy_sha256: ")
 	b.WriteString(hash)
 	b.WriteString("\n\n[OPTIONS]\n\nenable: 1\npolicy_in: ACCEPT\npolicy_out: DROP\n\n[RULES]\n\n")
-	writePVERule(&b, p.Control, "sentinel-control")
+	writePVERule(&b, p.Control, "tcp", "sentinel-control")
 	for _, destination := range p.Targets {
-		writePVERule(&b, destination, "ssh:"+strings.Join(destination.Names, ","))
+		writePVERule(&b, destination, "tcp", "ssh:"+strings.Join(destination.Names, ","))
+	}
+	for _, destination := range p.NTP {
+		writePVERule(&b, destination, "udp", "sentinel-ntp")
 	}
 	return []byte(b.String()), nil
 }
@@ -137,8 +163,8 @@ func parseControl(raw string) (Destination, error) {
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return Destination{}, errors.New("control URL must contain only scheme, literal host and optional port")
 	}
-	ip, err := netip.ParseAddr(u.Hostname())
-	if err != nil || !concreteIP(ip) {
+	ip, err := parseConcreteIP(u.Hostname())
+	if err != nil {
 		return Destination{}, errors.New("control URL host must be a global-unicast literal IP; use TLS server_name separately")
 	}
 	port := uint16(443)
@@ -152,13 +178,35 @@ func parseControl(raw string) (Destination, error) {
 	return Destination{IP: ip.String(), Port: port}, nil
 }
 
+func parseNTPSources(values []string) ([]Destination, error) {
+	if len(values) == 0 {
+		return nil, errors.New("egress policy requires at least one trusted NTP source")
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]Destination, 0, len(values))
+	for _, raw := range values {
+		ip, err := parseConcreteIP(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid NTP source %q: must be a global-unicast literal IP", raw)
+		}
+		key := ip.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, Destination{IP: key, Port: 123})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
+	return out, nil
+}
+
 func parseLiteralEndpoint(raw string) (netip.Addr, uint16, error) {
 	host, portText, err := net.SplitHostPort(strings.TrimSpace(raw))
 	if err != nil {
 		return netip.Addr{}, 0, errors.New("endpoint must be literal-ip:port")
 	}
-	ip, err := netip.ParseAddr(strings.TrimSpace(host))
-	if err != nil || !concreteIP(ip) {
+	ip, err := parseConcreteIP(host)
+	if err != nil {
 		return netip.Addr{}, 0, errors.New("endpoint must use a global-unicast literal IP")
 	}
 	port, err := strconv.Atoi(portText)
@@ -169,8 +217,8 @@ func parseLiteralEndpoint(raw string) (netip.Addr, uint16, error) {
 }
 
 func parseLiteralDestination(destination Destination) (netip.Addr, uint16, error) {
-	ip, err := netip.ParseAddr(strings.TrimSpace(destination.IP))
-	if err != nil || !concreteIP(ip) {
+	ip, err := parseConcreteIP(destination.IP)
+	if err != nil {
 		return netip.Addr{}, 0, errors.New("destination IP must be global-unicast and literal")
 	}
 	if destination.Port == 0 {
@@ -182,6 +230,18 @@ func parseLiteralDestination(destination Destination) (netip.Addr, uint16, error
 		}
 	}
 	return ip, destination.Port, nil
+}
+
+func parseConcreteIP(raw string) (netip.Addr, error) {
+	ip, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	ip = ip.Unmap()
+	if !concreteIP(ip) {
+		return netip.Addr{}, errors.New("IP is not global-unicast")
+	}
+	return ip, nil
 }
 
 func concreteIP(ip netip.Addr) bool {
@@ -201,10 +261,12 @@ func safeLabel(value string) bool {
 	return true
 }
 
-func writePVERule(b *strings.Builder, destination Destination, label string) {
+func writePVERule(b *strings.Builder, destination Destination, protocol, label string) {
 	b.WriteString("OUT ACCEPT -dest ")
 	b.WriteString(destination.IP)
-	b.WriteString(" -p tcp -dport ")
+	b.WriteString(" -p ")
+	b.WriteString(protocol)
+	b.WriteString(" -dport ")
 	b.WriteString(strconv.Itoa(int(destination.Port)))
 	b.WriteString(" -log nolog # ")
 	b.WriteString(label)
