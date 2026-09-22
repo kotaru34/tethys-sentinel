@@ -1,6 +1,6 @@
 # Worker egress enforcement
 
-`0.1.0-dev.9` introduced the operator-owned external network boundary for Execution Worker. `0.1.0-dev.12` corrected the generated PVE policy so inbound traffic is explicitly preserved with `policy_in: ACCEPT` while outbound traffic remains deny-by-default. The `0.1.0-dev.22` candidate extends the same boundary with explicit trusted NTP sources because short-lived SSH certificates require bounded clock skew.
+`0.1.0-dev.9` introduced the operator-owned external network boundary for Execution Worker. `0.1.0-dev.12` corrected the generated PVE policy so inbound traffic is explicitly preserved with `policy_in: ACCEPT` while outbound traffic remains deny-by-default. The accepted `0.1.0-dev.22` baseline extends the same boundary with explicit trusted NTP sources because short-lived SSH certificates require bounded clock skew.
 
 ## Security objective
 
