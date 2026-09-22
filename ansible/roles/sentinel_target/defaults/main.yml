@@ -2,6 +2,7 @@
 sentinel_artifact_dir: "{{ playbook_dir }}/../artifacts/linux-amd64"
 sentinel_target_exec_binary_src: "{{ sentinel_artifact_dir }}/tethys-sentinel-exec"
 sentinel_target_consume_binary_src: "{{ sentinel_artifact_dir }}/tethys-sentinel-consume"
+sentinel_artifact_checksum_file: "{{ sentinel_artifact_dir }}/SHA256SUMS"
 sentinel_target_ssh_ca_pub_file: "{{ playbook_dir }}/../secrets/ssh-user-ca.pub"
 
 sentinel_target_id: "{{ inventory_hostname }}"
