@@ -49,6 +49,7 @@ export GATEWAY_IP='192.0.2.11'
 export WORKER_IP='192.0.2.12'
 export SIGNER_IP='192.0.2.13'
 export TARGET_IP='192.0.2.14'
+export NTP_IP='192.0.2.1'
 
 export WORKER_VMID='XXXX'
 export WORKER_NET='net0'
@@ -66,6 +67,7 @@ Before using the rest of this runbook:
 : "${WORKER_IP:?set WORKER_IP}"
 : "${SIGNER_IP:?set SIGNER_IP}"
 : "${TARGET_IP:?set TARGET_IP}"
+: "${NTP_IP:?set NTP_IP}"
 : "${WORKER_VMID:?set WORKER_VMID}"
 : "${WORKER_NET:?set WORKER_NET}"
 : "${UNLISTED_LAN_IP:?set UNLISTED_LAN_IP}"
@@ -83,7 +85,8 @@ cd tethys-sentinel
 git checkout <commit-being-accepted>
 git rev-parse HEAD
 cat VERSION
-# current accepted baseline: 0.1.0-dev.20
+# candidate described by this runbook update: 0.1.0-dev.21
+# previously accepted baseline: 0.1.0-dev.20
 ```
 
 Record the selected source commit and resulting binary hashes in private operator acceptance notes rather than hard-coding deployment-specific checkpoints in this public runbook.
@@ -503,6 +506,17 @@ SENTINEL_WORKER_OUTPUT_LIMIT_BYTES=4194304
 
 Do not install agent capabilities, admin token, PostgreSQL credentials, SSH CA/signing material, signer credentials, target inventory, or PVE credentials on Worker.
 
+Configure the Worker time client to use only the operator-owned trusted literal-IP time source. For `systemd-timesyncd`:
+
+```ini
+# /etc/systemd/timesyncd.conf.d/10-sentinel.conf
+[Time]
+NTP=<NTP_IP>
+FallbackNTP=
+```
+
+Restart the time client after the external egress policy is installed, then require both `System clock synchronized: yes` and a selected server matching `$NTP_IP`. Short-lived SSH certificate validation depends on bounded clock skew; do not compensate for a broken time path by widening certificate backdate.
+
 ## Minimal systemd service policy
 
 For each Sentinel application VM, use a static service user and a root-owned `0600` EnvironmentFile. A minimal unit pattern is:
@@ -557,6 +571,7 @@ Using the final Control target registry and literal Control endpoint:
 sentinel-egress-policy \
   -targets /path/to/ssh-targets.json \
   -control "https://${CONTROL_IP}:9091" \
+  -ntp "${NTP_IP}" \
   -format pve \
   > "${WORKER_VMID}.fw"
 ```
@@ -566,9 +581,10 @@ Review the output. It must contain **both** `policy_in: ACCEPT` and `policy_out:
 ```text
 CONTROL_IP:9091/tcp
 TARGET_IP:22/tcp
+NTP_IP:123/udp
 ```
 
-There must be no generic LAN, Internet, DNS or broad HTTPS allow. `policy_in: ACCEPT` preserves unspecified inbound behavior while this file enforces outbound containment; it is not permission to broaden autonomous Worker egress.
+There must be no generic LAN, Internet, DNS, broad HTTPS or unrestricted NTP allow. `policy_in: ACCEPT` preserves unspecified inbound behavior while this file enforces outbound containment; it is not permission to broaden autonomous Worker egress.
 
 Install it on the PVE node:
 
@@ -588,6 +604,7 @@ Then verify generated policy + PVE activation:
 sentinel-egress-policy \
   -targets /path/to/ssh-targets.json \
   -control "https://${CONTROL_IP}:9091" \
+  -ntp "${NTP_IP}" \
   -format pve \
   -check "/etc/pve/firewall/${WORKER_VMID}.fw" \
   -pve-cluster-fw /etc/pve/firewall/cluster.fw \
@@ -604,6 +621,10 @@ Expected successes:
 ```sh
 nc -vz -w 3 "$CONTROL_IP" 9091
 nc -vz -w 3 "$TARGET_IP" 22
+
+# UDP reachability alone is not enough; verify the time client actually synchronizes.
+timedatectl status
+timedatectl timesync-status
 ```
 
 Expected failures:
@@ -613,9 +634,11 @@ Expected failures:
 ! nc -vz -w 3 "$UNLISTED_LAN_IP" 22
 ! nc -vz -w 3 "$TARGET_IP" 80
 ! nc -vz -w 3 192.0.2.1 53
+# Choose an unlisted NTP endpoint for this negative test.
+! nc -vzu -w 3 192.0.2.99 123
 ```
 
-Replace the last address with the actual local resolver if necessary. DNS/53 must still fail under the autonomous runtime policy.
+Replace the DNS address with the actual local resolver if necessary. DNS/53 and UDP/123 to unlisted time sources must still fail under the autonomous runtime policy.
 
 Record the commands and exit status. A configuration diff alone is not acceptance.
 
