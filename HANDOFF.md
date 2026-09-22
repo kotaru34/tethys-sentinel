@@ -2,8 +2,8 @@
 
 Updated: 2026-09-22  
 Current accepted development version: `0.1.0-dev.20`  
-Current candidate version: `0.1.0-dev.21`  
-Branch: `wip/dev21-ntp-context-hardening`
+Current candidate version: `0.1.0-dev.22`  
+Branch: `wip/dev22-ntp-context-hardening`
 
 ## Status
 
@@ -13,7 +13,7 @@ The current milestone is repository-wide public-release cleanup. Runtime behavio
 
 The public repository must not contain site-specific deployment data. Real addresses, hostnames, VM identifiers, local usernames or home paths, certificate/SSH fingerprints, acceptance-only topology, capability material, tokens, or other operator-specific evidence belong in private operator records.
 
-## dev.21 candidate status
+## dev.22 candidate status
 
 A live external-Agent-HTTP acceptance run against the accepted dev.20 deployment exercised the path through the public reverse-proxy boundary, Gateway, Control, Worker, short-lived SSH certificate issuance, pinned target execution, and bounded output retrieval.
 
@@ -24,7 +24,7 @@ The run found two hardening gaps:
 
 Operator-side temporary remediation proved both diagnoses: a narrowly allowed trusted NTP source restored clock synchronization and end-to-end execution, and removing addresses from the deployment context removed them from the AI bundle.
 
-The dev.21 candidate makes those fixes structural:
+The dev.22 candidate carries the same structural fixes:
 
 - `sentinel-egress-policy` requires one or more operator-supplied literal-IP `-ntp` sources, includes exact UDP/123 rules in the canonical policy/hash/drift check, and still denies DNS/general Internet egress;
 - Agent `INFRASTRUCTURE.json` automatically omits host `addresses`, while the privileged Operator context snapshot retains the configured inventory;
@@ -36,7 +36,11 @@ CI for commit `4c403d64c671b6b153d7f283e6045cac36d69833` passed the Go privacy/t
 
 Gateway ingress firewall acceptance is now complete on the intended deployment: only the intended reverse-proxy source and the intended direct MCP client can reach the Gateway listener, an unrelated internal source times out at TCP connect, and the public reverse-proxy path still reaches Gateway and returns the expected unauthenticated capability error rather than a proxy failure. The VM-interface firewall is active and the Proxmox firewall compiler accepted the configuration.
 
-dev.21 is **not accepted yet**. Before merge, require CI success, regenerate/reinstall the Worker policy from the dev.21 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, and repeat a harmless end-to-end execution.
+The first live deployment attempt of dev.21 exposed a release-version consistency blocker: `VERSION` said `0.1.0-dev.21`, but `internal/buildinfo.Version` was still `0.1.0-dev.20`, so the installed candidate logged itself as dev.20. Per the acceptance rule, dev.21 is blocked and must not be merged or accepted.
+
+dev.22 fixes that blocker by synchronizing the embedded runtime version and adds a CI version-consistency gate so `VERSION` and `internal/buildinfo.Version` cannot drift again. The functional NTP/context changes are unchanged from the blocked dev.21 candidate.
+
+dev.22 is **not accepted yet**. Before merge, require green CI on the exact dev.22 candidate, deploy the correctly identified dev.22 Control binary, prove privileged context retains host addresses while the Agent bundle redacts them, regenerate/reinstall the Worker policy from the dev.22 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, and repeat a harmless end-to-end execution.
 
 ## Operator-mandated development rules
 
