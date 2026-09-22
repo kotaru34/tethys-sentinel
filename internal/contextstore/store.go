@@ -88,7 +88,7 @@ func (s *Store) Bundle(grant domain.Grant) (domain.ContextBundle, error) {
 			continue
 		}
 		id := strings.TrimSpace(rb.ID)
-		if id == "" || strings.ContainsAny(id, "/\") {
+		if id == "" || strings.ContainsAny(id, "/\\") {
 			return domain.ContextBundle{}, fmt.Errorf("invalid runbook id %q", rb.ID)
 		}
 		docs = append(docs, document("/sentinel/RUNBOOKS/"+id+".md", "text/markdown", rb.Content))
