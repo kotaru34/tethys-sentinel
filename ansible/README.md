@@ -29,6 +29,7 @@ artifacts/linux-amd64/
   sentinel-egress-policy
   tethys-sentinel-exec
   tethys-sentinel-consume
+  SHA256SUMS
 ```
 
 Place the Signer's SSH user-CA **public** key under:
@@ -39,7 +40,7 @@ secrets/ssh-user-ca.pub
 
 Both directories are gitignored. Never put the SSH CA private key here.
 
-The dev.23 CI artifact includes all three binaries above plus `sentinel-control`, `SHA256SUMS` and `BUILDINFO.txt`.
+The dev.23 CI artifact includes all three binaries above plus `sentinel-control` and `BUILDINFO.txt`. The target and egress roles run `sha256sum -c SHA256SUMS` on the controller before installing any artifact binary.
 
 ## Inventory
 
