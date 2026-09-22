@@ -30,6 +30,10 @@ The dev.21 candidate makes those fixes structural:
 - Agent `INFRASTRUCTURE.json` automatically omits host `addresses`, while the privileged Operator context snapshot retains the configured inventory;
 - tests and infrastructure/egress/API documentation cover both boundaries.
 
+The frontend reproducibility gate also detected a post-baseline registry drift. Reconstructing npm resolution with the timestamp of the last accepted CI run reproduced the previous lockfile hash exactly. The only current-registry difference was `electron-to-chromium` moving from `1.5.433` to `1.5.434`; it is a zero-runtime-dependency browser-version mapping package used through Browserslist. After review, the pinned graph hash was advanced. The full frontend typecheck/build, CSP/storage checks and embedded-distribution byte comparison then passed unchanged.
+
+CI for commit `4c403d64c671b6b153d7f283e6045cac36d69833` passed the Go privacy/tidy/format/vet/race suite, PostgreSQL 15/18 integration, and the complete operator-frontend reproducibility/security job.
+
 Gateway ingress firewall acceptance is now complete on the intended deployment: only the intended reverse-proxy source and the intended direct MCP client can reach the Gateway listener, an unrelated internal source times out at TCP connect, and the public reverse-proxy path still reaches Gateway and returns the expected unauthenticated capability error rather than a proxy failure. The VM-interface firewall is active and the Proxmox firewall compiler accepted the configuration.
 
 dev.21 is **not accepted yet**. Before merge, require CI success, regenerate/reinstall the Worker policy from the dev.21 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, and repeat a harmless end-to-end execution.
