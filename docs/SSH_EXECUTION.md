@@ -213,9 +213,12 @@ Application target resolution is not the only network boundary. The Worker VM mu
 ```text
 Control Plane HTTPS literal IP:port
 registered target SSH literal IP:port set
+trusted NTP literal IP set on UDP/123
 ```
 
 On PVE this is enforced outside the guest at the Worker VM interface. Worker/AI receives no privilege to widen the policy. The generated per-VM policy uses `policy_in: ACCEPT` and `policy_out: DROP` so outbound containment does not accidentally replace unspecified inbound behavior with a deny policy.
+
+Trusted time is part of the execution boundary rather than generic Internet access: Worker validates each short-lived SSH certificate against its local clock before dialing the target. The guest must therefore remain synchronized to an operator-chosen time source, while DNS and unrestricted NTP remain blocked.
 
 See `docs/WORKER_EGRESS.md`.
 
