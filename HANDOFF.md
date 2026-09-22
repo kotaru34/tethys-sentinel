@@ -58,9 +58,11 @@ dev.23 introduces operator-side target onboarding automation while preserving th
 - `sentinel_control_targets` treats the Ansible target inventory as the declarative SSH-target source of truth, obtains each pinned host key locally from that target, reconciles the complete Control `ssh-targets.json`, preserves non-managed context-only hosts, updates managed authoritative context, blocks removals unless explicitly authorized, and rolls back if Control does not return active;
 - `sentinel_worker_egress` consumes the actual installed Control registry, generates the canonical Worker PVE policy with the accepted egress tool, writes changed bytes through pmxcfs, compiles and verifies activation, and removes temporary protected registry/policy material.
 
-The linux/amd64 CI artifact now includes `tethys-sentinel-exec` and `tethys-sentinel-consume` in addition to Control/egress binaries. CI also syntax-checks the top-level playbook with pinned Ansible Core.
+The linux/amd64 CI artifact now includes `tethys-sentinel-exec` and `tethys-sentinel-consume` in addition to Control/egress binaries. CI also syntax-checks the top-level playbook with pinned Ansible Core. Artifact consumers verify the published `SHA256SUMS` before installing target or egress binaries.
 
-dev.23 is **not accepted yet**. Before merge, require green CI on the exact candidate, run the top-level playbook against the existing disposable target, verify the second run is idempotent, confirm Control target/context state and Worker egress remain correct, and complete a harmless constrained Sentinel `id` execution through the newly playbook-managed target.
+CI for implementation commit `0f98d44bebc13b63fdcedfe162854c37e36928cc` is green across the Go/privacy/version suite, PostgreSQL 15/18 integration, operator frontend, linux/amd64 artifact build, and the pinned Ansible syntax-check job.
+
+dev.23 is **not accepted yet**. Before merge, run the top-level playbook against the existing disposable target, verify the second run is idempotent, confirm Control target/context state and Worker egress remain correct, and complete a harmless constrained Sentinel `id` execution through the newly playbook-managed target.
 
 ## Operator-mandated development rules
 
