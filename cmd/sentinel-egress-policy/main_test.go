@@ -28,7 +28,7 @@ func TestRunChecksRenderedPVEPolicyAndActivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := egresspolicy.Build("https://192.0.2.10:9091", store.List())
+	policy, err := egresspolicy.Build("https://192.0.2.10:9091", store.List(), []string{"192.0.2.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +49,7 @@ func TestRunChecksRenderedPVEPolicyAndActivation(t *testing.T) {
 	args := []string{
 		"-targets", targetsPath,
 		"-control", "https://192.0.2.10:9091",
+		"-ntp", "192.0.2.1",
 		"-format", "pve",
 		"-check", checkPath,
 		"-pve-cluster-fw", clusterPath,
@@ -81,12 +82,23 @@ func TestRunRejectsUnsafeInputs(t *testing.T) {
 	if err := run(nil); err == nil {
 		t.Fatal("missing required arguments accepted")
 	}
-	if err := run([]string{"-targets", "/no/such/file", "-control", "https://192.0.2.10:9091"}); err == nil {
+	if err := run([]string{
+		"-targets", "/no/such/file",
+		"-control", "https://192.0.2.10:9091",
+	}); err == nil || !strings.Contains(err.Error(), "-ntp") {
+		t.Fatalf("missing NTP source was not rejected first: %v", err)
+	}
+	if err := run([]string{
+		"-targets", "/no/such/file",
+		"-control", "https://192.0.2.10:9091",
+		"-ntp", "192.0.2.1",
+	}); err == nil {
 		t.Fatal("missing target inventory accepted")
 	}
 	if err := run([]string{
 		"-targets", "/no/such/file",
 		"-control", "https://192.0.2.10:9091",
+		"-ntp", "192.0.2.1",
 		"-pve-cluster-fw", "/tmp/cluster.fw",
 	}); err == nil || !strings.Contains(err.Error(), "must be supplied together") {
 		t.Fatalf("partial PVE activation arguments accepted: %v", err)
