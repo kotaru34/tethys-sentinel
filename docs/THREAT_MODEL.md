@@ -332,6 +332,6 @@ Agents do not receive CA keys or long-lived infrastructure keys. Worker credenti
 
 ## Infrastructure acceptance status
 
-The current accepted `0.1.0-dev.20` baseline retains the constrained hard-boundary evidence for end-to-end pinned SSH execution, multi-host-key negotiation, packet-level Worker egress, individual/global active revoke, epoch non-revival, PostgreSQL fail-closed startup, Worker sensitive-material/service-account/mTLS checks, and absence of a routed IPv6 bypass. Later acceptance additionally covers bounded output, the Operator boundary, native MCP transport, one-time claim rotation, and stale-capability behavior. `HANDOFF.md` is the current evidence summary.
+The current accepted `0.1.0-dev.22` baseline retains the constrained hard-boundary evidence for end-to-end pinned SSH execution, multi-host-key negotiation, packet-level Worker egress, individual/global active revoke, epoch non-revival, PostgreSQL fail-closed startup, Worker sensitive-material/service-account/mTLS checks, and absence of a routed IPv6 bypass. Later acceptance additionally covers bounded output, the Operator boundary, native MCP transport, one-time claim rotation, stale-capability behavior, trusted Worker time egress, and Agent-context address redaction. `HANDOFF.md` is the current evidence summary.
 
 That acceptance does not eliminate the residual assumptions above. Future changes that alter these boundaries must repeat the relevant automated and real-infrastructure checks. `docs/INFRASTRUCTURE_ACCEPTANCE.md` is the repeatable core procedure.
