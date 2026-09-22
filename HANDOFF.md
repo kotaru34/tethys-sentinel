@@ -62,6 +62,8 @@ The linux/amd64 CI artifact now includes `tethys-sentinel-exec` and `tethys-sent
 
 CI for implementation commit `0f98d44bebc13b63fdcedfe162854c37e36928cc` is green across the Go/privacy/version suite, PostgreSQL 15/18 integration, operator frontend, linux/amd64 artifact build, and the pinned Ansible syntax-check job.
 
+A subsequent registry-only frontend reproducibility drift moved `electron-to-chromium` from `1.5.434` to `1.5.435`. The previous successful lock artifact confirms the prior version, the new graph dump shows the single mapping-package advance, and the package remains a zero-runtime-dependency Browserslist mapping dataset. The reviewed graph hash was advanced without changing Sentinel frontend source.
+
 dev.23 is **not accepted yet**. Before merge, run the top-level playbook against the existing disposable target, verify the second run is idempotent, confirm Control target/context state and Worker egress remain correct, and complete a harmless constrained Sentinel `id` execution through the newly playbook-managed target.
 
 ## Operator-mandated development rules
