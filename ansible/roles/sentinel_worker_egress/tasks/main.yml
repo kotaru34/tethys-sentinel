@@ -91,6 +91,7 @@
     owner: root
     group: root
     mode: "0600"
+  changed_when: false
   no_log: true
 
 - name: Initialize NTP argv
@@ -123,6 +124,7 @@
         owner: root
         group: root
         mode: "0600"
+      changed_when: false
       no_log: true
 
     - name: Verify candidate policy and PVE activation before install
@@ -270,6 +272,7 @@
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
+      changed_when: false
       loop:
         - "{{ sentinel_egress_registry_temp }}"
         - "{{ sentinel_egress_candidate }}"
