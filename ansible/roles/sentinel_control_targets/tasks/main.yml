@@ -19,9 +19,12 @@
 - name: Require existing authoritative Control files
   ansible.builtin.assert:
     that:
-      - sentinel_control_files.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
-      - sentinel_control_files.results | selectattr('stat.isreg', 'equalto', false) | list | length == 0
+      - item.stat.exists | default(false)
+      - item.stat.isreg | default(false)
     fail_msg: "Target onboarding only reconciles an existing accepted Control deployment."
+  loop: "{{ sentinel_control_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 - name: Read current SSH target registry
   ansible.builtin.slurp:
