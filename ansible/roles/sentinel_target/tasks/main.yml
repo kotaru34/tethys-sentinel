@@ -12,6 +12,7 @@
   loop:
     - "{{ sentinel_target_exec_binary_src }}"
     - "{{ sentinel_target_consume_binary_src }}"
+    - "{{ sentinel_artifact_checksum_file }}"
     - "{{ sentinel_target_ssh_ca_pub_file }}"
   delegate_to: localhost
   become: false
@@ -30,6 +31,19 @@
   loop: "{{ sentinel_target_controller_inputs.results }}"
   loop_control:
     label: "{{ item.item }}"
+
+- name: Verify accepted linux-amd64 artifact checksums
+  ansible.builtin.command:
+    argv:
+      - sha256sum
+      - -c
+      - SHA256SUMS
+  args:
+    chdir: "{{ sentinel_artifact_dir }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
 
 - name: Validate target address is a non-local literal IP
   ansible.builtin.command:
