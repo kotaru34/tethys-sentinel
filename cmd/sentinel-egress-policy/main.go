@@ -12,6 +12,21 @@ import (
 	"github.com/kotaru34/tethys-sentinel/internal/sshtarget"
 )
 
+type stringList []string
+
+func (s *stringList) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringList) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("value must not be empty")
+	}
+	*s = append(*s, value)
+	return nil
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "sentinel-egress-policy:", err)
@@ -24,6 +39,8 @@ func run(args []string) error {
 	fs.SetOutput(os.Stderr)
 	targetsPath := fs.String("targets", "", "protected SSH target inventory JSON")
 	controlURL := fs.String("control", "", "literal-IP HTTPS Control Plane URL")
+	var ntpSources stringList
+	fs.Var(&ntpSources, "ntp", "trusted literal-IP NTP server; repeat for multiple sources")
 	format := fs.String("format", "pve", "output format: pve or json")
 	checkPath := fs.String("check", "", "compare rendered output byte-for-byte with this file")
 	pveClusterFW := fs.String("pve-cluster-fw", "", "Proxmox Datacenter firewall file to verify")
@@ -38,6 +55,9 @@ func run(args []string) error {
 	if strings.TrimSpace(*targetsPath) == "" || strings.TrimSpace(*controlURL) == "" {
 		return errors.New("-targets and -control are required")
 	}
+	if len(ntpSources) == 0 {
+		return errors.New("at least one -ntp trusted literal IP is required")
+	}
 	activationArgs := []string{strings.TrimSpace(*pveClusterFW), strings.TrimSpace(*pveVMConfig), strings.TrimSpace(*pveNet)}
 	if someButNotAll(activationArgs) {
 		return errors.New("-pve-cluster-fw, -pve-vm-config and -pve-net must be supplied together")
@@ -47,7 +67,7 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open target inventory: %w", err)
 	}
-	policy, err := egresspolicy.Build(*controlURL, store.List())
+	policy, err := egresspolicy.Build(*controlURL, store.List(), ntpSources)
 	if err != nil {
 		return err
 	}
