@@ -9,22 +9,26 @@
 {% set hv = hostvars[inventory_name] %}
 {% set target_id = hv.sentinel_target_id | default(inventory_name) %}
 {% set ip = hv.sentinel_target_address | default(hv.ansible_host) %}
-{% set role_description = hv.sentinel_target_role_description | default('') %}
-{% set notes = hv.sentinel_target_notes | default('') %}
-{% set os_name = hv.sentinel_target_os | default(((hv.ansible_distribution | default('')) ~ ' ' ~ (hv.ansible_distribution_version | default(''))) | trim) %}
-{% set record = {
-  'name': target_id,
-  'addresses': [ip],
-  'services': hv.sentinel_target_services | default(['sshd'])
-} %}
-{% if role_description %}
-{% set _ = record.update({'role': role_description}) %}
+{% set existing_matches = sentinel_existing_context.hosts | default([]) | selectattr('name', 'equalto', target_id) | list %}
+{% set record = (existing_matches[0] if existing_matches else {}) | combine({'name': target_id, 'addresses': [ip]}) %}
+{% if hv.sentinel_target_role_description is defined %}
+{% set record = record | combine({'role': hv.sentinel_target_role_description}) %}
 {% endif %}
-{% if os_name %}
-{% set _ = record.update({'os': os_name}) %}
+{% if hv.sentinel_target_services is defined %}
+{% set record = record | combine({'services': hv.sentinel_target_services}) %}
+{% elif 'services' not in record %}
+{% set record = record | combine({'services': ['sshd']}) %}
 {% endif %}
-{% if notes %}
-{% set _ = record.update({'notes': notes}) %}
+{% if hv.sentinel_target_notes is defined %}
+{% set record = record | combine({'notes': hv.sentinel_target_notes}) %}
+{% endif %}
+{% if hv.sentinel_target_os is defined %}
+{% set record = record | combine({'os': hv.sentinel_target_os}) %}
+{% elif 'os' not in record %}
+{% set discovered_os = ((hv.ansible_distribution | default('')) ~ ' ' ~ (hv.ansible_distribution_version | default(''))) | trim %}
+{% if discovered_os %}
+{% set record = record | combine({'os': discovered_os}) %}
+{% endif %}
 {% endif %}
 {% set _ = hosts.append(record) %}
 {% endfor %}
