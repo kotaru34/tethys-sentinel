@@ -1,0 +1,36 @@
+{% set hosts = [] %}
+{% set protected_names = (sentinel_current_target_names + sentinel_desired_target_names) | unique | list %}
+{% for existing in sentinel_existing_context.hosts | default([]) %}
+{% if existing.name not in protected_names %}
+{% set _ = hosts.append(existing) %}
+{% endif %}
+{% endfor %}
+{% for inventory_name in groups[sentinel_targets_group] | sort %}
+{% set hv = hostvars[inventory_name] %}
+{% set target_id = hv.sentinel_target_id | default(inventory_name) %}
+{% set ip = hv.sentinel_target_address | default(hv.ansible_host) %}
+{% set role_description = hv.sentinel_target_role_description | default('') %}
+{% set notes = hv.sentinel_target_notes | default('') %}
+{% set os_name = hv.sentinel_target_os | default(((hv.ansible_distribution | default('')) ~ ' ' ~ (hv.ansible_distribution_version | default(''))) | trim) %}
+{% set record = {
+  'name': target_id,
+  'addresses': [ip],
+  'services': hv.sentinel_target_services | default(['sshd'])
+} %}
+{% if role_description %}
+{% set _ = record.update({'role': role_description}) %}
+{% endif %}
+{% if os_name %}
+{% set _ = record.update({'os': os_name}) %}
+{% endif %}
+{% if notes %}
+{% set _ = record.update({'notes': notes}) %}
+{% endif %}
+{% set _ = hosts.append(record) %}
+{% endfor %}
+{{ {
+  'policy': sentinel_existing_context.policy,
+  'instructions': sentinel_existing_context.instructions,
+  'hosts': hosts,
+  'runbooks': sentinel_existing_context.runbooks | default([])
+} | to_nice_json }}
