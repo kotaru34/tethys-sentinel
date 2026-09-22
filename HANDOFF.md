@@ -1,8 +1,9 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-20  
+Updated: 2026-09-22  
 Current accepted development version: `0.1.0-dev.20`  
-Branch: `main`
+Current candidate version: `0.1.0-dev.21`  
+Branch: `wip/dev21-ntp-context-hardening`
 
 ## Status
 
@@ -11,6 +12,25 @@ Branch: `main`
 The current milestone is repository-wide public-release cleanup. Runtime behavior is already accepted; this phase is limited to privacy sanitization, documentation cleanup, removal of obsolete development-only references, repository-history cleanup, and final public-release verification.
 
 The public repository must not contain site-specific deployment data. Real addresses, hostnames, VM identifiers, local usernames or home paths, certificate/SSH fingerprints, acceptance-only topology, capability material, tokens, or other operator-specific evidence belong in private operator records.
+
+## dev.21 candidate status
+
+A live external-Agent-HTTP acceptance run against the accepted dev.20 deployment exercised the path through the public reverse-proxy boundary, Gateway, Control, Worker, short-lived SSH certificate issuance, pinned target execution, and bounded output retrieval.
+
+The run found two hardening gaps:
+
+- Worker deny-by-default egress did not model a trusted time source. With no permitted NTP path, Worker clock skew exceeded the Signer backdate tolerance and locally rejected a newly issued short-lived SSH certificate as not currently valid.
+- AI-facing `/v1/context` included configured host network addresses from the operator-owned context inventory even though agents only require logical target IDs.
+
+Operator-side temporary remediation proved both diagnoses: a narrowly allowed trusted NTP source restored clock synchronization and end-to-end execution, and removing addresses from the deployment context removed them from the AI bundle.
+
+The dev.21 candidate makes those fixes structural:
+
+- `sentinel-egress-policy` requires one or more operator-supplied literal-IP `-ntp` sources, includes exact UDP/123 rules in the canonical policy/hash/drift check, and still denies DNS/general Internet egress;
+- Agent `INFRASTRUCTURE.json` automatically omits host `addresses`, while the privileged Operator context snapshot retains the configured inventory;
+- tests and infrastructure/egress/API documentation cover both boundaries.
+
+dev.21 is **not accepted yet**. Before merge, require CI success, regenerate/reinstall the Worker policy from the dev.21 binary (removing the temporary manual NTP drift), verify Worker clock synchronization, repeat a harmless end-to-end execution, and complete the planned Gateway ingress firewall acceptance.
 
 ## Operator-mandated development rules
 
