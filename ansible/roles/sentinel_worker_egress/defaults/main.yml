@@ -4,6 +4,7 @@ sentinel_control_registry_path: /etc/tethys-sentinel/ssh-targets.json
 
 sentinel_artifact_dir: "{{ playbook_dir }}/../artifacts/linux-amd64"
 sentinel_egress_policy_binary_src: "{{ sentinel_artifact_dir }}/sentinel-egress-policy"
+sentinel_artifact_checksum_file: "{{ sentinel_artifact_dir }}/SHA256SUMS"
 sentinel_egress_policy_binary_dest: /usr/local/sbin/sentinel-egress-policy
 
 sentinel_worker_vmid: null
