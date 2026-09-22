@@ -1,0 +1,16 @@
+{% set targets = [] %}
+{% for inventory_name in groups[sentinel_targets_group] | sort %}
+{% set hv = hostvars[inventory_name] %}
+{% set target_id = hv.sentinel_target_id | default(inventory_name) %}
+{% set ip = hv.sentinel_target_address | default(hv.ansible_host) %}
+{% set port = hv.sentinel_target_ssh_port | default(22) | int %}
+{% set endpoint = ('[' ~ ip ~ ']:' ~ port) if ':' in ip else (ip ~ ':' ~ port) %}
+{% set record = {
+  'name': target_id,
+  'address': endpoint,
+  'user': hv.sentinel_target_user | default('sentinel-ai'),
+  'host_key': sentinel_discovered_host_keys[inventory_name]
+} %}
+{% set _ = targets.append(record) %}
+{% endfor %}
+{{ {'targets': targets} | to_nice_json }}
