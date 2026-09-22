@@ -87,11 +87,13 @@ sentinel-egress-policy \
 
 PVE per-VM firewall configuration is `/etc/pve/firewall/<VMID>.fw` and filters traffic at the VM interface outside the guest.
 
-Install reviewed generated policy from an operator/Ansible path, for example:
+Install reviewed generated policy from an operator/Ansible path by writing the file contents into pmxcfs, for example:
 
 ```sh
-install -m 0640 1234.fw /etc/pve/firewall/1234.fw
+cat 1234.fw > /etc/pve/firewall/1234.fw
 ```
+
+Do not use `install -m`, `chmod`, or ownership-preserving copy semantics on `/etc/pve`: Proxmox pmxcfs manages file metadata itself and rejects normal permission-mode changes with `Operation not permitted`. Verify the resulting bytes instead of trying to force Unix mode bits on that path.
 
 Mandatory activation conditions:
 
