@@ -64,9 +64,7 @@
     sentinel_egress_registry_temp: "{{ sentinel_egress_work_dir }}/ssh-targets.ansible.json"
     sentinel_egress_candidate: "{{ sentinel_egress_work_dir }}/{{ sentinel_worker_vmid }}.fw.ansible-candidate"
     sentinel_egress_live: "/etc/pve/firewall/{{ sentinel_worker_vmid }}.fw"
-    sentinel_egress_backup: >-
-      /root/{{ sentinel_worker_vmid }}.fw.pre-ansible.
-      {{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') | trim }}
+    sentinel_egress_backup: "/root/{{ sentinel_worker_vmid }}.fw.pre-ansible.{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') | trim }}"
 
 - name: Copy protected target registry to PVE work area
   ansible.builtin.copy:
@@ -108,6 +106,35 @@
         group: root
         mode: "0600"
       no_log: true
+
+    - name: Verify candidate policy and PVE activation before install
+      ansible.builtin.command:
+        argv: >-
+          {{ [sentinel_egress_policy_binary_dest,
+              '-targets', sentinel_egress_registry_temp,
+              '-control', sentinel_control_url]
+             + sentinel_egress_ntp_argv
+             + ['-format', 'pve',
+                '-check', sentinel_egress_candidate,
+                '-pve-cluster-fw', '/etc/pve/firewall/cluster.fw',
+                '-pve-vm-config', '/etc/pve/qemu-server/' ~ (sentinel_worker_vmid | string) ~ '.conf',
+                '-pve-net', sentinel_worker_net] }}
+      changed_when: false
+      no_log: true
+
+    - name: Require active Proxmox firewall before changing policy
+      ansible.builtin.command:
+        argv:
+          - pve-firewall
+          - status
+      register: sentinel_pve_firewall_pre_status
+      changed_when: false
+
+    - name: Assert active Proxmox firewall before changing policy
+      ansible.builtin.assert:
+        that:
+          - "'enabled/running' in sentinel_pve_firewall_pre_status.stdout"
+        fail_msg: "Refusing to change Worker egress while Proxmox firewall is not enabled/running."
 
     - name: Inspect current PVE Worker firewall
       ansible.builtin.stat:
