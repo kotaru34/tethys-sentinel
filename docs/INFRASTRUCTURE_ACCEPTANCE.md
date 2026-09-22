@@ -586,11 +586,13 @@ NTP_IP:123/udp
 
 There must be no generic LAN, Internet, DNS, broad HTTPS or unrestricted NTP allow. `policy_in: ACCEPT` preserves unspecified inbound behavior while this file enforces outbound containment; it is not permission to broaden autonomous Worker egress.
 
-Install it on the PVE node:
+Install it on the PVE node by writing the reviewed contents into pmxcfs:
 
 ```sh
-install -m 0640 "${WORKER_VMID}.fw" "/etc/pve/firewall/${WORKER_VMID}.fw"
+cat "${WORKER_VMID}.fw" > "/etc/pve/firewall/${WORKER_VMID}.fw"
 ```
+
+Do not use `install -m`, `chmod`, or ownership-preserving copy operations on `/etc/pve`. Proxmox pmxcfs owns file metadata and may reject ordinary permission changes with `Operation not permitted`; acceptance should compare the installed bytes and compile the firewall instead.
 
 Ensure:
 
