@@ -91,17 +91,23 @@ jobs:
           go-version: '1.27.1'
           cache: false
 
-      - name: Build affected dev.22 binaries
+      - name: Build dev.23 onboarding binaries
         shell: bash
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.1.0-dev.22'
+          test "$(cat VERSION)" = '0.1.0-dev.23'
           mkdir -p out
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-control ./cmd/sentinel-control
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-control ./cmd/sentinel-control
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/tethys-sentinel-exec ./cmd/tethys-sentinel-exec
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/tethys-sentinel-consume ./cmd/tethys-sentinel-consume
           (
             cd out
-            sha256sum sentinel-control sentinel-egress-policy > SHA256SUMS
+            sha256sum \
+              sentinel-control \
+              sentinel-egress-policy \
+              tethys-sentinel-exec \
+              tethys-sentinel-consume > SHA256SUMS
           )
           {
             echo "commit=$(git rev-parse HEAD)"
@@ -112,14 +118,37 @@ jobs:
       - name: Upload linux amd64 deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dev22-linux-amd64
+          name: dev23-linux-amd64
           if-no-files-found: error
           retention-days: 1
           path: |
             out/sentinel-control
             out/sentinel-egress-policy
+            out/tethys-sentinel-exec
+            out/tethys-sentinel-consume
             out/SHA256SUMS
             out/BUILDINFO.txt
+
+
+  ansible-onboarding:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install pinned Ansible core
+        run: python -m pip install --disable-pip-version-check 'ansible-core==2.19.3'
+
+      - name: Syntax-check target onboarding playbook
+        working-directory: ansible
+        run: ansible-playbook --syntax-check -i inventory/example.yml playbooks/onboard-sentinel-targets.yml
 
   operator-frontend:
     runs-on: ubuntu-latest
