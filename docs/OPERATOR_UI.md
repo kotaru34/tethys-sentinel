@@ -2,7 +2,7 @@
 
 ## Status
 
-This document defines the accepted Operator UI/BFF contract in the current `0.1.0-dev.20` baseline. Operator UI v1 is implemented and accepted; the current baseline also includes stable multi-tab CSRF handling and the one-time MCP capability-claim bootstrap flow.
+This document defines the accepted Operator UI/BFF contract in the current `0.1.0-dev.22` baseline. Operator UI v1 is implemented and accepted; the current baseline also includes stable multi-tab CSRF handling and the one-time MCP capability-claim bootstrap flow.
 
 ## Goal
 
