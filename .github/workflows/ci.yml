@@ -89,17 +89,19 @@ jobs:
           expected='6e785ab7982ddda7873bb1489a6f8b6c498dfc9dcdb3a088fabfab23b4f29c9b'
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [ "$actual" != "$expected" ]; then
+            cp package-lock.json /tmp/package-lock.current.json
             echo "frontend dependency graph drift: expected=${expected} actual=${actual}"
-            node <<'NODE'
-          const lock = require('./package-lock.json');
-          const rows = Object.entries(lock.packages || {})
-            .filter(([path, meta]) => path && meta && meta.version)
-            .map(([path, meta]) => `${path}\t${meta.version}\t${meta.integrity || ''}`)
-            .sort();
-          console.log('----- resolved frontend graph -----');
-          console.log(rows.join('\n'));
-          console.log('----- end resolved frontend graph -----');
-          NODE
+            echo "Reconstructing the last accepted dependency view using the accepted CI timestamp..."
+            rm -f package-lock.json
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund \
+              --before='2026-09-20T20:45:27Z'
+            historic="$(sha256sum package-lock.json | cut -d' ' -f1)"
+            echo "historic reconstruction sha256=${historic}"
+            cp package-lock.json /tmp/package-lock.accepted-cutoff.json
+            echo '----- lockfile diff: accepted cutoff -> current registry view -----'
+            diff -u /tmp/package-lock.accepted-cutoff.json /tmp/package-lock.current.json || true
+            echo '----- end lockfile diff -----'
+            cp /tmp/package-lock.current.json package-lock.json
             exit 1
           fi
 
