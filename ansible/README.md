@@ -44,7 +44,7 @@ The dev.23 CI artifact includes all three binaries above plus `sentinel-control`
 
 ## Inventory
 
-Copy `inventory/example.yml` to a private inventory and replace only the documentation addresses/names there.
+Copy `inventory/example.yml` to a private inventory and replace only the documentation addresses/names there. Private files below `inventory/` are gitignored; `example.yml` is the only tracked inventory example.
 
 Every target normally needs:
 
