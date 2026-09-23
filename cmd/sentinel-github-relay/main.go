@@ -65,9 +65,10 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	stateDir := fs.String("state-dir", envOr(lookupEnv, "SENTINEL_GITHUB_RELAY_STATE_DIR", "/var/lib/tethys-sentinel-github-relay"), "private relay state directory")
 	baseURL := fs.String("url", envValue(lookupEnv, "SENTINEL_URL"), "Sentinel Gateway HTTPS origin")
 	caFile := fs.String("ca-file", envValue(lookupEnv, "SENTINEL_CA_FILE"), "additional Sentinel CA PEM")
-	capFile := fs.String("cap-file", "", "protected file containing an existing Sentinel capability")
+	capFile := fs.String("cap-file", envValue(lookupEnv, "SENTINEL_CAP_FILE"), "protected file containing an existing Sentinel capability")
 	claimFile := fs.String("claim-file", "", "protected file containing a one-time Sentinel MCP claim")
-	repository := fs.String("repository", "", "dedicated private GitHub repository in owner/name form")
+	repository := fs.String("repository", envValue(lookupEnv, "SENTINEL_GITHUB_REPOSITORY"), "dedicated private GitHub repository in owner/name form")
+	expectedRepositoryID := fs.Int64("repository-id", envInt64(lookupEnv, "SENTINEL_GITHUB_REPOSITORY_ID"), "optional expected numeric GitHub repository ID")
 	issueNumber := fs.Int("issue", 0, "existing GitHub issue number to bind")
 	actorIDOverride := fs.Int64("actor-id", 0, "optional numeric GitHub request actor ID; defaults to issue author")
 	target := fs.String("target", "", "single logical Sentinel target")
@@ -155,6 +156,9 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if err != nil {
 		return report(stderr, fmt.Errorf("validate GitHub repository: %w", err))
 	}
+	if *expectedRepositoryID > 0 && repo.ID != *expectedRepositoryID {
+		return report(stderr, fmt.Errorf("GitHub repository ID mismatch: got %d, expected %d", repo.ID, *expectedRepositoryID))
+	}
 	if !repo.Private {
 		return report(stderr, errors.New("relay sessions require a private GitHub repository"))
 	}
@@ -235,15 +239,26 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if err != nil {
 		return report(stderr, err)
 	}
-	if _, err := gh.CreateComment(ctx, session.Repository, session.IssueNumber, authBody); err != nil {
+	authorizationComment, err := gh.CreateComment(ctx, session.Repository, session.IssueNumber, authBody)
+	if err != nil {
 		session.Close("failed to publish relay authorization marker")
 		_ = store.Save(session)
 		return report(stderr, fmt.Errorf("publish authorization marker: %w", err))
 	}
+	if authorizationComment.User.ID <= 0 || authorizationComment.User.Type != "Bot" {
+		session.Close("relay authorization marker was not attributed to a stable GitHub App bot")
+		_ = store.Save(session)
+		return report(stderr, errors.New(session.CloseReason))
+	}
+	session.RelayActorID = authorizationComment.User.ID
+	session.RelayActorLogin = authorizationComment.User.Login
+	if err := store.Save(session); err != nil {
+		return report(stderr, err)
+	}
 
 	fmt.Fprintf(stdout, "relay session: %s\n", session.ID)
 	fmt.Fprintf(stdout, "repository: %s (id=%d)\nissue: %d (id=%d)\n", session.Repository, session.RepositoryID, session.IssueNumber, session.IssueID)
-	fmt.Fprintf(stdout, "request actor: %s (id=%d)\ntarget: %s\nexpires: %s\nmax commands: %d\n", requestActorLogin, session.ActorID, session.Target, session.ExpiresAt.Format(time.RFC3339), session.MaxCommands)
+	fmt.Fprintf(stdout, "request actor: %s (id=%d)\nrelay GitHub App actor: %s (id=%d)\ntarget: %s\nexpires: %s\nmax commands: %d\n", requestActorLogin, session.ActorID, session.RelayActorLogin, session.RelayActorID, session.Target, session.ExpiresAt.Format(time.RFC3339), session.MaxCommands)
 	if len(session.ExactArgv) != 0 {
 		data, _ := json.Marshal(session.ExactArgv)
 		fmt.Fprintf(stdout, "exact argv: %s\n", data)
@@ -364,6 +379,8 @@ func runInspect(args []string, stdout, stderr io.Writer, lookupEnv func(string) 
 		RepositoryID     int64    `json:"repository_id"`
 		IssueNumber      int      `json:"issue_number"`
 		ActorID          int64    `json:"actor_id"`
+		RelayActorID     int64    `json:"relay_actor_id,omitempty"`
+		RelayActorLogin  string   `json:"relay_actor_login,omitempty"`
 		Target           string   `json:"target"`
 		CreatedAt        string   `json:"created_at"`
 		ExpiresAt        string   `json:"expires_at"`
@@ -376,7 +393,7 @@ func runInspect(args []string, stdout, stderr io.Writer, lookupEnv func(string) 
 		CloseReason      string   `json:"close_reason,omitempty"`
 	}{
 		ID: session.ID, GrantID: session.GrantID, Repository: session.Repository, RepositoryID: session.RepositoryID,
-		IssueNumber: session.IssueNumber, ActorID: session.ActorID, Target: session.Target,
+		IssueNumber: session.IssueNumber, ActorID: session.ActorID, RelayActorID: session.RelayActorID, RelayActorLogin: session.RelayActorLogin, Target: session.Target,
 		CreatedAt: session.CreatedAt.Format(time.RFC3339), ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
 		MaxCommands: session.MaxCommands, CommandsComplete: session.CommandsComplete, NextSequence: session.NextSequence,
 		ExactArgv: session.ExactArgv, PublishOutput: session.PublishOutput, Closed: session.Closed, CloseReason: session.CloseReason,
