@@ -27,6 +27,8 @@ type Agent interface {
 type AgentFactory func(capability string) (Agent, error)
 
 type GitHubTransport interface {
+	Repository(context.Context, string) (GitHubRepository, error)
+	Issue(context.Context, string, int) (GitHubIssue, error)
 	Comments(context.Context, string, int, string) ([]GitHubComment, string, bool, error)
 	CreateComment(context.Context, string, int, string) (GitHubComment, error)
 }
@@ -117,18 +119,11 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 	if notModified {
 		return nil
 	}
-	if etag != "" && etag != session.ETag {
-		session.ETag = etag
-		if err := r.Store.Save(*session); err != nil {
-			return err
-		}
-	}
-
 	for _, comment := range comments {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if comment.User.ID == session.ActorID && strings.Contains(comment.Body, session.Secret) {
+		if strings.Contains(comment.Body, session.Secret) {
 			session.Close("relay session secret was exposed in the GitHub issue")
 			_ = r.Store.Save(*session)
 			return errors.New("relay session secret was exposed in the GitHub issue")
@@ -183,6 +178,9 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 			return r.Store.Save(*session)
 		}
 
+		if err := r.verifyTransportBinding(ctx, session); err != nil {
+			return err
+		}
 		session.SeenComments[commentKey] = bodyHash
 		session.Inflight = &Inflight{CommentID: comment.ID, BodyHash: bodyHash, Request: req}
 		if err := r.Store.Save(*session); err != nil {
@@ -194,6 +192,36 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 		if session.Closed {
 			return nil
 		}
+	}
+	if etag != "" && etag != session.ETag {
+		session.ETag = etag
+		return r.Store.Save(*session)
+	}
+	return nil
+}
+
+func (r *Runner) verifyTransportBinding(ctx context.Context, session *Session) error {
+	repo, err := r.GitHub.Repository(ctx, session.Repository)
+	if err != nil {
+		return fmt.Errorf("revalidate relay repository: %w", err)
+	}
+	if repo.ID != session.RepositoryID || !repo.Private || repo.Archived {
+		session.Close("GitHub repository binding changed or is no longer eligible")
+		if saveErr := r.Store.Save(*session); saveErr != nil {
+			return errors.Join(errors.New(session.CloseReason), saveErr)
+		}
+		return errors.New(session.CloseReason)
+	}
+	issue, err := r.GitHub.Issue(ctx, session.Repository, session.IssueNumber)
+	if err != nil {
+		return fmt.Errorf("revalidate relay issue: %w", err)
+	}
+	if issue.ID != session.IssueID || issue.Number != session.IssueNumber || issue.State != "open" || issue.PullRequest != nil {
+		session.Close("GitHub issue binding changed, closed, or is no longer an issue")
+		if saveErr := r.Store.Save(*session); saveErr != nil {
+			return errors.Join(errors.New(session.CloseReason), saveErr)
+		}
+		return errors.New(session.CloseReason)
 	}
 	return nil
 }
@@ -255,6 +283,13 @@ func (r *Runner) resumeInflight(ctx context.Context, session *Session) error {
 			if isAgentHTTPStatus(err, 401) {
 				session.Close("underlying Sentinel capability was revoked or expired")
 				_ = r.Store.Save(*session)
+				return err
+			}
+			if isAgentHTTPStatus(err, 403) {
+				return r.finishWithResponse(ctx, session, ResponseEnvelope{
+					SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+					Status: "sentinel_denied", Error: err.Error(),
+				}, false)
 			}
 			return err
 		}
