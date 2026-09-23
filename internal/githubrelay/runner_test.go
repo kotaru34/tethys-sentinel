@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -82,13 +83,22 @@ func (f *fakeAgent) Job(context.Context, string) (internalapi.AgentExecutionJob,
 	return f.job, nil
 }
 
-func TestRunnerForwardsOnlyAuthenticatedRequestThroughAgentAPI(t *testing.T) {
-	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+func openRunnerTestStore(t *testing.T) *Store {
+	t.Helper()
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	store, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return store
+}
+
+func TestRunnerForwardsOnlyAuthenticatedRequestThroughAgentAPI(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
 	s := Session{
 		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
 		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
@@ -154,10 +164,7 @@ func TestRunnerForwardsOnlyAuthenticatedRequestThroughAgentAPI(t *testing.T) {
 
 func TestRunnerInvalidMACNeverReachesAgent(t *testing.T) {
 	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
-	store, err := OpenStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openRunnerTestStore(t)
 	s := Session{
 		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
 		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
@@ -198,10 +205,7 @@ func TestRunnerInvalidMACNeverReachesAgent(t *testing.T) {
 
 func TestRunnerClosesSessionIfSecretAppearsInGitHub(t *testing.T) {
 	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
-	store, err := OpenStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openRunnerTestStore(t)
 	s := Session{
 		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
 		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
@@ -233,13 +237,9 @@ func TestRunnerClosesSessionIfSecretAppearsInGitHub(t *testing.T) {
 	}
 }
 
-
 func TestRunnerDoesNotPersistFreshETagBeforeInflightRecoveryIsDurable(t *testing.T) {
 	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
-	store, err := OpenStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openRunnerTestStore(t)
 	s := Session{
 		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
 		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
@@ -254,12 +254,14 @@ func TestRunnerDoesNotPersistFreshETagBeforeInflightRecoveryIsDurable(t *testing
 		t.Fatal(err)
 	}
 	gh := &fakeGitHub{
-		etag: `"new"`,
+		etag:     `"new"`,
 		comments: []GitHubComment{{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}},
 	}
 	runner := &Runner{
 		Store: store, GitHub: gh, Now: func() time.Time { return now },
-		AgentFactory: func(string) (Agent, error) { return nil, errors.New("simulated process interruption before Sentinel recovery") },
+		AgentFactory: func(string) (Agent, error) {
+			return nil, errors.New("simulated process interruption before Sentinel recovery")
+		},
 	}
 	if err := runner.RunOnce(context.Background()); err == nil {
 		t.Fatal("expected simulated interruption")
@@ -278,10 +280,7 @@ func TestRunnerDoesNotPersistFreshETagBeforeInflightRecoveryIsDurable(t *testing
 
 func TestRunnerSentinel403BecomesTerminalSignedDenial(t *testing.T) {
 	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
-	store, err := OpenStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openRunnerTestStore(t)
 	s := Session{
 		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
 		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
@@ -328,10 +327,7 @@ func TestRunnerSentinel403BecomesTerminalSignedDenial(t *testing.T) {
 
 func TestRunnerFailsClosedWhenRepositoryIdentityChanges(t *testing.T) {
 	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
-	store, err := OpenStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openRunnerTestStore(t)
 	s := Session{
 		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
 		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
@@ -347,7 +343,7 @@ func TestRunnerFailsClosedWhenRepositoryIdentityChanges(t *testing.T) {
 	}
 	gh := &fakeGitHub{
 		repository: GitHubRepository{ID: 999, FullName: "example/relay", Private: true},
-		comments: []GitHubComment{{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}},
+		comments:   []GitHubComment{{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}},
 	}
 	called := false
 	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) {
