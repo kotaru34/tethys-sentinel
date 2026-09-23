@@ -39,7 +39,8 @@ type Runner struct {
 	ApprovalPoll time.Duration
 	JobPoll      time.Duration
 	Now          func() time.Time
-	Logf         func(string, ...any)
+	Logf               func(string, ...any)
+	githubBackoffUntil time.Time
 }
 
 func (r *Runner) Run(ctx context.Context) error {
