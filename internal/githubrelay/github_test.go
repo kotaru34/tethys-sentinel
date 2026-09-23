@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
@@ -35,6 +36,15 @@ func TestGitHubAppMintsAndCachesInstallationToken(t *testing.T) {
 			bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if len(strings.Split(bearer, ".")) != 3 {
 				t.Fatalf("installation token request did not use an App JWT")
+			}
+			var request struct {
+				Permissions map[string]string `json:"permissions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode installation token request: %v", err)
+			}
+			if len(request.Permissions) != 2 || request.Permissions["metadata"] != "read" || request.Permissions["issues"] != "write" {
+				t.Fatalf("installation token permissions = %#v", request.Permissions)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"token":"ghs_test","expires_at":%q}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
