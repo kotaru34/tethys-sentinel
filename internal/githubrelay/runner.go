@@ -32,13 +32,13 @@ type GitHubTransport interface {
 }
 
 type Runner struct {
-	Store        *Store
-	GitHub       GitHubTransport
-	AgentFactory AgentFactory
-	PollInterval time.Duration
-	ApprovalPoll time.Duration
-	JobPoll      time.Duration
-	Now          func() time.Time
+	Store              *Store
+	GitHub             GitHubTransport
+	AgentFactory       AgentFactory
+	PollInterval       time.Duration
+	ApprovalPoll       time.Duration
+	JobPoll            time.Duration
+	Now                func() time.Time
 	Logf               func(string, ...any)
 	githubBackoffUntil time.Time
 }
