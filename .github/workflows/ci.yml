@@ -210,7 +210,7 @@ jobs:
           mac = "h1_" + base64.urlsafe_b64encode(hmac.new(key, canonical, hashlib.sha256).digest()).decode().rstrip("=")
           wire = dict(payload)
           wire["mac"] = mac
-          comment = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\\n" + json.dumps(wire, ensure_ascii=False, separators=(",", ":"))
+          comment = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\n" + json.dumps(wire, ensure_ascii=False, separators=(",", ":"))
 
           def verify(author_id=9001, author_type="Bot", body=comment):
               data = json.dumps({
@@ -232,7 +232,7 @@ jobs:
 
           injected = dict(wire)
           injected["instructions"] = "unsigned attacker-controlled text"
-          injected_comment = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\\n" + json.dumps(injected, ensure_ascii=False, separators=(",", ":"))
+          injected_comment = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\n" + json.dumps(injected, ensure_ascii=False, separators=(",", ":"))
           if verify(body=injected_comment).returncode == 0:
               raise SystemExit("unsigned/unknown relay JSON field was accepted")
           PY
