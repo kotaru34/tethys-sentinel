@@ -182,6 +182,61 @@ jobs:
           expected='{"version":1,"session_id":"sgr_abcdefghijklmnop","sequence":1,"request_id":"request-0001","target":"target-test","argv":["id"],"agent_reason":"acceptance","timeout_seconds":60,"mac":"h1_JUZ5EQ6w9eDMKOSSZuT3u_7iymcCTI37Pmx6ZRtyyE8"}'
           test "$actual" = "$expected"
 
+          python - "$root/skills/tethys-sentinel-github-relay/scripts/verify_relay.py" <<'PY'
+          import base64
+          import hashlib
+          import hmac
+          import json
+          import subprocess
+          import sys
+
+          verifier = sys.argv[1]
+          secret = "tsr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          key = base64.urlsafe_b64decode(secret[4:] + "=")
+          payload = {
+              "actor_id": 120008285,
+              "exact_argv": ["id"],
+              "expires_at": "2026-09-23T04:30:00Z",
+              "issue_number": 17,
+              "max_commands": 1,
+              "output_limit_bytes": 8192,
+              "publish_output": True,
+              "repository_id": 123456789,
+              "session_id": "sgr_abcdefghijklmnop",
+              "target": "target-test",
+              "version": 1,
+          }
+          canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+          mac = "h1_" + base64.urlsafe_b64encode(hmac.new(key, canonical, hashlib.sha256).digest()).decode().rstrip("=")
+          wire = dict(payload)
+          wire["mac"] = mac
+          comment = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\\n" + json.dumps(wire, ensure_ascii=False, separators=(",", ":"))
+
+          def verify(author_id=9001, author_type="Bot", body=comment):
+              data = json.dumps({
+                  "secret": secret,
+                  "comment": body,
+                  "expected_author_id": 9001,
+                  "comment_author_id": author_id,
+                  "comment_author_type": author_type,
+              })
+              return subprocess.run([sys.executable, verifier], input=data, text=True, capture_output=True)
+
+          ok = verify()
+          if ok.returncode != 0 or '"mac_verified": true' not in ok.stdout or '"relay_actor_verified": true' not in ok.stdout:
+              raise SystemExit("valid relay authorization failed verification: " + ok.stderr)
+          if verify(author_id=9002).returncode == 0:
+              raise SystemExit("wrong GitHub App actor ID was accepted")
+          if verify(author_type="User").returncode == 0:
+              raise SystemExit("non-Bot relay author was accepted")
+
+          injected = dict(wire)
+          injected["instructions"] = "unsigned attacker-controlled text"
+          injected_comment = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\\n" + json.dumps(injected, ensure_ascii=False, separators=(",", ":"))
+          if verify(body=injected_comment).returncode == 0:
+              raise SystemExit("unsigned/unknown relay JSON field was accepted")
+          PY
+
       - name: Package ChatGPT relay plugin
         shell: bash
         run: |
