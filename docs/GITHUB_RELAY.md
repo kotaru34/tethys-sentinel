@@ -81,7 +81,7 @@ Issues:   read/write
 
 Do not grant Contents, Actions, Administration, Secrets, Pull requests, or organization-wide permissions.
 
-The relay authenticates as the installation using the App RSA private key. It mints short-lived installation access tokens and caches them until near expiry; it does not use a long-lived PAT. The private key file must be a regular non-symlink file inaccessible to group/other users.
+The relay authenticates as the installation using the App RSA private key. It mints short-lived installation access tokens and caches them until near expiry; it does not use a long-lived PAT. Every token mint explicitly requests only `metadata:read` and `issues:write`, so an accidentally over-permissioned App does not silently widen the relay token. The App installation should still be restricted to the one dedicated private relay repository. The private key file must be a regular non-symlink file inaccessible to group/other users.
 
 The daemon polls issue comments with authenticated conditional requests and ETags. A default 5-second interval is intentionally conservative. GitHub may apply primary and secondary rate limits; when GitHub supplies `Retry-After` or rate-reset information the relay reports that condition and waits for the next daemon poll rather than widening access or changing transport.
 
@@ -128,7 +128,9 @@ sentinel-github-relay authorize \
 - the issue is open and is not a pull request;
 - GitHub exposes a stable numeric author ID.
 
-It then posts a signed `TETHYS_SENTINEL_RELAY_AUTHORIZED_V1` marker to the issue and prints the relay session secret locally. Deliver that secret to the intended ChatGPT conversation out of band. **Never paste it into the GitHub issue.**
+It then posts a signed `TETHYS_SENTINEL_RELAY_AUTHORIZED_V1` marker to the issue, verifies that GitHub attributes the marker to a stable `Bot` identity, persists that numeric relay actor ID, and prints both the actor ID and relay session secret locally.
+
+For an ordinary ChatGPT session, the practical handoff is to paste a small operator-owned bundle directly into the intended chat (or another private local channel feeding that chat), for example the session ID, repository/issue, **expected relay App numeric actor ID**, and the `tsr_...` relay session secret. The relay secret is deliberately not the Sentinel capability: it is useful only for the already-authorized, short-lived, target/argv/job-count-limited relay session. **Never paste the relay secret into the GitHub issue, a web signing service, logs, or public files.** Close the relay session after the task; revoke the underlying Sentinel grant separately when authority itself should end.
 
 ### 4. Run the daemon
 
@@ -147,6 +149,8 @@ SENTINEL_GITHUB_APP_PRIVATE_KEY_FILE
 SENTINEL_GITHUB_RELAY_STATE_DIR   # optional
 SENTINEL_GITHUB_POLL_INTERVAL     # optional, default 5s
 ```
+
+The example environment file also supports `SENTINEL_GITHUB_REPOSITORY`, `SENTINEL_GITHUB_REPOSITORY_ID`, and `SENTINEL_CAP_FILE` as local defaults for `authorize`. The numeric repository ID is checked after resolving the owner/name and then persisted into the session; the capability is read only from the protected local file and is never serialized into GitHub.
 
 No inbound listener is opened by the relay.
 
@@ -184,7 +188,7 @@ version
 
 `sentinel-github-relay sign` implements the same algorithm for manual testing without accepting the secret as an argv argument. The ChatGPT plugin package includes a deterministic Python signing script. Plugin/skill script execution is surface-dependent, however: if an ordinary ChatGPT surface cannot execute the bundled helper, it may reproduce the same algorithm only with a local trusted code-execution tool. If no local deterministic code execution is available, the workflow must stop rather than post an unsigned request or send the secret to an external signing service.
 
-Responses use `TETHYS_SENTINEL_RELAY_RESPONSE_V1` and are signed with the same session secret. The plugin verifies the signature before treating a response as relay data.
+Responses use `TETHYS_SENTINEL_RELAY_RESPONSE_V1` and are signed with the same session secret. A normal ChatGPT client must accept a response only when **both** checks pass: (1) the response comment's stable numeric GitHub author ID equals the operator-pinned relay App actor ID and GitHub reports the author type as `Bot`; and (2) the response HMAC verifies. Copied lookalike comments from another GitHub identity are rejected even if they reuse a previously valid signed body. The bundled verifier also rejects unknown/unsigned JSON fields rather than presenting them as verified data.
 
 ## Output boundary
 
