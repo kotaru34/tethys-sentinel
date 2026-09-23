@@ -2,8 +2,8 @@
 
 Updated: 2026-09-22  
 Current accepted development version: `0.1.0-dev.22`  
-Current candidate version: `0.1.0-dev.23`  
-Branch: `wip/dev23-ansible-target-onboarding`
+Current candidate version: `0.1.0-dev.24`  
+Branch: `wip/dev24-github-relay`
 
 ## Status
 
@@ -50,6 +50,32 @@ Final external Agent HTTP acceptance is complete. A restricted public capability
 
 `0.1.0-dev.22` is accepted on the intended infrastructure and may be merged. This acceptance is independent of the separate public-release historical-ref/cache purge still awaiting GitHub Support.
 
+## dev.24 candidate status
+
+dev.24 adds a **sidecar GitHub transport relay for ordinary ChatGPT chats**. It must not add, bypass or duplicate a Sentinel execution path. The relay is a client of the already accepted capability-scoped Agent HTTP contract only:
+
+- `GET /v1/bootstrap`
+- `POST /v1/commands/submit`
+- `GET /v1/jobs/{id}`
+- `GET /v1/requests/{request_id}`
+
+The intended path is `ChatGPT -> dedicated private GitHub issue/comment mailbox -> sentinel-github-relay -> existing Gateway/Agent API -> existing Control/Worker/target path`. GitHub transports requests and results only; it never receives the Sentinel capability.
+
+Security requirements for this milestone:
+
+- a relay session is created only by an explicit local operator action against an already-issued normal Sentinel capability;
+- session lifetime and target scope can only narrow the underlying Sentinel grant and can never outlive it;
+- each session binds one repository ID, one issue number, the exact GitHub numeric actor ID and the GitHub App attribution observed on the approved issue;
+- command comments must be newly created, unedited, sequential, uniquely identified and authenticated with a short-lived per-session HMAC key delivered out of band to the chat/operator, so GitHub is not the sole request-authentication root;
+- replay, edit, reorder, duplicate request IDs, stale/closed sessions and invalid MACs fail closed before any Agent API submission;
+- optional exact-argv mode provides an acceptance profile in which the relay can physically forward only one explicitly approved argv such as `["id"]`;
+- the relay uses a dedicated GitHub App installation identity with only repository metadata plus Issues read/write permissions; installation access tokens are minted on demand and expire/rotate rather than using a long-lived PAT;
+- polling uses authenticated conditional requests/ETags and serial processing with backoff; no new inbound listener is required on the Sentinel side;
+- request/result bodies, logs and public repository material must never contain Sentinel capabilities, GitHub App private keys, relay session keys or deployment-specific secrets;
+- GitHub/App identity is an additional transport binding, not Sentinel authority. Every forwarded command still passes the normal immutable request-ID, grant, policy, approval, epoch, Worker and target-wrapper checks.
+
+This branch starts from the exact dev.23 candidate head `275e75b871ccb012d01209c0c33f31ef4285f276`. dev.23 remains independently testable on its original branch; the relay work is a new feature and therefore bumps the candidate to dev.24.
+
 ## dev.23 candidate status
 
 dev.23 introduces operator-side target onboarding automation while preserving the accepted dev.22 trust boundaries. One top-level Ansible playbook composes three roles:
@@ -64,7 +90,9 @@ CI for implementation commit `0f98d44bebc13b63fdcedfe162854c37e36928cc` is green
 
 A subsequent registry-only frontend reproducibility drift moved `electron-to-chromium` from `1.5.434` to `1.5.435`. The previous successful lock artifact confirms the prior version, the new graph dump shows the single mapping-package advance, and the package remains a zero-runtime-dependency Browserslist mapping dataset. The reviewed graph hash was advanced without changing Sentinel frontend source.
 
-dev.23 is **not accepted yet**. Before merge, run the top-level playbook against the existing disposable target, verify the second run is idempotent, confirm Control target/context state and Worker egress remain correct, and complete a harmless constrained Sentinel `id` execution through the newly playbook-managed target.
+Live dev.23 onboarding acceptance is now complete through the infrastructure/idempotency boundary. The staged target, Control and Worker-egress plays all passed; two subsequent complete top-level playbook runs reported `changed=0` and `failed=0` for the target, Control and PVE operator host. Worker trusted-time remained synchronized to the configured operator NTP source, Control HTTPS and registered-target SSH remained reachable, and representative public HTTPS egress remained blocked.
+
+The only remaining dev.23 acceptance item is the final harmless constrained Sentinel `id` execution through the newly playbook-managed target. A direct attempt from the current ChatGPT execution sandbox could not reach the operator's public Sentinel origin because that sandbox has no usable generic outbound HTTP/DNS path; this is a client-environment limitation, not a Sentinel failure. dev.23 remains unmerged until that last end-to-end check is completed.
 
 ## Operator-mandated development rules
 
