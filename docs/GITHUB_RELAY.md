@@ -31,7 +31,7 @@ A relay session is explicitly authorized by a local operator against an already-
 
 - exactly one private GitHub repository;
 - exactly one issue;
-- the issue author's stable numeric GitHub actor ID;
+- one explicitly observed stable numeric GitHub actor ID (the issue author by default);
 - exactly one logical Sentinel target;
 - a relay expiry that cannot exceed the Sentinel grant expiry;
 - a bounded command count (maximum 32);
@@ -63,11 +63,12 @@ The relay rejects or closes a session when any of these conditions occurs:
 - session or underlying Sentinel grant expired/revoked;
 - GitHub request comment was edited;
 - a previously observed request comment changes bytes;
-- the relay session secret itself appears in an actor-authored issue comment;
+- the relay session secret itself appears anywhere in the GitHub issue;
 - the issue grows beyond the first 100 comments, so polling can no longer prove a complete view;
-- request recovery returns an immutable target/argv binding different from the signed request.
+- request recovery returns an immutable target/argv binding different from the signed request;
+- the numeric repository/issue binding changes, the repository stops being private/eligible, or the issue is closed/replaced.
 
-An inflight request is persisted **before** Agent API submission. After restart, the relay first uses `GET /v1/requests/{request_id}` and resumes the existing immutable job if it exists. It never generates a replacement request ID for a retry.
+An inflight request is persisted **before** Agent API submission. The comments ETag is advanced only after the fetched comment view has been processed durably, so a crash cannot acknowledge an unseen request. After restart, the relay first uses `GET /v1/requests/{request_id}` and resumes the existing immutable job if it exists. It never generates a replacement request ID for a retry. Permanent Agent-API authorization rejection (`403`) is returned as a signed terminal denial rather than retried forever.
 
 ## GitHub App
 
@@ -168,7 +169,7 @@ TETHYS_SENTINEL_RELAY_REQUEST_V1
 {"version":1,"session_id":"sgr_...","sequence":1,"request_id":"request-...","target":"target-test","argv":["id"],"timeout_seconds":60,"mac":"h1_..."}
 ```
 
-The MAC is HMAC-SHA256 with the relay session secret (the 32 decoded bytes after `tsr_`). The signed payload contains the following keys with these exact values, serialized as UTF-8 JSON with lexicographically sorted keys, compact separators, and unescaped Unicode/HTML characters:
+The MAC is HMAC-SHA256 with the relay session secret (the 32 decoded bytes after `tsr_`). This cryptographic step must happen locally in the ChatGPT execution environment; sending the secret to a web service to calculate the MAC would destroy the extra trust factor. The signed payload contains the following keys with these exact values, serialized as UTF-8 JSON with lexicographically sorted keys, compact separators, and unescaped Unicode/HTML characters:
 
 ```text
 agent_reason
@@ -181,7 +182,7 @@ timeout_seconds
 version
 ```
 
-`sentinel-github-relay sign` implements the same algorithm for manual testing without accepting the secret as an argv argument. The ChatGPT plugin package includes a deterministic Python signing script so a normal chat does not need to invent cryptography.
+`sentinel-github-relay sign` implements the same algorithm for manual testing without accepting the secret as an argv argument. The ChatGPT plugin package includes a deterministic Python signing script. Plugin/skill script execution is surface-dependent, however: if an ordinary ChatGPT surface cannot execute the bundled helper, it may reproduce the same algorithm only with a local trusted code-execution tool. If no local deterministic code execution is available, the workflow must stop rather than post an unsigned request or send the secret to an external signing service.
 
 Responses use `TETHYS_SENTINEL_RELAY_RESPONSE_V1` and are signed with the same session secret. The plugin verifies the signature before treating a response as relay data.
 
@@ -213,6 +214,8 @@ The relay intentionally accepts these trade-offs:
 - Prompt injection can still cause an authorized model to request an undesirable command. HMAC does not solve that problem; Sentinel grant scope, shell split, risk classification, approvals, expiry, Worker boundaries and optional exact-argv relay scope remain the authority controls.
 - If the model accidentally includes the relay secret in an actor-authored GitHub comment, the daemon detects the literal secret and closes the session. The leaked GitHub history still needs operator cleanup.
 - Normal ChatGPT execution is not guaranteed to remain an indefinitely running background agent. Sentinel request IDs/jobs and relay inflight state make interrupted work recoverable, but they do not turn a normal chat into a guaranteed scheduler.
+- A skills-only plugin can package scripts, but ordinary Chat surfaces do not guarantee that bundled scripts are executable in every rollout. The relay protocol therefore treats local HMAC capability as a runtime prerequisite and fails closed when it is unavailable.
+- The relay deliberately exposes only the existing Agent HTTP command surface. It does not add file upload/edit semantics. Tasks requiring arbitrary new configuration-file contents remain limited by whatever structured commands and permissions Sentinel already exposes; solving that requires a future Sentinel capability, not a relay backdoor.
 
 ## ChatGPT plugin package
 
