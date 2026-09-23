@@ -467,7 +467,7 @@ func TestRunnerRestartRecoveryDoesNotResubmit(t *testing.T) {
 	}
 	agent := &fakeAgent{
 		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
-		request: job,
+		request:   job,
 	}
 	gh := &fakeGitHub{}
 	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
@@ -501,7 +501,7 @@ func TestRunnerRequestIDRebindingIsRejectedWithoutSubmit(t *testing.T) {
 	}
 	agent := &fakeAgent{
 		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
-		request: internalapi.AgentExecutionJob{ID: "job-existing", RequestID: req.RequestID, Target: req.Target, Argv: []string{"whoami"}, Status: executionjob.Succeeded},
+		request:   internalapi.AgentExecutionJob{ID: "job-existing", RequestID: req.RequestID, Target: req.Target, Argv: []string{"whoami"}, Status: executionjob.Succeeded},
 	}
 	runner := &Runner{Store: store, GitHub: &fakeGitHub{}, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
 	if err := runner.RunOnce(context.Background()); err == nil {
@@ -564,8 +564,8 @@ func TestRunnerSeenCommentReplayDoesNotResubmit(t *testing.T) {
 	job := internalapi.AgentExecutionJob{ID: "job-1", RequestID: req.RequestID, Target: s.Target, Argv: []string{"id"}, Status: executionjob.Succeeded, Result: &executionjob.Result{Success: true, ExitCode: 0}}
 	agent := &fakeAgent{
 		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
-		submit: internalapi.SubmitCommandResponse{Decision: "accepted", Accepted: true, Job: &internalapi.ExecutionJobReceipt{ID: job.ID, RequestID: req.RequestID, Status: executionjob.Staged}},
-		job: job,
+		submit:    internalapi.SubmitCommandResponse{Decision: "accepted", Accepted: true, Job: &internalapi.ExecutionJobReceipt{ID: job.ID, RequestID: req.RequestID, Status: executionjob.Staged}},
+		job:       job,
 	}
 	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
 	if err := runner.RunOnce(context.Background()); err != nil {
