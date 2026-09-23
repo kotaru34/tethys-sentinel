@@ -241,7 +241,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd plugins/tethys-sentinel-github-relay
+          root='plugins/tethys-sentinel-github-relay'
+          find "$root" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+          find "$root" -type d -name '__pycache__' -empty -delete
+          cd "$root"
           zip -qr ../../tethys-sentinel-github-relay-plugin.zip .
 
       - name: Upload ChatGPT relay plugin
