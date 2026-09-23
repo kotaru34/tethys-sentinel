@@ -223,7 +223,13 @@ func (c *GitHubClient) installationToken(ctx context.Context) (string, error) {
 	}
 	var response githubInstallationToken
 	path := fmt.Sprintf("/app/installations/%d/access_tokens", c.installationID)
-	if _, err := c.doJSON(ctx, http.MethodPost, path, nil, jwt, "", &response, nil, nil); err != nil {
+	request := map[string]any{
+		"permissions": map[string]string{
+			"issues":   "write",
+			"metadata": "read",
+		},
+	}
+	if _, err := c.doJSON(ctx, http.MethodPost, path, request, jwt, "", &response, nil, nil); err != nil {
 		return "", fmt.Errorf("mint GitHub App installation token: %w", err)
 	}
 	if strings.TrimSpace(response.Token) == "" || response.ExpiresAt.IsZero() {
