@@ -38,9 +38,9 @@ type Session struct {
 	Capability string `json:"capability"`
 	GrantID    string `json:"grant_id"`
 
-	Repository   string `json:"repository"`
-	RepositoryID int64  `json:"repository_id"`
-	IssueNumber  int    `json:"issue_number"`
+	Repository      string `json:"repository"`
+	RepositoryID    int64  `json:"repository_id"`
+	IssueNumber     int    `json:"issue_number"`
 	IssueID         int64  `json:"issue_id"`
 	ActorID         int64  `json:"actor_id"`
 	RelayActorID    int64  `json:"relay_actor_id,omitempty"`
