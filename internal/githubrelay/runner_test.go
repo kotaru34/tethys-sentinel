@@ -364,3 +364,231 @@ func TestRunnerFailsClosedWhenRepositoryIdentityChanges(t *testing.T) {
 		t.Fatalf("session did not fail closed: %+v", loaded)
 	}
 }
+
+func TestRunnerWrongActorEditedCommentAndGitHubFailureNeverReachAgent(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name      string
+		mutate    func(*fakeGitHub, *GitHubComment)
+		expectErr bool
+	}{
+		{name: "wrong actor", mutate: func(_ *fakeGitHub, comment *GitHubComment) { comment.User.ID = 999 }},
+		{name: "edited request", mutate: func(_ *fakeGitHub, comment *GitHubComment) { comment.UpdatedAt = now.Add(time.Second) }, expectErr: true},
+		{name: "github unavailable", mutate: func(gh *fakeGitHub, _ *GitHubComment) { gh.commentsErr = errors.New("github unavailable") }, expectErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := openRunnerTestStore(t)
+			s := Session{
+				Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+				Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+				CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+			}
+			if err := store.Save(s); err != nil {
+				t.Fatal(err)
+			}
+			req := RequestEnvelope{SessionID: s.ID, Sequence: 1, RequestID: "request-0001", Target: s.Target, Argv: []string{"id"}}
+			body, err := BuildRequestComment(s.Secret, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			comment := GitHubComment{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}
+			gh := &fakeGitHub{comments: []GitHubComment{comment}}
+			tc.mutate(gh, &comment)
+			gh.comments = []GitHubComment{comment}
+			called := false
+			runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) {
+				called = true
+				return nil, errors.New("must not be called")
+			}}
+			err = runner.RunOnce(context.Background())
+			if tc.expectErr && err == nil {
+				t.Fatal("expected fail-closed error")
+			}
+			if !tc.expectErr && err != nil {
+				t.Fatal(err)
+			}
+			if called {
+				t.Fatal("transport validation failure reached Agent API")
+			}
+		})
+	}
+}
+
+func TestRunnerIssueIdentityChangeFailsClosed(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	req := RequestEnvelope{SessionID: s.ID, Sequence: 1, RequestID: "request-0001", Target: s.Target, Argv: []string{"id"}}
+	body, err := BuildRequestComment(s.Secret, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeGitHub{
+		issue:    GitHubIssue{ID: 999, Number: s.IssueNumber, State: "open", User: GitHubUser{ID: s.ActorID}},
+		comments: []GitHubComment{{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}},
+	}
+	called := false
+	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) {
+		called = true
+		return nil, errors.New("must not be called")
+	}}
+	if err := runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected issue identity change to fail closed")
+	}
+	if called {
+		t.Fatal("changed issue identity reached Sentinel")
+	}
+}
+
+func TestRunnerRestartRecoveryDoesNotResubmit(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	req := RequestEnvelope{Version: ProtocolVersion, SessionID: "sgr_abcdefghijklmnop", Sequence: 1, RequestID: "request-0001", Target: "target-test", Argv: []string{"id"}}
+	s := Session{
+		Version: ProtocolVersion, ID: req.SessionID, Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: req.Target,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+		Inflight: &Inflight{CommentID: 10, BodyHash: "durable-before-crash", Request: req},
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	job := internalapi.AgentExecutionJob{
+		ID: "job-existing", RequestID: req.RequestID, Target: req.Target, Argv: append([]string(nil), req.Argv...),
+		Status: executionjob.Succeeded, Result: &executionjob.Result{Success: true, ExitCode: 0},
+	}
+	agent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
+		request: job,
+	}
+	gh := &fakeGitHub{}
+	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if agent.submits != 0 {
+		t.Fatalf("restart recovery submitted %d replacement command(s)", agent.submits)
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Inflight != nil || loaded.CommandsComplete != 1 || loaded.NextSequence != 2 {
+		t.Fatalf("restart recovery was not committed: %+v", loaded)
+	}
+}
+
+func TestRunnerRequestIDRebindingIsRejectedWithoutSubmit(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	req := RequestEnvelope{Version: ProtocolVersion, SessionID: "sgr_abcdefghijklmnop", Sequence: 1, RequestID: "request-0001", Target: "target-test", Argv: []string{"id"}}
+	s := Session{
+		Version: ProtocolVersion, ID: req.SessionID, Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: req.Target,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+		Inflight: &Inflight{CommentID: 10, BodyHash: "durable", Request: req},
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	agent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
+		request: internalapi.AgentExecutionJob{ID: "job-existing", RequestID: req.RequestID, Target: req.Target, Argv: []string{"whoami"}, Status: executionjob.Succeeded},
+	}
+	runner := &Runner{Store: store, GitHub: &fakeGitHub{}, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
+	if err := runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected immutable request-ID rebinding failure")
+	}
+	if agent.submits != 0 {
+		t.Fatal("request-ID rebinding caused a new submit")
+	}
+}
+
+func TestRunnerGrantNarrowingStopsBeforeSubmit(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	req := RequestEnvelope{Version: ProtocolVersion, SessionID: "sgr_abcdefghijklmnop", Sequence: 1, RequestID: "request-0001", Target: "target-test", Argv: []string{"id"}}
+	s := Session{
+		Version: ProtocolVersion, ID: req.SessionID, Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: req.Target,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+		Inflight: &Inflight{CommentID: 10, BodyHash: "durable", Request: req},
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	agent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{"different-target"}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
+	}
+	runner := &Runner{Store: store, GitHub: &fakeGitHub{}, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
+	if err := runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected narrowed grant to fail closed")
+	}
+	if agent.submits != 0 {
+		t.Fatal("narrowed grant reached submit")
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Closed {
+		t.Fatal("narrowed grant did not close relay session")
+	}
+}
+
+func TestRunnerSeenCommentReplayDoesNotResubmit(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	req := RequestEnvelope{SessionID: s.ID, Sequence: 1, RequestID: "request-0001", Target: s.Target, Argv: []string{"id"}}
+	body, err := BuildRequestComment(s.Secret, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeGitHub{comments: []GitHubComment{{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}}}
+	job := internalapi.AgentExecutionJob{ID: "job-1", RequestID: req.RequestID, Target: s.Target, Argv: []string{"id"}, Status: executionjob.Succeeded, Result: &executionjob.Result{Success: true, ExitCode: 0}}
+	agent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
+		submit: internalapi.SubmitCommandResponse{Decision: "accepted", Accepted: true, Job: &internalapi.ExecutionJobReceipt{ID: job.ID, RequestID: req.RequestID, Status: executionjob.Staged}},
+		job: job,
+	}
+	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if agent.submits != 1 {
+		t.Fatalf("replayed comment caused %d submits, want 1", agent.submits)
+	}
+}
+
+func TestRelayResponseDoesNotSerializeAuthoritySecrets(t *testing.T) {
+	secret := testSecret()
+	capability := "tsc_super-secret-authority"
+	body, err := BuildResponseComment(secret, ResponseEnvelope{
+		SessionID: "sgr_abcdefghijklmnop", Sequence: 1, RequestID: "request-0001", Status: "completed", JobID: "job-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body, secret) || strings.Contains(body, capability) {
+		t.Fatal("relay response serialized authority secret material")
+	}
+}
