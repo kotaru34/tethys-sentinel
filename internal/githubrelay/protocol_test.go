@@ -95,3 +95,32 @@ func TestRequestMACKnownVectorMatchesPluginSigner(t *testing.T) {
 		t.Fatalf("MAC = %q, want %q", got, want)
 	}
 }
+
+func TestSessionRejectsSequenceTargetAndExactArgvViolations(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "cap", GrantID: "grant",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 4, Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Minute), MaxCommands: 2, NextSequence: 2, ExactArgv: []string{"id"},
+	}
+	s.Normalize()
+
+	tests := []struct {
+		name   string
+		mutate func(*RequestEnvelope)
+	}{
+		{name: "sequence skip or reorder", mutate: func(req *RequestEnvelope) { req.Sequence = 3 }},
+		{name: "wrong target", mutate: func(req *RequestEnvelope) { req.Target = "other-target" }},
+		{name: "wrong exact argv", mutate: func(req *RequestEnvelope) { req.Argv = []string{"whoami"} }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := RequestEnvelope{Version: ProtocolVersion, SessionID: s.ID, Sequence: 2, RequestID: "request-0002", Target: s.Target, Argv: []string{"id"}}
+			tc.mutate(&req)
+			req.MAC, _ = RequestMAC(s.Secret, req)
+			if err := s.ValidateRequest(req, now); err == nil {
+				t.Fatal("policy violation was accepted")
+			}
+		})
+	}
+}
