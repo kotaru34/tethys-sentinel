@@ -418,8 +418,18 @@ func (r *Runner) postResponse(ctx context.Context, session *Session, response Re
 	if err != nil {
 		return err
 	}
-	_, err = r.GitHub.CreateComment(ctx, session.Repository, session.IssueNumber, body)
-	return err
+	posted, err := r.GitHub.CreateComment(ctx, session.Repository, session.IssueNumber, body)
+	if err != nil {
+		return err
+	}
+	if session.RelayActorID > 0 && (posted.User.ID != session.RelayActorID || posted.User.Type != "Bot") {
+		session.Close("GitHub response attribution no longer matches the authorized relay App")
+		if saveErr := r.Store.Save(*session); saveErr != nil {
+			return errors.Join(errors.New(session.CloseReason), saveErr)
+		}
+		return errors.New(session.CloseReason)
+	}
+	return nil
 }
 
 func (r *Runner) validate() error {
