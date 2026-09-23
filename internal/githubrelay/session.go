@@ -41,9 +41,11 @@ type Session struct {
 	Repository   string `json:"repository"`
 	RepositoryID int64  `json:"repository_id"`
 	IssueNumber  int    `json:"issue_number"`
-	IssueID      int64  `json:"issue_id"`
-	ActorID      int64  `json:"actor_id"`
-	Target       string `json:"target"`
+	IssueID         int64  `json:"issue_id"`
+	ActorID         int64  `json:"actor_id"`
+	RelayActorID    int64  `json:"relay_actor_id,omitempty"`
+	RelayActorLogin string `json:"relay_actor_login,omitempty"`
+	Target          string `json:"target"`
 
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
