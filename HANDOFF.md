@@ -76,6 +76,10 @@ Security requirements for this milestone:
 
 This branch starts from the exact dev.23 candidate head `275e75b871ccb012d01209c0c33f31ef4285f276`. dev.23 remains independently testable on its original branch; the relay work is a new feature and therefore bumps the candidate to dev.24.
 
+Implementation checkpoint: commit `de59d099551673b0cf380688446940af37d46a56` adds the standalone `sentinel-github-relay`, local protected relay-session state, GitHub App installation authentication, HMAC-authenticated issue/comment protocol, strict sequence/replay/edit checks, immutable-request recovery, transport output bounds, systemd/config examples, security documentation, and a skills-only ChatGPT plugin package. Control, Gateway, Worker, Signer and target execution code paths are unchanged by this feature.
+
+The first dev.24 implementation CI run exposed only repository-hygiene/reproducibility issues before the Go test stage: newly transferred Go sources lacked final newlines, and the registry-resolved frontend mapping dataset advanced `electron-to-chromium` from `1.5.435` to `1.5.436`. The resolved graph hash for that single reviewed mapping-package drift is `5a2ff2938d6b4ac306965054c3eef77b49b233f90f36f149a5aae57094c57762`; there is no Sentinel frontend source change.
+
 ## dev.23 candidate status
 
 dev.23 introduces operator-side target onboarding automation while preserving the accepted dev.22 trust boundaries. One top-level Ansible playbook composes three roles:
