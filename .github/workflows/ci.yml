@@ -91,14 +91,15 @@ jobs:
           go-version: '1.27.1'
           cache: false
 
-      - name: Build dev.23 onboarding binaries
+      - name: Build dev.24 binaries
         shell: bash
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.1.0-dev.23'
+          test "$(cat VERSION)" = '0.1.0-dev.24'
           mkdir -p out
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-control ./cmd/sentinel-control
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-github-relay ./cmd/sentinel-github-relay
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/tethys-sentinel-exec ./cmd/tethys-sentinel-exec
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/tethys-sentinel-consume ./cmd/tethys-sentinel-consume
           (
@@ -106,6 +107,7 @@ jobs:
             sha256sum \
               sentinel-control \
               sentinel-egress-policy \
+              sentinel-github-relay \
               tethys-sentinel-exec \
               tethys-sentinel-consume > SHA256SUMS
           )
@@ -118,12 +120,13 @@ jobs:
       - name: Upload linux amd64 deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dev23-linux-amd64
+          name: dev24-linux-amd64
           if-no-files-found: error
           retention-days: 1
           path: |
             out/sentinel-control
             out/sentinel-egress-policy
+            out/sentinel-github-relay
             out/tethys-sentinel-exec
             out/tethys-sentinel-consume
             out/SHA256SUMS
@@ -149,6 +152,51 @@ jobs:
       - name: Syntax-check target onboarding playbook
         working-directory: ansible
         run: ansible-playbook --syntax-check -i inventory/example.yml playbooks/onboard-sentinel-targets.yml
+
+  chatgpt-relay-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Validate skills-only plugin package
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='plugins/tethys-sentinel-github-relay'
+          python -m json.tool "$root/plugin.json" >/dev/null
+          test -f "$root/skills/tethys-sentinel-github-relay/SKILL.md"
+          python -m py_compile             "$root/skills/tethys-sentinel-github-relay/scripts/sign_request.py"             "$root/skills/tethys-sentinel-github-relay/scripts/verify_relay.py"
+          actual="$(
+            printf '%s' '{"secret":"tsr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","session_id":"sgr_abcdefghijklmnop","sequence":1,"request_id":"request-0001","target":"target-test","argv":["id"],"agent_reason":"acceptance","timeout_seconds":60}' |
+              python "$root/skills/tethys-sentinel-github-relay/scripts/sign_request.py" |
+              tail -n 1
+          )"
+          expected='{"version":1,"session_id":"sgr_abcdefghijklmnop","sequence":1,"request_id":"request-0001","target":"target-test","argv":["id"],"agent_reason":"acceptance","timeout_seconds":60,"mac":"h1_JUZ5EQ6w9eDMKOSSZuT3u_7iymcCTI37Pmx6ZRtyyE8"}'
+          test "$actual" = "$expected"
+
+      - name: Package ChatGPT relay plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd plugins/tethys-sentinel-github-relay
+          zip -qr ../../tethys-sentinel-github-relay-plugin.zip .
+
+      - name: Upload ChatGPT relay plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: tethys-sentinel-github-relay-plugin
+          if-no-files-found: error
+          retention-days: 1
+          path: tethys-sentinel-github-relay-plugin.zip
+
 
   operator-frontend:
     runs-on: ubuntu-latest

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "tethys-sentinel-github-relay",
+  "version": "0.1.0",
+  "description": "Use an operator-authorized private GitHub mailbox to carry authenticated Tethys Sentinel requests from ordinary ChatGPT chats without exposing Sentinel capabilities to GitHub.",
+  "license": "MIT",
+  "keywords": ["tethys-sentinel", "infrastructure", "github", "relay", "operations"]
+}
