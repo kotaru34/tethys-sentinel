@@ -91,11 +91,11 @@ jobs:
           go-version: '1.27.1'
           cache: false
 
-      - name: Build dev.24 binaries
+      - name: Build dev.25 binaries
         shell: bash
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.1.0-dev.24'
+          test "$(cat VERSION)" = '0.1.0-dev.25'
           mkdir -p out
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-control ./cmd/sentinel-control
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
@@ -120,7 +120,7 @@ jobs:
       - name: Upload linux amd64 deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dev24-linux-amd64
+          name: dev25-linux-amd64
           if-no-files-found: error
           retention-days: 1
           path: |
@@ -278,7 +278,7 @@ jobs:
           test "$(npm --version)" = '11.19.0'
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          expected='aad9d30418ff37e204a73684f022578b0d7c9ad253ff12413a8ae5ac24704639'
+          expected='890daff4ad7d10d4e908c4f78b3335c18bb6f7a1ce6b5506ade76e7c6a0d276f'
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [ "$actual" != "$expected" ]; then
             echo "frontend dependency graph drift: expected=${expected} actual=${actual}"
