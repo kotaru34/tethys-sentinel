@@ -60,6 +60,8 @@ Per the acceptance rule, dev.24 is therefore blocked from merge and dev.25 is th
 
 dev.25 must pass the full CI matrix and receive a targeted live re-acceptance of mailbox reuse on the intended deployment before merge.
 
+CI run #857 on the first dev.25 commit proved the Go regression suite, PostgreSQL 15/18, relay plugin and Ansible jobs, but the workflow itself still contained the dev.24 artifact-version assertion and artifact name. The Operator frontend dependency-graph sentinel also observed a new resolved transitive graph while the four top-level frontend versions remained explicitly pinned. The follow-up CI-only commit updates the artifact job to dev.25 and refreshes the pinned resolved-graph digest; the existing embedded-frontend equality check remains the gate that must prove the refreshed transitive graph does not change the accepted frontend output.
+
 ## dev.24 candidate status
 
 dev.24 adds a **sidecar GitHub transport relay for ordinary ChatGPT chats**. It must not add, bypass or duplicate a Sentinel execution path. The relay is a client of the already accepted capability-scoped Agent HTTP contract only:
