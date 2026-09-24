@@ -58,6 +58,8 @@ A narrow live re-acceptance of the dev.25 regression fix remains before merge. D
 
 After dev.25 acceptance, resume the unfinished Ansible onboarding milestone, complete the remaining target-management work, deploy the target-side Sentinel components to the required VMs/CTs, and then run a broader multi-target acceptance exercise.
 
+A docs-only cleanup commit removing public relay operating documentation triggered CI run #860. All non-frontend jobs passed, including the Go regression suite and dev.25 linux artifact build. The frontend dependency-graph sentinel observed another registry-only Browserslist mapping refresh: `electron-to-chromium` advanced from 1.5.438 to 1.5.439 with no Sentinel frontend source change. The reviewed resolved-graph digest is advanced to `23e4bcff0a807198afb06b0916969074f165fe201d1cbcdb5852536cf8a6b813`; the embedded frontend byte-equality check remains the final reproducibility gate.
+
 ## dev.23 candidate status
 
 dev.23 introduces operator-side target onboarding automation while preserving the accepted dev.22 trust boundaries. One top-level Ansible playbook composes three roles:
