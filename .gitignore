@@ -23,3 +23,9 @@
 .vscode/
 *.swp
 .DS_Store
+
+# Local Ansible deployment material
+/ansible/artifacts/
+/ansible/secrets/
+/ansible/inventory/*
+!/ansible/inventory/example.yml

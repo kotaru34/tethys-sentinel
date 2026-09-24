@@ -1,14 +1,15 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-22  
-Current accepted development version: `0.1.0-dev.22`  
-Branch: `main`
+Updated: 2026-09-24  
+Current accepted development version: `0.1.0-dev.25`  
+Current candidate version: none; next feature work will bump to `0.1.0-dev.26`  
+Accepted branch: `main` after the dev.25 merge
 
 ## Status
 
-`0.1.0-dev.22` is the accepted development baseline.
+`0.1.0-dev.25` is the accepted development baseline.
 
-The current milestone is repository-wide public-release cleanup. Runtime behavior is already accepted; this phase is limited to privacy sanitization, documentation cleanup, removal of obsolete development-only references, repository-history cleanup, and final public-release verification.
+The current development milestone returns to reproducible Ansible onboarding for Debian/Ubuntu VM and unprivileged-LXC execution targets. The separate repository-history/public-release cleanup gate remains outstanding and is not coupled to this runtime-tooling milestone.
 
 The public repository must not contain site-specific deployment data. Real addresses, hostnames, VM identifiers, local usernames or home paths, certificate/SSH fingerprints, acceptance-only topology, capability material, tokens, or other operator-specific evidence belong in private operator records.
 
@@ -49,6 +50,32 @@ Final external Agent HTTP acceptance is complete. A restricted public capability
 
 `0.1.0-dev.22` is accepted on the intended infrastructure and may be merged. This acceptance is independent of the separate public-release historical-ref/cache purge still awaiting GitHub Support.
 
+## dev.25 acceptance status
+
+CI run #861 is green on the accepted dev.25 candidate commit `b9a549cc9029ed33d2962670831cf550ccaf3d1e` across the complete repository gate, including Go race tests, PostgreSQL 15/18 integration, Ansible syntax, operator-frontend reproducibility/security checks, and linux/amd64 artifact construction.
+
+The deployed dev.25 candidate passed the narrow live regression re-acceptance on the intended infrastructure: historical request traffic from a prior short-lived transport session on the same mailbox no longer produced cross-session denial noise, while a fresh constrained structured `id` request still completed successfully as the expected unprivileged target identity. Detailed transport operating procedures and deployment evidence remain outside this public repository in private operator records.
+
+`0.1.0-dev.25` is accepted and may be merged. The next development step is to resume the unfinished Ansible onboarding work, finish repeatable target deployment for the required VM/LXC estate, and then run a broader multi-target acceptance exercise.
+
+## dev.23 candidate status
+
+dev.23 introduces operator-side target onboarding automation while preserving the accepted dev.22 trust boundaries. One top-level Ansible playbook composes three roles:
+
+- `sentinel_target` configures Debian/Ubuntu VMs or unprivileged LXC guests with the locked `sentinel-ai` account, root-owned execution/replay helpers, local target identity, SSH user-CA public trust, authorized principal, narrow replay-helper sudo rule, hardened sshd policy and local host-key discovery;
+- `sentinel_control_targets` treats the Ansible target inventory as the declarative SSH-target source of truth, obtains each pinned host key locally from that target, reconciles the complete Control `ssh-targets.json`, preserves non-managed context-only hosts, updates managed authoritative context, blocks removals unless explicitly authorized, and rolls back if Control does not return active;
+- `sentinel_worker_egress` consumes the actual installed Control registry, generates the canonical Worker PVE policy with the accepted egress tool, writes changed bytes through pmxcfs, compiles and verifies activation, and removes temporary protected registry/policy material.
+
+The linux/amd64 CI artifact now includes `tethys-sentinel-exec` and `tethys-sentinel-consume` in addition to Control/egress binaries. CI also syntax-checks the top-level playbook with pinned Ansible Core. Artifact consumers verify the published `SHA256SUMS` before installing target or egress binaries.
+
+CI for implementation commit `0f98d44bebc13b63fdcedfe162854c37e36928cc` is green across the Go/privacy/version suite, PostgreSQL 15/18 integration, operator frontend, linux/amd64 artifact build, and the pinned Ansible syntax-check job.
+
+A subsequent registry-only frontend reproducibility drift moved `electron-to-chromium` from `1.5.434` to `1.5.435`. The previous successful lock artifact confirms the prior version, the new graph dump shows the single mapping-package advance, and the package remains a zero-runtime-dependency Browserslist mapping dataset. The reviewed graph hash was advanced without changing Sentinel frontend source.
+
+Live dev.23 onboarding acceptance is now complete through the infrastructure/idempotency boundary. The staged target, Control and Worker-egress plays all passed; two subsequent complete top-level playbook runs reported `changed=0` and `failed=0` for the target, Control and PVE operator host. Worker trusted-time remained synchronized to the configured operator NTP source, Control HTTPS and registered-target SSH remained reachable, and representative public HTTPS egress remained blocked.
+
+The final harmless constrained Sentinel `id` execution through the playbook-managed target has since completed successfully through the normal Sentinel execution path during later live acceptance. This closes the dev.23 onboarding-baseline acceptance item. Broader Ansible rollout and inventory work remain the next development milestone rather than part of that narrow dev.23 acceptance.
+
 ## Operator-mandated development rules
 
 1. Keep task reports short; explain what needs to be done and why.
@@ -79,7 +106,7 @@ Final external Agent HTTP acceptance is complete. A restricted public capability
 
 ## Accepted runtime baseline
 
-The accepted runtime is `0.1.0-dev.22` with PostgreSQL schema v4.
+The accepted runtime is `0.1.0-dev.25` with PostgreSQL schema v4.
 
 The Agent HTTP contract remains the canonical authority boundary beneath MCP:
 
@@ -118,7 +145,7 @@ No dev.20 runtime acceptance blocker remains.
 Completed on the public repository:
 
 - current source/docs/config examples were sanitized to documentation-only addresses and names;
-- public documentation is normalized to the accepted `0.1.0-dev.22` / PostgreSQL schema v4 baseline, including the current Agent API, Operator, bounded-output, MCP, one-time claim, trusted-time egress and Agent-context privacy contracts;
+- public documentation is normalized to the accepted `0.1.0-dev.25` / PostgreSQL schema v4 baseline, including the current Agent API, Operator, bounded-output, MCP, one-time claim, trusted-time egress and Agent-context privacy contracts;
 - database/runbook documentation now includes migration `0004_mcp_claims.sql` and schema v4 rather than presenting dev.13-dev.16 checkpoints as the current deployment state;
 - development-only frozen artifact workflows were removed;
 - a permanent tracked-tree privacy/secret guard was added to CI;

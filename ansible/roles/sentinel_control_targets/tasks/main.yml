@@ -1,0 +1,244 @@
+---
+- name: Validate Control reconciliation topology
+  ansible.builtin.assert:
+    that:
+      - sentinel_targets_group in groups
+      - groups[sentinel_targets_group] | length > 0
+      - sentinel_control_group in groups
+      - groups[sentinel_control_group] | length == 1
+    fail_msg: "Onboarding requires at least one target and exactly one Sentinel Control inventory host."
+
+- name: Check authoritative Control files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ sentinel_control_registry_path }}"
+    - "{{ sentinel_control_context_path }}"
+  register: sentinel_control_files
+
+- name: Require existing authoritative Control files
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists | default(false)
+      - item.stat.isreg | default(false)
+    fail_msg: "Target onboarding only reconciles an existing accepted Control deployment."
+  loop: "{{ sentinel_control_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Read current SSH target registry
+  ansible.builtin.slurp:
+    src: "{{ sentinel_control_registry_path }}"
+  register: sentinel_registry_raw
+  no_log: true
+
+- name: Read current authoritative context
+  ansible.builtin.slurp:
+    src: "{{ sentinel_control_context_path }}"
+  register: sentinel_context_raw
+  no_log: true
+
+- name: Parse current operator-owned state
+  ansible.builtin.set_fact:
+    sentinel_current_registry: "{{ sentinel_registry_raw.content | b64decode | from_json }}"
+    sentinel_existing_context: "{{ sentinel_context_raw.content | b64decode | from_json }}"
+  no_log: true
+
+- name: Initialize desired target names
+  ansible.builtin.set_fact:
+    sentinel_desired_target_names: []
+
+- name: Build desired logical target name set
+  ansible.builtin.set_fact:
+    sentinel_desired_target_names: >-
+      {{ sentinel_desired_target_names +
+         [hostvars[item].sentinel_target_id | default(item)] }}
+  loop: "{{ groups[sentinel_targets_group] | sort }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Reject duplicate logical target IDs
+  ansible.builtin.assert:
+    that:
+      - sentinel_desired_target_names | unique | list | length == sentinel_desired_target_names | length
+    fail_msg: "Each Sentinel target must have a unique sentinel_target_id."
+
+- name: Validate every target address as a literal non-local IP
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import ipaddress,sys;
+        ip=ipaddress.ip_address(sys.argv[1]);
+        raise SystemExit(1 if
+        (ip.is_unspecified or ip.is_multicast or ip.is_loopback or ip.is_link_local)
+        else 0)
+      - "{{ hostvars[item].sentinel_target_address | default(hostvars[item].ansible_host) }}"
+  loop: "{{ groups[sentinel_targets_group] | sort }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+- name: Read each target host key locally on that target
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -y
+      - -f
+      - /etc/ssh/ssh_host_ed25519_key
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ groups[sentinel_targets_group] | sort }}"
+  loop_control:
+    label: "{{ item }}"
+  register: sentinel_discovered_host_key_results
+  changed_when: false
+
+- name: Initialize discovered host-key map
+  ansible.builtin.set_fact:
+    sentinel_discovered_host_keys: {}
+
+- name: Build discovered host-key map
+  ansible.builtin.set_fact:
+    sentinel_discovered_host_keys: >-
+      {{ sentinel_discovered_host_keys |
+         combine({item.item: item.stdout | trim}) }}
+  loop: "{{ sentinel_discovered_host_key_results.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  no_log: true
+
+- name: Record current managed target names
+  ansible.builtin.set_fact:
+    sentinel_current_target_names: >-
+      {{ sentinel_current_registry.targets | default([]) |
+         map(attribute='name') | list | sort }}
+
+- name: Calculate removals from the declarative registry
+  ansible.builtin.set_fact:
+    sentinel_removed_target_names: >-
+      {{ sentinel_current_target_names |
+         difference(sentinel_desired_target_names) | sort }}
+
+- name: Require explicit opt-in before removing targets
+  ansible.builtin.assert:
+    that:
+      - sentinel_removed_target_names | length == 0 or sentinel_allow_target_removal | bool
+    fail_msg: >-
+      Targets would be removed from Control inventory: {{ sentinel_removed_target_names | join(', ') }}.
+      Re-run with -e sentinel_allow_target_removal=true only after reviewing the inventory diff.
+
+- name: Define Control candidate paths
+  ansible.builtin.set_fact:
+    sentinel_registry_candidate: "{{ sentinel_control_registry_path }}.ansible-candidate"
+    sentinel_context_candidate: "{{ sentinel_control_context_path }}.ansible-candidate"
+
+- name: Render canonical SSH target registry candidate
+  ansible.builtin.template:
+    src: ssh-targets.json.j2
+    dest: "{{ sentinel_registry_candidate }}"
+    owner: root
+    group: "{{ sentinel_control_service_group }}"
+    mode: "0640"
+  changed_when: false
+  no_log: true
+
+- name: Render authoritative context candidate
+  ansible.builtin.template:
+    src: context.json.j2
+    dest: "{{ sentinel_context_candidate }}"
+    owner: root
+    group: "{{ sentinel_control_service_group }}"
+    mode: "0640"
+  changed_when: false
+  no_log: true
+
+- name: Validate candidate JSON syntax
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - json.tool
+      - "{{ item }}"
+  loop:
+    - "{{ sentinel_registry_candidate }}"
+    - "{{ sentinel_context_candidate }}"
+  changed_when: false
+  no_log: true
+
+- name: Install and validate reconciled Control state
+  block:
+    - name: Install canonical SSH target registry
+      ansible.builtin.copy:
+        src: "{{ sentinel_registry_candidate }}"
+        dest: "{{ sentinel_control_registry_path }}"
+        remote_src: true
+        owner: root
+        group: "{{ sentinel_control_service_group }}"
+        mode: "0640"
+      register: sentinel_registry_install
+      no_log: true
+
+    - name: Install reconciled authoritative context
+      ansible.builtin.copy:
+        src: "{{ sentinel_context_candidate }}"
+        dest: "{{ sentinel_control_context_path }}"
+        remote_src: true
+        owner: root
+        group: "{{ sentinel_control_service_group }}"
+        mode: "0640"
+      register: sentinel_context_install
+      no_log: true
+
+    - name: Restart Control when managed state changed
+      ansible.builtin.service:
+        name: "{{ sentinel_control_service_name }}"
+        state: restarted
+      when: sentinel_registry_install.changed or sentinel_context_install.changed
+
+    - name: Require active Control after reconciliation
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - "{{ sentinel_control_service_name }}"
+      changed_when: false
+
+  rescue:
+    - name: Restore previous SSH target registry
+      ansible.builtin.copy:
+        content: "{{ sentinel_registry_raw.content | b64decode }}"
+        dest: "{{ sentinel_control_registry_path }}"
+        owner: root
+        group: "{{ sentinel_control_service_group }}"
+        mode: "0640"
+      no_log: true
+
+    - name: Restore previous authoritative context
+      ansible.builtin.copy:
+        content: "{{ sentinel_context_raw.content | b64decode }}"
+        dest: "{{ sentinel_control_context_path }}"
+        owner: root
+        group: "{{ sentinel_control_service_group }}"
+        mode: "0640"
+      no_log: true
+
+    - name: Restart Control after rollback
+      ansible.builtin.service:
+        name: "{{ sentinel_control_service_name }}"
+        state: restarted
+
+    - name: Abort after Control reconciliation rollback
+      ansible.builtin.fail:
+        msg: "Control rejected the reconciled target state; previous registry/context were restored."
+
+  always:
+    - name: Remove Control candidate files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      changed_when: false
+      loop:
+        - "{{ sentinel_registry_candidate }}"
+        - "{{ sentinel_context_candidate }}"

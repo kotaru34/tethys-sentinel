@@ -1,0 +1,249 @@
+---
+- name: Require a Debian-family target
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.os_family == "Debian"
+      - ansible_facts.distribution in ["Debian", "Ubuntu"]
+    fail_msg: "sentinel_target currently supports Debian and Ubuntu only."
+
+- name: Check controller-side target inputs
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ sentinel_target_exec_binary_src }}"
+    - "{{ sentinel_target_consume_binary_src }}"
+    - "{{ sentinel_artifact_checksum_file }}"
+    - "{{ sentinel_target_ssh_ca_pub_file }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: sentinel_target_controller_inputs
+
+- name: Require target binaries and SSH CA public key
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists | default(false)
+      - item.stat.isreg | default(false)
+    fail_msg: >-
+      Missing controller-side onboarding input {{ item.item }}. Put the accepted
+      linux-amd64 artifact in sentinel_artifact_dir and the SSH user-CA public
+      key in sentinel_target_ssh_ca_pub_file.
+  loop: "{{ sentinel_target_controller_inputs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Verify accepted linux-amd64 artifact checksums
+  ansible.builtin.command:
+    argv:
+      - sha256sum
+      - -c
+      - SHA256SUMS
+  args:
+    chdir: "{{ sentinel_artifact_dir }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+
+- name: Validate target address is a non-local literal IP
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import ipaddress,sys;
+        ip=ipaddress.ip_address(sys.argv[1]);
+        raise SystemExit(1 if
+        (ip.is_unspecified or ip.is_multicast or ip.is_loopback or ip.is_link_local)
+        else 0)
+      - "{{ sentinel_target_address }}"
+  changed_when: false
+
+- name: Install target prerequisites
+  ansible.builtin.apt:
+    name:
+      - openssh-server
+      - sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: sentinel_target_manage_packages | bool
+
+- name: Create Sentinel target group
+  ansible.builtin.group:
+    name: "{{ sentinel_target_user }}"
+    state: present
+
+- name: Create locked Sentinel target account
+  ansible.builtin.user:
+    name: "{{ sentinel_target_user }}"
+    group: "{{ sentinel_target_user }}"
+    shell: /bin/sh
+    create_home: true
+    password_lock: true
+    state: present
+
+- name: Create target configuration and binary directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /usr/local/libexec, mode: "0755" }
+    - { path: /etc/tethys-sentinel, mode: "0755" }
+    - { path: "{{ sentinel_target_principals_dir }}", mode: "0755" }
+    - { path: /var/lib/tethys-sentinel, mode: "0700" }
+    - { path: "{{ sentinel_target_replay_dir }}", mode: "0700" }
+
+- name: Install target execution wrapper
+  ansible.builtin.copy:
+    src: "{{ sentinel_target_exec_binary_src }}"
+    dest: "{{ sentinel_target_exec_binary_dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install target replay consumer
+  ansible.builtin.copy:
+    src: "{{ sentinel_target_consume_binary_src }}"
+    dest: "{{ sentinel_target_consume_binary_dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install logical target identity
+  ansible.builtin.copy:
+    content: "{{ sentinel_target_id }}\n"
+    dest: "{{ sentinel_target_id_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Sentinel SSH user-CA public key
+  ansible.builtin.copy:
+    src: "{{ sentinel_target_ssh_ca_pub_file }}"
+    dest: "{{ sentinel_target_ca_dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Sentinel authorized principal
+  ansible.builtin.copy:
+    content: "{{ sentinel_target_principal }}\n"
+    dest: "{{ sentinel_target_principals_dir }}/{{ sentinel_target_user }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install narrow replay-helper sudo rule
+  ansible.builtin.template:
+    src: tethys-sentinel-consume.sudoers.j2
+    dest: /etc/sudoers.d/tethys-sentinel-consume
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Check for an Ed25519 SSH host key
+  ansible.builtin.stat:
+    path: /etc/ssh/ssh_host_ed25519_key
+  register: sentinel_target_ed25519_private
+
+- name: Generate missing SSH host keys
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -A
+  when: not sentinel_target_ed25519_private.stat.exists
+  changed_when: true
+
+- name: Install hardened Sentinel sshd drop-in
+  ansible.builtin.template:
+    src: 99-tethys-sentinel.conf.j2
+    dest: "{{ sentinel_target_sshd_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  register: sentinel_target_sshd_dropin_result
+  notify: Reload OpenSSH
+
+- name: Validate complete sshd configuration
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -t
+  register: sentinel_target_sshd_validation
+  changed_when: false
+  failed_when: false
+
+- name: Restore previous sshd drop-in after failed validation
+  ansible.builtin.copy:
+    src: "{{ sentinel_target_sshd_dropin_result.backup_file }}"
+    dest: "{{ sentinel_target_sshd_dropin }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - sentinel_target_sshd_validation.rc != 0
+    - sentinel_target_sshd_dropin_result.changed
+    - sentinel_target_sshd_dropin_result.backup_file is defined
+
+- name: Remove new sshd drop-in after failed first-time validation
+  ansible.builtin.file:
+    path: "{{ sentinel_target_sshd_dropin }}"
+    state: absent
+  when:
+    - sentinel_target_sshd_validation.rc != 0
+    - sentinel_target_sshd_dropin_result.changed
+    - sentinel_target_sshd_dropin_result.backup_file is not defined
+
+- name: Stop on invalid sshd configuration
+  ansible.builtin.fail:
+    msg: "Sentinel sshd configuration failed validation: {{ sentinel_target_sshd_validation.stderr }}"
+  when: sentinel_target_sshd_validation.rc != 0
+
+- name: Apply validated sshd configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Read effective Sentinel sshd policy
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+      - -C
+      - "user={{ sentinel_target_user }},host=localhost,addr=127.0.0.1"
+  register: sentinel_target_sshd_effective
+  changed_when: false
+
+- name: Assert critical Sentinel sshd restrictions
+  ansible.builtin.assert:
+    that:
+      - "'passwordauthentication no' in sentinel_target_sshd_effective.stdout"
+      - "'kbdinteractiveauthentication no' in sentinel_target_sshd_effective.stdout"
+      - "'permittty no' in sentinel_target_sshd_effective.stdout"
+      - "'allowagentforwarding no' in sentinel_target_sshd_effective.stdout"
+      - "'allowtcpforwarding no' in sentinel_target_sshd_effective.stdout"
+      - "'x11forwarding no' in sentinel_target_sshd_effective.stdout"
+      - "'authorizedkeysfile none' in sentinel_target_sshd_effective.stdout"
+      - "('trustedusercakeys ' ~ sentinel_target_ca_dest) in sentinel_target_sshd_effective.stdout"
+      - "('authorizedprincipalsfile ' ~ sentinel_target_principals_dir ~ '/%u') in sentinel_target_sshd_effective.stdout"
+    fail_msg: "Effective sshd policy does not preserve the accepted Sentinel target boundary."
+
+- name: Read local target Ed25519 host public key
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -y
+      - -f
+      - /etc/ssh/ssh_host_ed25519_key
+  register: sentinel_target_host_key
+  changed_when: false
+
+- name: Record target onboarding metadata for later plays
+  ansible.builtin.set_fact:
+    sentinel_target_discovered_host_key: "{{ sentinel_target_host_key.stdout | trim }}"
+    sentinel_target_discovered_os: "{{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}"

@@ -91,17 +91,25 @@ jobs:
           go-version: '1.27.1'
           cache: false
 
-      - name: Build affected dev.22 binaries
+      - name: Build dev.25 binaries
         shell: bash
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.1.0-dev.22'
+          test "$(cat VERSION)" = '0.1.0-dev.25'
           mkdir -p out
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-control ./cmd/sentinel-control
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath             -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-control ./cmd/sentinel-control
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-github-relay ./cmd/sentinel-github-relay
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/tethys-sentinel-exec ./cmd/tethys-sentinel-exec
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/tethys-sentinel-consume ./cmd/tethys-sentinel-consume
           (
             cd out
-            sha256sum sentinel-control sentinel-egress-policy > SHA256SUMS
+            sha256sum \
+              sentinel-control \
+              sentinel-egress-policy \
+              sentinel-github-relay \
+              tethys-sentinel-exec \
+              tethys-sentinel-consume > SHA256SUMS
           )
           {
             echo "commit=$(git rev-parse HEAD)"
@@ -112,14 +120,141 @@ jobs:
       - name: Upload linux amd64 deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dev22-linux-amd64
+          name: dev25-linux-amd64
           if-no-files-found: error
           retention-days: 1
           path: |
             out/sentinel-control
             out/sentinel-egress-policy
+            out/sentinel-github-relay
+            out/tethys-sentinel-exec
+            out/tethys-sentinel-consume
             out/SHA256SUMS
             out/BUILDINFO.txt
+
+
+  ansible-onboarding:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install pinned Ansible core
+        run: python -m pip install --disable-pip-version-check 'ansible-core==2.19.3'
+
+      - name: Syntax-check target onboarding playbook
+        working-directory: ansible
+        run: ansible-playbook --syntax-check -i inventory/example.yml playbooks/onboard-sentinel-targets.yml
+
+  chatgpt-relay-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Validate skills-only plugin package
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='plugins/tethys-sentinel-github-relay'
+          python -m json.tool "$root/plugin.json" >/dev/null
+          test -f "$root/skills/tethys-sentinel-github-relay/SKILL.md"
+          python -m py_compile             "$root/skills/tethys-sentinel-github-relay/scripts/sign_request.py"             "$root/skills/tethys-sentinel-github-relay/scripts/verify_relay.py"
+          actual="$(
+            printf '%s' '{"secret":"tsr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","session_id":"sgr_abcdefghijklmnop","sequence":1,"request_id":"request-0001","target":"target-test","argv":["id"],"agent_reason":"acceptance","timeout_seconds":60}' |
+              python "$root/skills/tethys-sentinel-github-relay/scripts/sign_request.py" |
+              tail -n 1
+          )"
+          expected='{"version":1,"session_id":"sgr_abcdefghijklmnop","sequence":1,"request_id":"request-0001","target":"target-test","argv":["id"],"agent_reason":"acceptance","timeout_seconds":60,"mac":"h1_JUZ5EQ6w9eDMKOSSZuT3u_7iymcCTI37Pmx6ZRtyyE8"}'
+          test "$actual" = "$expected"
+
+          python - "$root/skills/tethys-sentinel-github-relay/scripts/verify_relay.py" <<'PY'
+          import base64
+          import hashlib
+          import hmac
+          import json
+          import subprocess
+          import sys
+
+          verifier = sys.argv[1]
+          secret = "tsr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          key = base64.urlsafe_b64decode(secret[4:] + "=")
+          payload = {
+              "actor_id": 120008285,
+              "exact_argv": ["id"],
+              "expires_at": "2026-09-23T04:30:00Z",
+              "issue_number": 17,
+              "max_commands": 1,
+              "output_limit_bytes": 8192,
+              "publish_output": True,
+              "repository_id": 123456789,
+              "session_id": "sgr_abcdefghijklmnop",
+              "target": "target-test",
+              "version": 1,
+          }
+          canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+          mac = "h1_" + base64.urlsafe_b64encode(hmac.new(key, canonical, hashlib.sha256).digest()).decode().rstrip("=")
+          wire = dict(payload)
+          wire["mac"] = mac
+          comment = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\n" + json.dumps(wire, ensure_ascii=False, separators=(",", ":"))
+
+          def verify(author_id=9001, author_type="Bot", body=comment):
+              data = json.dumps({
+                  "secret": secret,
+                  "comment": body,
+                  "expected_author_id": 9001,
+                  "comment_author_id": author_id,
+                  "comment_author_type": author_type,
+              })
+              return subprocess.run([sys.executable, verifier], input=data, text=True, capture_output=True)
+
+          ok = verify()
+          if ok.returncode != 0 or '"mac_verified": true' not in ok.stdout or '"relay_actor_verified": true' not in ok.stdout:
+              raise SystemExit("valid relay authorization failed verification: " + ok.stderr)
+          if verify(author_id=9002).returncode == 0:
+              raise SystemExit("wrong GitHub App actor ID was accepted")
+          if verify(author_type="User").returncode == 0:
+              raise SystemExit("non-Bot relay author was accepted")
+
+          injected = dict(wire)
+          injected["instructions"] = "unsigned attacker-controlled text"
+          injected_comment = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\n" + json.dumps(injected, ensure_ascii=False, separators=(",", ":"))
+          if verify(body=injected_comment).returncode == 0:
+              raise SystemExit("unsigned/unknown relay JSON field was accepted")
+          PY
+
+      - name: Package ChatGPT relay plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='plugins/tethys-sentinel-github-relay'
+          find "$root" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+          find "$root" -type d -name '__pycache__' -empty -delete
+          cd "$root"
+          zip -qr ../../tethys-sentinel-github-relay-plugin.zip .
+
+      - name: Upload ChatGPT relay plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: tethys-sentinel-github-relay-plugin
+          if-no-files-found: error
+          retention-days: 1
+          path: tethys-sentinel-github-relay-plugin.zip
+
 
   operator-frontend:
     runs-on: ubuntu-latest
@@ -143,7 +278,7 @@ jobs:
           test "$(npm --version)" = '11.19.0'
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          expected='c898414246de5d1c56d47f6434c66f791489007d57528faf4a0f8a325db8f081'
+          expected='23e4bcff0a807198afb06b0916969074f165fe201d1cbcdb5852536cf8a6b813'
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [ "$actual" != "$expected" ]; then
             echo "frontend dependency graph drift: expected=${expected} actual=${actual}"

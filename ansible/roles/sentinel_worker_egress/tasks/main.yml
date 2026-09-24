@@ -1,0 +1,278 @@
+---
+- name: Validate Worker egress reconciliation inputs
+  ansible.builtin.assert:
+    that:
+      - sentinel_control_group in groups
+      - groups[sentinel_control_group] | length == 1
+      - sentinel_worker_vmid is not none
+      - sentinel_worker_vmid | int > 0
+      - sentinel_worker_net is match('^net[0-9]+$')
+      - sentinel_control_url | length > 0
+      - sentinel_control_url is match('^https://')
+      - sentinel_ntp_sources | length > 0
+    fail_msg: "Worker egress reconciliation requires one Control host, Worker VMID/net, HTTPS Control URL, and at least one NTP source."
+
+- name: Check controller-side egress inputs
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ sentinel_egress_policy_binary_src }}"
+    - "{{ sentinel_artifact_checksum_file }}"
+  delegate_to: localhost
+  become: false
+  register: sentinel_egress_controller_inputs
+
+- name: Require accepted egress-policy artifact
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists | default(false)
+      - item.stat.isreg | default(false)
+    fail_msg: "Required egress artifact input {{ item.item }} is missing."
+  loop: "{{ sentinel_egress_controller_inputs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Verify accepted linux-amd64 artifact checksums
+  ansible.builtin.command:
+    argv:
+      - sha256sum
+      - -c
+      - SHA256SUMS
+  args:
+    chdir: "{{ sentinel_artifact_dir }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Require Proxmox firewall tooling
+  ansible.builtin.shell: |
+    set -eu
+    command -v pve-firewall >/dev/null
+    command -v qm >/dev/null
+  args:
+    executable: /bin/sh
+  changed_when: false
+
+- name: Create protected operator work directory
+  ansible.builtin.file:
+    path: "{{ sentinel_egress_work_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install accepted egress-policy binary on PVE
+  ansible.builtin.copy:
+    src: "{{ sentinel_egress_policy_binary_src }}"
+    dest: "{{ sentinel_egress_policy_binary_dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Read the actual Control SSH target registry
+  ansible.builtin.slurp:
+    src: "{{ sentinel_control_registry_path }}"
+  delegate_to: "{{ groups[sentinel_control_group] | first }}"
+  become: true
+  register: sentinel_egress_registry_raw
+  no_log: true
+
+- name: Define protected temporary egress paths
+  ansible.builtin.set_fact:
+    sentinel_egress_registry_temp: "{{ sentinel_egress_work_dir }}/ssh-targets.ansible.json"
+    sentinel_egress_candidate: "{{ sentinel_egress_work_dir }}/{{ sentinel_worker_vmid }}.fw.ansible-candidate"
+    sentinel_egress_live: "/etc/pve/firewall/{{ sentinel_worker_vmid }}.fw"
+    sentinel_egress_backup: "/root/{{ sentinel_worker_vmid }}.fw.pre-ansible.{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') | trim }}"
+
+- name: Copy protected target registry to PVE work area
+  ansible.builtin.copy:
+    content: "{{ sentinel_egress_registry_raw.content | b64decode }}"
+    dest: "{{ sentinel_egress_registry_temp }}"
+    owner: root
+    group: root
+    mode: "0600"
+  changed_when: false
+  no_log: true
+
+- name: Initialize NTP argv
+  ansible.builtin.set_fact:
+    sentinel_egress_ntp_argv: []
+
+- name: Build repeated NTP argv
+  ansible.builtin.set_fact:
+    sentinel_egress_ntp_argv: "{{ sentinel_egress_ntp_argv + ['-ntp', item] }}"
+  loop: "{{ sentinel_ntp_sources }}"
+
+- name: Reconcile canonical Worker egress policy
+  block:
+    - name: Generate canonical PVE policy
+      ansible.builtin.command:
+        argv: >-
+          {{ [sentinel_egress_policy_binary_dest,
+              '-targets', sentinel_egress_registry_temp,
+              '-control', sentinel_control_url]
+             + sentinel_egress_ntp_argv
+             + ['-format', 'pve'] }}
+      register: sentinel_egress_generated
+      changed_when: false
+      no_log: true
+
+    - name: Write protected policy candidate
+      ansible.builtin.copy:
+        content: "{{ sentinel_egress_generated.stdout }}\n"
+        dest: "{{ sentinel_egress_candidate }}"
+        owner: root
+        group: root
+        mode: "0600"
+      changed_when: false
+      no_log: true
+
+    - name: Verify candidate policy and PVE activation before install
+      ansible.builtin.command:
+        argv: >-
+          {{ [sentinel_egress_policy_binary_dest,
+              '-targets', sentinel_egress_registry_temp,
+              '-control', sentinel_control_url]
+             + sentinel_egress_ntp_argv
+             + ['-format', 'pve',
+                '-check', sentinel_egress_candidate,
+                '-pve-cluster-fw', '/etc/pve/firewall/cluster.fw',
+                '-pve-vm-config', '/etc/pve/qemu-server/' ~ (sentinel_worker_vmid | string) ~ '.conf',
+                '-pve-net', sentinel_worker_net] }}
+      changed_when: false
+      no_log: true
+
+    - name: Require active Proxmox firewall before changing policy
+      ansible.builtin.command:
+        argv:
+          - pve-firewall
+          - status
+      register: sentinel_pve_firewall_pre_status
+      changed_when: false
+
+    - name: Assert active Proxmox firewall before changing policy
+      ansible.builtin.assert:
+        that:
+          - "'enabled/running' in sentinel_pve_firewall_pre_status.stdout"
+        fail_msg: "Refusing to change Worker egress while Proxmox firewall is not enabled/running."
+
+    - name: Inspect current PVE Worker firewall
+      ansible.builtin.stat:
+        path: "{{ sentinel_egress_live }}"
+      register: sentinel_egress_live_stat
+
+    - name: Compare installed policy with generated candidate
+      ansible.builtin.command:
+        argv:
+          - cmp
+          - -s
+          - "{{ sentinel_egress_live }}"
+          - "{{ sentinel_egress_candidate }}"
+      register: sentinel_egress_cmp
+      changed_when: false
+      failed_when: false
+
+    - name: Install changed Worker policy with rollback protection
+      when: sentinel_egress_cmp.rc != 0
+      block:
+        - name: Back up previous Worker firewall
+          ansible.builtin.copy:
+            src: "{{ sentinel_egress_live }}"
+            dest: "{{ sentinel_egress_backup }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0600"
+          when: sentinel_egress_live_stat.stat.exists
+
+        - name: Write candidate contents through pmxcfs
+          ansible.builtin.shell: >-
+            cat {{ sentinel_egress_candidate | quote }} >
+            {{ sentinel_egress_live | quote }}
+          args:
+            executable: /bin/sh
+
+        - name: Compile changed Proxmox firewall
+          ansible.builtin.command:
+            argv:
+              - pve-firewall
+              - compile
+          changed_when: false
+          no_log: true
+
+      rescue:
+        - name: Restore previous Worker firewall through pmxcfs
+          ansible.builtin.shell: >-
+            cat {{ sentinel_egress_backup | quote }} >
+            {{ sentinel_egress_live | quote }}
+          args:
+            executable: /bin/sh
+          when: sentinel_egress_live_stat.stat.exists
+
+        - name: Remove newly created invalid Worker firewall
+          ansible.builtin.command:
+            argv:
+              - rm
+              - -f
+              - "{{ sentinel_egress_live }}"
+          when: not sentinel_egress_live_stat.stat.exists
+
+        - name: Compile rolled-back Proxmox firewall
+          ansible.builtin.command:
+            argv:
+              - pve-firewall
+              - compile
+          changed_when: false
+          no_log: true
+
+        - name: Abort after Worker firewall rollback
+          ansible.builtin.fail:
+            msg: "Generated Worker egress policy failed Proxmox compilation and was rolled back."
+
+    - name: Compile unchanged Proxmox firewall for verification
+      ansible.builtin.command:
+        argv:
+          - pve-firewall
+          - compile
+      when: sentinel_egress_cmp.rc == 0
+      changed_when: false
+      no_log: true
+
+    - name: Verify installed policy and PVE activation
+      ansible.builtin.command:
+        argv: >-
+          {{ [sentinel_egress_policy_binary_dest,
+              '-targets', sentinel_egress_registry_temp,
+              '-control', sentinel_control_url]
+             + sentinel_egress_ntp_argv
+             + ['-format', 'pve',
+                '-check', sentinel_egress_live,
+                '-pve-cluster-fw', '/etc/pve/firewall/cluster.fw',
+                '-pve-vm-config', '/etc/pve/qemu-server/' ~ (sentinel_worker_vmid | string) ~ '.conf',
+                '-pve-net', sentinel_worker_net] }}
+      changed_when: false
+      no_log: true
+
+    - name: Read Proxmox firewall runtime status
+      ansible.builtin.command:
+        argv:
+          - pve-firewall
+          - status
+      register: sentinel_pve_firewall_status
+      changed_when: false
+
+    - name: Require active Proxmox firewall
+      ansible.builtin.assert:
+        that:
+          - "'enabled/running' in sentinel_pve_firewall_status.stdout"
+        fail_msg: "Generated policy is valid but Proxmox firewall is not enabled/running."
+
+  always:
+    - name: Remove protected temporary egress material
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      changed_when: false
+      loop:
+        - "{{ sentinel_egress_registry_temp }}"
+        - "{{ sentinel_egress_candidate }}"

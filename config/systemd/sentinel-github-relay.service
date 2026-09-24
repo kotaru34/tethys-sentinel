@@ -1,0 +1,35 @@
+[Unit]
+Description=Tethys Sentinel GitHub transport relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinel-relay
+Group=sentinel-relay
+EnvironmentFile=/etc/tethys-sentinel/github-relay.env
+ExecStart=/usr/local/bin/sentinel-github-relay serve --state-dir /var/lib/tethys-sentinel-github-relay
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/tethys-sentinel-github-relay
+ReadOnlyPaths=/etc/tethys-sentinel
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

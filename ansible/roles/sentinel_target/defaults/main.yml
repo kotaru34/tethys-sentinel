@@ -1,0 +1,25 @@
+---
+sentinel_artifact_dir: "{{ playbook_dir }}/../artifacts/linux-amd64"
+sentinel_target_exec_binary_src: "{{ sentinel_artifact_dir }}/tethys-sentinel-exec"
+sentinel_target_consume_binary_src: "{{ sentinel_artifact_dir }}/tethys-sentinel-consume"
+sentinel_artifact_checksum_file: "{{ sentinel_artifact_dir }}/SHA256SUMS"
+sentinel_target_ssh_ca_pub_file: "{{ playbook_dir }}/../secrets/ssh-user-ca.pub"
+
+sentinel_target_id: "{{ inventory_hostname }}"
+sentinel_target_address: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+sentinel_target_ssh_port: 22
+sentinel_target_user: sentinel-ai
+sentinel_target_principal: sentinel-ai
+sentinel_target_role_description: ""
+sentinel_target_services:
+  - sshd
+sentinel_target_notes: ""
+
+sentinel_target_exec_binary_dest: /usr/local/libexec/tethys-sentinel-exec
+sentinel_target_consume_binary_dest: /usr/local/libexec/tethys-sentinel-consume
+sentinel_target_id_file: /etc/tethys-sentinel/target-id
+sentinel_target_ca_dest: /etc/ssh/tethys-sentinel-user-ca.pub
+sentinel_target_principals_dir: /etc/ssh/auth_principals
+sentinel_target_replay_dir: /var/lib/tethys-sentinel/executed
+sentinel_target_sshd_dropin: /etc/ssh/sshd_config.d/99-tethys-sentinel.conf
+sentinel_target_manage_packages: true

@@ -1,0 +1,8 @@
+---
+sentinel_targets_group: sentinel_targets
+sentinel_control_group: sentinel_control
+sentinel_control_service_name: sentinel-control
+sentinel_control_service_group: sentinel-control
+sentinel_control_registry_path: /etc/tethys-sentinel/ssh-targets.json
+sentinel_control_context_path: /etc/tethys-sentinel/context.json
+sentinel_allow_target_removal: false

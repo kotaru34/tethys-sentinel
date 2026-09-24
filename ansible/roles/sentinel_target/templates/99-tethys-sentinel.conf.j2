@@ -1,0 +1,19 @@
+# Managed by Tethys Sentinel Ansible onboarding.
+TrustedUserCAKeys {{ sentinel_target_ca_dest }}
+PermitUserEnvironment no
+
+Match User {{ sentinel_target_user }}
+    PubkeyAuthentication yes
+    AuthenticationMethods publickey
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AuthorizedKeysFile none
+    AuthorizedPrincipalsFile {{ sentinel_target_principals_dir }}/%u
+    PermitTTY no
+    AllowAgentForwarding no
+    AllowTcpForwarding no
+    X11Forwarding no
+    PermitTunnel no
+
+# Reset Match scope before sshd returns to the parent configuration.
+Match all
