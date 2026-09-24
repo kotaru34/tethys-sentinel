@@ -6,7 +6,7 @@ Tethys Sentinel separates **what an AI agent may request** from **what infrastru
 
 ## Status
 
-Current accepted development baseline: **`0.1.0-dev.22`**.
+Current accepted development baseline: **`0.1.0-dev.25`**.
 
 - PostgreSQL schema: **v4**
 - native loopback MCP endpoint: accepted
