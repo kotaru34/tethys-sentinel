@@ -52,55 +52,11 @@ Final external Agent HTTP acceptance is complete. A restricted public capability
 
 ## dev.25 candidate status
 
-Live dev.24 acceptance completed on the intended infrastructure and proved the intended authority boundary end to end: a 15-minute, max-one, exact-`["id"]` relay session produced a successful target execution as the unprivileged `sentinel-ai` account; replay did not create a second execution; an authenticated `["uname"]` request was rejected by the relay before Sentinel submission; and after the underlying grant was revoked, a correctly signed `["id"]` request caused the relay session to close with `underlying Sentinel capability is no longer valid` while `commands_complete` remained zero. The relay service was running as the dedicated `sentinel-relay` user and used the dedicated private GitHub App/mailbox.
+The dev.25 candidate is green in CI on exact commit `dceae9ee39876a1daf36a27e41263bcdd5b9b659` (run #859), including Go race tests, PostgreSQL 15/18 integration, Ansible syntax, operator-frontend reproducibility/security checks, plugin packaging, and the linux/amd64 artifact build.
 
-That acceptance also exposed one operational correctness bug when the same mailbox issue was reused for a second relay session: the new session inspected valid request comments from the previous session and emitted signed `request is bound to a different relay session` denials. The comments could not reach Sentinel and did not weaken authority, but the behavior creates avoidable mailbox noise and makes long-lived issue reuse less clean.
+A narrow live re-acceptance of the dev.25 regression fix remains before merge. Detailed transport-integration operating documentation and live deployment evidence are intentionally kept out of this public repository and belong in private operator records.
 
-Per the acceptance rule, dev.24 is therefore blocked from merge and dev.25 is the narrow corrective candidate. dev.25 marks parsed request comments for other relay session IDs as seen and ignores them without a denial or Agent API call, while preserving the secret-exposure scan before that filter. A regression test covers same-actor, same-issue foreign-session traffic and requires zero Agent calls, zero response comments and unchanged command counters. The relay documentation now states the issue-reuse behavior explicitly.
-
-dev.25 must pass the full CI matrix and receive a targeted live re-acceptance of mailbox reuse on the intended deployment before merge.
-
-CI run #857 on the first dev.25 commit proved the Go regression suite, PostgreSQL 15/18, relay plugin and Ansible jobs, but the workflow itself still contained the dev.24 artifact-version assertion and artifact name. The Operator frontend dependency-graph sentinel also observed a new resolved transitive graph while the four top-level frontend versions remained explicitly pinned. The follow-up CI-only commit updates the artifact job to dev.25 and refreshes the pinned resolved-graph digest; the existing embedded-frontend equality check remains the gate that must prove the refreshed transitive graph does not change the accepted frontend output.
-
-## dev.24 candidate status
-
-dev.24 adds a **sidecar GitHub transport relay for ordinary ChatGPT chats**. It must not add, bypass or duplicate a Sentinel execution path. The relay is a client of the already accepted capability-scoped Agent HTTP contract only:
-
-- `GET /v1/bootstrap`
-- `POST /v1/commands/submit`
-- `GET /v1/jobs/{id}`
-- `GET /v1/requests/{request_id}`
-
-The intended path is `ChatGPT -> dedicated private GitHub issue/comment mailbox -> sentinel-github-relay -> existing Gateway/Agent API -> existing Control/Worker/target path`. GitHub transports requests and results only; it never receives the Sentinel capability.
-
-Security requirements for this milestone:
-
-- a relay session is created only by an explicit local operator action against an already-issued normal Sentinel capability;
-- session lifetime and target scope can only narrow the underlying Sentinel grant and can never outlive it;
-- each session binds one repository ID, one issue number, the exact GitHub numeric actor ID and the GitHub App attribution observed on the approved issue;
-- command comments must be newly created, unedited, sequential, uniquely identified and authenticated with a short-lived per-session HMAC key delivered out of band to the chat/operator, so GitHub is not the sole request-authentication root;
-- replay, edit, reorder, duplicate request IDs, stale/closed sessions and invalid MACs fail closed before any Agent API submission;
-- optional exact-argv mode provides an acceptance profile in which the relay can physically forward only one explicitly approved argv such as `["id"]`;
-- the relay uses a dedicated GitHub App installation identity with only repository metadata plus Issues read/write permissions; installation access tokens are minted on demand and expire/rotate rather than using a long-lived PAT;
-- polling uses authenticated conditional requests/ETags and serial processing with backoff; no new inbound listener is required on the Sentinel side;
-- request/result bodies, logs and public repository material must never contain Sentinel capabilities, GitHub App private keys, relay session keys or deployment-specific secrets;
-- GitHub/App identity is an additional transport binding, not Sentinel authority. Every forwarded command still passes the normal immutable request-ID, grant, policy, approval, epoch, Worker and target-wrapper checks.
-
-This branch starts from the exact dev.23 candidate head `275e75b871ccb012d01209c0c33f31ef4285f276`. dev.23 remains independently testable on its original branch; the relay work is a new feature and therefore bumps the candidate to dev.24.
-
-Additional pre-acceptance hardening found during adversarial review: the comments ETag must not advance before durable processing; numeric repository/issue identity must be revalidated before an authenticated request reaches Sentinel; a leaked relay secret anywhere in the issue closes the session; and permanent Agent-API 403 denials must terminate the request rather than loop. The normal-Chat plugin also cannot assume every ChatGPT surface executes bundled skill scripts, so local deterministic HMAC capability is an explicit prerequisite with no network-signing fallback. The relay intentionally does not invent file-upload/edit authority that the accepted Agent API does not expose.
-
-Implementation checkpoint: commit `de59d099551673b0cf380688446940af37d46a56` adds the standalone `sentinel-github-relay`, local protected relay-session state, GitHub App installation authentication, HMAC-authenticated issue/comment protocol, strict sequence/replay/edit checks, immutable-request recovery, transport output bounds, systemd/config examples, security documentation, and a skills-only ChatGPT plugin package. Control, Gateway, Worker, Signer and target execution code paths are unchanged by this feature.
-
-A final adversarial implementation audit tightened the transport boundary further. Installation-token minting now explicitly requests only `metadata:read` plus `issues:write`; local authorization can pin an expected numeric repository ID; the exact GitHub App bot actor ID observed when the signed authorization marker is posted is persisted and used for relay-response attribution; and the ChatGPT verifier requires that pinned numeric Bot identity in addition to a valid HMAC. The verifier now rejects duplicate/unknown JSON fields so attacker-added unsigned fields cannot be presented as verified relay data. Regression coverage explicitly exercises wrong actor, edited comments, GitHub outage, wrong issue identity, replay, sequence/target/exact-argv violations, immutable request-ID rebinding, grant narrowing, restart recovery without a replacement submit, and authority-secret exclusion from response serialization.
-
-Implementation CI for commit `cc8ef7a5ad77a6ae094430927a6ed38ffc82fb9a` is fully green across privacy/version/tidy/gofmt/vet, `go test -race ./...`, PostgreSQL 15/18 integration, Ansible syntax, strict ChatGPT relay-plugin checks, operator-frontend reproducibility/security, and linux/amd64 artifact construction. The resulting `dev24-linux-amd64` workflow artifact digest is `sha256:7d331ff219692cb0b56a71abaa2381f8a41b2ff6698ae4ec558f34482c65fb0c`; the packaged ChatGPT relay plugin digest is `sha256:d769347f588e0af3a3c1bd5109b195af44adc44c1df0dc47c4d0868149dda1ad`.
-
-dev.24 reached live acceptance on the intended infrastructure. The dedicated private mailbox repository and GitHub App were deployed with Metadata read + Issues read/write only; the relay sidecar ran as its own service identity; Gateway ingress was narrowed to permit only the relay host in addition to the previously accepted sources; and the relay completed the exact-`["id"]`, max-one execution path with signed bounded output. Replay produced no second execution, exact-argv violation was rejected before Sentinel submission, and revoking the underlying grant caused a later correctly signed request to close the relay session on Agent bootstrap HTTP 401 without execution.
-
-The same live run exposed a non-authority mailbox-reuse bug: a newly authorized session on the same issue treated older valid request comments from the previous session as denials for the new session. No Sentinel submit occurred for those comments, but dev.24 is blocked from merge so the behavior can be corrected cleanly in dev.25.
-
-The first dev.24 implementation CI run exposed only repository-hygiene/reproducibility issues before the Go test stage: newly transferred Go sources lacked final newlines, and the registry-resolved frontend mapping dataset advanced `electron-to-chromium` from `1.5.435` to `1.5.436`. The resolved graph hash for that single reviewed mapping-package drift is `5a2ff2938d6b4ac306965054c3eef77b49b233f90f36f149a5aae57094c57762`; there is no Sentinel frontend source change.
+After dev.25 acceptance, resume the unfinished Ansible onboarding milestone, complete the remaining target-management work, deploy the target-side Sentinel components to the required VMs/CTs, and then run a broader multi-target acceptance exercise.
 
 ## dev.23 candidate status
 

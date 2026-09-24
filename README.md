@@ -164,7 +164,6 @@ Schema v4 contains mutable authority, approvals, jobs, audit/history, bounded ex
 - `docs/EXECUTION_POLICY.md` — exec/shell split and approval rules
 - `docs/OPERATIONAL_RISK.md` — semantic command risk classification
 - `docs/WORKER_EGRESS.md` — Worker external egress boundary
-- `docs/GITHUB_RELAY.md` — authenticated private-GitHub transport relay for ordinary ChatGPT chats
 - `docs/EMERGENCY_CONTROLS.md` — epoch/revoke-all semantics
 - `docs/POSTGRESQL_PERSISTENCE.md` — PostgreSQL schema and transactions
 - `docs/SSH_CA.md` — Signer and SSH certificate constraints
