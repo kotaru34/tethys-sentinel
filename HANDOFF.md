@@ -1,8 +1,8 @@
 # Tethys Sentinel — Handoff
 
-Updated: 2026-09-23  
+Updated: 2026-09-24  
 Current accepted development version: `0.1.0-dev.22`  
-Current candidate version: `0.1.0-dev.24`  
+Current candidate version: `0.1.0-dev.25`  
 Branch: `wip/dev24-github-relay`
 
 ## Status
@@ -50,6 +50,16 @@ Final external Agent HTTP acceptance is complete. A restricted public capability
 
 `0.1.0-dev.22` is accepted on the intended infrastructure and may be merged. This acceptance is independent of the separate public-release historical-ref/cache purge still awaiting GitHub Support.
 
+## dev.25 candidate status
+
+Live dev.24 acceptance completed on the intended infrastructure and proved the intended authority boundary end to end: a 15-minute, max-one, exact-`["id"]` relay session produced a successful target execution as the unprivileged `sentinel-ai` account; replay did not create a second execution; an authenticated `["uname"]` request was rejected by the relay before Sentinel submission; and after the underlying grant was revoked, a correctly signed `["id"]` request caused the relay session to close with `underlying Sentinel capability is no longer valid` while `commands_complete` remained zero. The relay service was running as the dedicated `sentinel-relay` user and used the dedicated private GitHub App/mailbox.
+
+That acceptance also exposed one operational correctness bug when the same mailbox issue was reused for a second relay session: the new session inspected valid request comments from the previous session and emitted signed `request is bound to a different relay session` denials. The comments could not reach Sentinel and did not weaken authority, but the behavior creates avoidable mailbox noise and makes long-lived issue reuse less clean.
+
+Per the acceptance rule, dev.24 is therefore blocked from merge and dev.25 is the narrow corrective candidate. dev.25 marks parsed request comments for other relay session IDs as seen and ignores them without a denial or Agent API call, while preserving the secret-exposure scan before that filter. A regression test covers same-actor, same-issue foreign-session traffic and requires zero Agent calls, zero response comments and unchanged command counters. The relay documentation now states the issue-reuse behavior explicitly.
+
+dev.25 must pass the full CI matrix and receive a targeted live re-acceptance of mailbox reuse on the intended deployment before merge.
+
 ## dev.24 candidate status
 
 dev.24 adds a **sidecar GitHub transport relay for ordinary ChatGPT chats**. It must not add, bypass or duplicate a Sentinel execution path. The relay is a client of the already accepted capability-scoped Agent HTTP contract only:
@@ -84,7 +94,9 @@ A final adversarial implementation audit tightened the transport boundary furthe
 
 Implementation CI for commit `cc8ef7a5ad77a6ae094430927a6ed38ffc82fb9a` is fully green across privacy/version/tidy/gofmt/vet, `go test -race ./...`, PostgreSQL 15/18 integration, Ansible syntax, strict ChatGPT relay-plugin checks, operator-frontend reproducibility/security, and linux/amd64 artifact construction. The resulting `dev24-linux-amd64` workflow artifact digest is `sha256:7d331ff219692cb0b56a71abaa2381f8a41b2ff6698ae4ec558f34482c65fb0c`; the packaged ChatGPT relay plugin digest is `sha256:d769347f588e0af3a3c1bd5109b195af44adc44c1df0dc47c4d0868149dda1ad`.
 
-dev.24 is **implementation/CI complete but not live-accepted**. No dedicated private relay repository is currently visible through the connected GitHub installation, and the available GitHub connector cannot create repositories or GitHub Apps/configure App permissions/installations. The relay also has not yet been deployed beside Sentinel. Live acceptance therefore still requires the operator to create the dedicated private mailbox repository and dedicated App (Metadata read + Issues read/write only, installed only on that repository), place the App private key locally with protected permissions, deploy the green relay artifact, and run the narrow one-issue/one-actor/`sentinel-target-test`/15-minute/max-one/`["id"]` profile before dev.24 may be marked accepted or merged.
+dev.24 reached live acceptance on the intended infrastructure. The dedicated private mailbox repository and GitHub App were deployed with Metadata read + Issues read/write only; the relay sidecar ran as its own service identity; Gateway ingress was narrowed to permit only the relay host in addition to the previously accepted sources; and the relay completed the exact-`["id"]`, max-one execution path with signed bounded output. Replay produced no second execution, exact-argv violation was rejected before Sentinel submission, and revoking the underlying grant caused a later correctly signed request to close the relay session on Agent bootstrap HTTP 401 without execution.
+
+The same live run exposed a non-authority mailbox-reuse bug: a newly authorized session on the same issue treated older valid request comments from the previous session as denials for the new session. No Sentinel submit occurred for those comments, but dev.24 is blocked from merge so the behavior can be corrected cleanly in dev.25.
 
 The first dev.24 implementation CI run exposed only repository-hygiene/reproducibility issues before the Go test stage: newly transferred Go sources lacked final newlines, and the registry-resolved frontend mapping dataset advanced `electron-to-chromium` from `1.5.435` to `1.5.436`. The resolved graph hash for that single reviewed mapping-package drift is `5a2ff2938d6b4ac306965054c3eef77b49b233f90f36f149a5aae57094c57762`; there is no Sentinel frontend source change.
 

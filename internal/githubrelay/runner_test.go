@@ -579,6 +579,54 @@ func TestRunnerSeenCommentReplayDoesNotResubmit(t *testing.T) {
 	}
 }
 
+func TestRunnerIgnoresRequestsForOtherRelaySessions(t *testing.T) {
+	now := time.Date(2026, 9, 24, 21, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	foreign := RequestEnvelope{
+		SessionID: "sgr_qrstuvwxyzABCDEF", Sequence: 1, RequestID: "request-old-session",
+		Target: s.Target, Argv: []string{"id"},
+	}
+	body, err := BuildRequestComment(testSecret(), foreign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeGitHub{comments: []GitHubComment{{
+		ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now,
+	}}}
+	called := false
+	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) {
+		called = true
+		return nil, errors.New("foreign-session request must not reach Agent API")
+	}}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("foreign-session request reached Agent API")
+	}
+	if len(gh.posted) != 0 {
+		t.Fatalf("foreign-session request produced %d response comment(s), want 0", len(gh.posted))
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Closed || loaded.CommandsComplete != 0 || loaded.NextSequence != 1 {
+		t.Fatalf("foreign-session request changed relay authority state: %+v", loaded)
+	}
+	if _, ok := loaded.SeenComments["10"]; !ok {
+		t.Fatal("foreign-session request was not marked seen")
+	}
+}
+
 func TestRelayResponseDoesNotSerializeAuthoritySecrets(t *testing.T) {
 	secret := testSecret()
 	capability := "tsc_super-secret-authority"

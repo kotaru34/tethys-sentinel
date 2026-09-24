@@ -160,6 +160,13 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 			_ = r.Store.Save(*session)
 			return fmt.Errorf("malformed relay request comment %d: %w", comment.ID, err)
 		}
+		if req.SessionID != session.ID {
+			// A dedicated issue may be reused across relay sessions. Requests for
+			// another session are mailbox traffic for that session, not failures
+			// of this one. Mark them seen to avoid reprocessing as the issue grows.
+			session.SeenComments[commentKey] = bodyHash
+			continue
+		}
 		if err := session.ValidateRequest(req, now); err != nil {
 			session.SeenComments[commentKey] = bodyHash
 			if errors.Is(err, ErrInvalidMAC) {

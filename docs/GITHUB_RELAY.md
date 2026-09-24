@@ -173,6 +173,8 @@ TETHYS_SENTINEL_RELAY_REQUEST_V1
 {"version":1,"session_id":"sgr_...","sequence":1,"request_id":"request-...","target":"target-test","argv":["id"],"timeout_seconds":60,"mac":"h1_..."}
 ```
 
+A dedicated mailbox issue may be reused for multiple relay sessions. After a request marker is parsed, a request whose `session_id` belongs to another relay session is marked seen and ignored silently: it produces no denial comment and cannot reach the Agent API. Secret-exposure scanning still runs before this session filter, so reuse does not weaken the fail-closed response to a leaked current relay secret.
+
 The MAC is HMAC-SHA256 with the relay session secret (the 32 decoded bytes after `tsr_`). This cryptographic step must happen locally in the ChatGPT execution environment; sending the secret to a web service to calculate the MAC would destroy the extra trust factor. The signed payload contains the following keys with these exact values, serialized as UTF-8 JSON with lexicographically sorted keys, compact separators, and unescaped Unicode/HTML characters:
 
 ```text
