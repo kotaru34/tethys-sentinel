@@ -24,8 +24,12 @@ type fakeGitHub struct {
 	issue       GitHubIssue
 	etag        string
 	notModified bool
-	commentsErr error
-	seenETags   []string
+	commentsErr     error
+	seenETags       []string
+	requestFiles    []GitHubRequestFile
+	requestFileData map[string]GitHubRequestFile
+	requestFilesErr error
+	requestFileErr  error
 }
 
 func (f *fakeGitHub) Repository(context.Context, string) (GitHubRepository, error) {
@@ -57,6 +61,23 @@ func (f *fakeGitHub) Comments(_ context.Context, _ string, _ int, etag string) (
 func (f *fakeGitHub) CreateComment(_ context.Context, _ string, _ int, body string) (GitHubComment, error) {
 	f.posted = append(f.posted, body)
 	return GitHubComment{ID: int64(100 + len(f.posted)), Body: body}, nil
+}
+
+func (f *fakeGitHub) RequestFiles(context.Context, string, string) ([]GitHubRequestFile, error) {
+	if f.requestFilesErr != nil {
+		return nil, f.requestFilesErr
+	}
+	return append([]GitHubRequestFile(nil), f.requestFiles...), nil
+}
+
+func (f *fakeGitHub) RequestFile(_ context.Context, _ string, filePath string) (GitHubRequestFile, error) {
+	if f.requestFileErr != nil {
+		return GitHubRequestFile{}, f.requestFileErr
+	}
+	if value, ok := f.requestFileData[filePath]; ok {
+		return value, nil
+	}
+	return GitHubRequestFile{}, errors.New("request file not found")
 }
 
 type fakeAgent struct {
@@ -638,5 +659,233 @@ func TestRelayResponseDoesNotSerializeAuthoritySecrets(t *testing.T) {
 	}
 	if strings.Contains(body, secret) || strings.Contains(body, capability) {
 		t.Fatal("relay response serialized authority secret material")
+	}
+}
+
+
+func TestRunnerFallbackFileExecutesAuthenticatedRequest(t *testing.T) {
+	now := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+		PublishOutput: true, OutputLimitBytes: 1024,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	req := RequestEnvelope{SessionID: s.ID, Sequence: 1, RequestID: "request-file-0001", Target: s.Target, Argv: []string{"id"}}
+	body, err := BuildRequestComment(s.Secret, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filePath, err := FileRequestPath(s.ID, req.Sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := GitHubRequestFile{Name: "00000000000000000001.req", Path: filePath, SHA: "blob-file-1", Size: len(body)}
+	gh := &fakeGitHub{
+		notModified: true,
+		requestFiles: []GitHubRequestFile{meta},
+		requestFileData: map[string]GitHubRequestFile{
+			filePath: {
+				Name: meta.Name, Path: filePath, SHA: meta.SHA, Size: len(body), Body: body,
+				CommitSHA: "commit-file-1", Actor: GitHubUser{ID: s.ActorID, Login: "operator", Type: "User"},
+			},
+		},
+	}
+	job := internalapi.AgentExecutionJob{
+		ID: "job-file-1", RequestID: req.RequestID, Target: s.Target, Argv: append([]string(nil), req.Argv...),
+		Status: executionjob.Succeeded, Result: &executionjob.Result{Success: true, ExitCode: 0},
+		Output: &executionoutput.Output{Stdout: []byte("uid=1001(sentinel-ai)\n")},
+	}
+	agent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
+		submit: internalapi.SubmitCommandResponse{
+			Decision: "accepted", Accepted: true,
+			Job: &internalapi.ExecutionJobReceipt{ID: job.ID, RequestID: req.RequestID, Status: executionjob.Staged},
+		},
+		job: job,
+	}
+	runner := &Runner{
+		Store: store, GitHub: gh, EnableFileFallback: true, Now: func() time.Time { return now },
+		AgentFactory: func(string) (Agent, error) { return agent, nil },
+	}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if agent.submits != 1 {
+		t.Fatalf("fallback submits = %d, want 1", agent.submits)
+	}
+	if len(gh.posted) != 1 {
+		t.Fatalf("fallback response comments = %d, want 1", len(gh.posted))
+	}
+	response, err := ParseResponseComment(gh.posted[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyResponseMAC(s.Secret, response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "completed" || response.Success == nil || !*response.Success {
+		t.Fatalf("unexpected fallback response: %+v", response)
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CommandsComplete != 1 || loaded.NextSequence != 2 || loaded.Inflight != nil {
+		t.Fatalf("unexpected fallback session state: %+v", loaded)
+	}
+	if loaded.SeenComments["file:"+filePath] != meta.SHA {
+		t.Fatal("fallback file was not durably recorded")
+	}
+	if _, ok := loaded.SeenComments[requestIdentityKey(req)]; !ok {
+		t.Fatal("fallback request identity was not durably recorded")
+	}
+}
+
+func TestRunnerCommentAndFallbackFileSameRequestExecuteExactlyOnce(t *testing.T) {
+	now := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	req := RequestEnvelope{SessionID: s.ID, Sequence: 1, RequestID: "request-dual-0001", Target: s.Target, Argv: []string{"id"}}
+	body, err := BuildRequestComment(s.Secret, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filePath, _ := FileRequestPath(s.ID, req.Sequence)
+	meta := GitHubRequestFile{Name: "00000000000000000001.req", Path: filePath, SHA: "blob-dual-1", Size: len(body)}
+	gh := &fakeGitHub{
+		comments: []GitHubComment{{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}},
+		requestFiles: []GitHubRequestFile{meta},
+		requestFileData: map[string]GitHubRequestFile{
+			filePath: {Name: meta.Name, Path: filePath, SHA: meta.SHA, Size: len(body), Body: body, CommitSHA: "commit-dual-1", Actor: GitHubUser{ID: s.ActorID, Type: "User"}},
+		},
+	}
+	job := internalapi.AgentExecutionJob{
+		ID: "job-dual-1", RequestID: req.RequestID, Target: s.Target, Argv: []string{"id"},
+		Status: executionjob.Succeeded, Result: &executionjob.Result{Success: true, ExitCode: 0},
+	}
+	agent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
+		submit: internalapi.SubmitCommandResponse{
+			Decision: "accepted", Accepted: true,
+			Job: &internalapi.ExecutionJobReceipt{ID: job.ID, RequestID: req.RequestID, Status: executionjob.Staged},
+		},
+		job: job,
+	}
+	runner := &Runner{
+		Store: store, GitHub: gh, EnableFileFallback: true, Now: func() time.Time { return now },
+		AgentFactory: func(string) (Agent, error) { return agent, nil },
+	}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if agent.submits != 1 {
+		t.Fatalf("dual-carrier request submitted %d times, want 1", agent.submits)
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CommandsComplete != 1 || loaded.NextSequence != 2 {
+		t.Fatalf("dual-carrier request consumed authority more than once: %+v", loaded)
+	}
+	if loaded.SeenComments["file:"+filePath] != meta.SHA {
+		t.Fatal("duplicate fallback carrier was not recorded")
+	}
+}
+
+func TestRunnerFallbackFileWrongActorNeverReachesSentinel(t *testing.T) {
+	now := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	req := RequestEnvelope{SessionID: s.ID, Sequence: 1, RequestID: "request-wrong-actor", Target: s.Target, Argv: []string{"id"}}
+	body, err := BuildRequestComment(s.Secret, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filePath, _ := FileRequestPath(s.ID, req.Sequence)
+	meta := GitHubRequestFile{Name: "00000000000000000001.req", Path: filePath, SHA: "blob-wrong-actor", Size: len(body)}
+	gh := &fakeGitHub{
+		notModified: true, requestFiles: []GitHubRequestFile{meta},
+		requestFileData: map[string]GitHubRequestFile{
+			filePath: {Name: meta.Name, Path: filePath, SHA: meta.SHA, Size: len(body), Body: body, CommitSHA: "commit-wrong", Actor: GitHubUser{ID: 999, Type: "User"}},
+		},
+	}
+	called := false
+	runner := &Runner{
+		Store: store, GitHub: gh, EnableFileFallback: true, Now: func() time.Time { return now },
+		AgentFactory: func(string) (Agent, error) {
+			called = true
+			return nil, errors.New("wrong actor must not reach Sentinel")
+		},
+	}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("wrong fallback commit actor reached Sentinel")
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CommandsComplete != 0 || loaded.NextSequence != 1 || loaded.SeenComments["file:"+filePath] != meta.SHA {
+		t.Fatalf("wrong actor changed authority state unexpectedly: %+v", loaded)
+	}
+}
+
+func TestRunnerFallbackFileModificationFailsClosed(t *testing.T) {
+	now := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	filePath, _ := FileRequestPath(s.ID, 1)
+	s.Normalize()
+	s.SeenComments["file:"+filePath] = "old-blob"
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeGitHub{notModified: true, requestFiles: []GitHubRequestFile{{Name: "00000000000000000001.req", Path: filePath, SHA: "changed-blob"}}}
+	called := false
+	runner := &Runner{
+		Store: store, GitHub: gh, EnableFileFallback: true, Now: func() time.Time { return now },
+		AgentFactory: func(string) (Agent, error) {
+			called = true
+			return nil, errors.New("modified fallback file must not reach Sentinel")
+		},
+	}
+	if err := runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected modified fallback request file to fail closed")
+	}
+	if called {
+		t.Fatal("modified fallback request file reached Sentinel")
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Closed || !strings.Contains(loaded.CloseReason, "modified") {
+		t.Fatalf("modified fallback file did not close session: %+v", loaded)
 	}
 }
