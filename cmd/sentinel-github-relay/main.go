@@ -275,6 +275,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer, look
 	baseURL := fs.String("url", envValue(lookupEnv, "SENTINEL_URL"), "Sentinel Gateway HTTPS origin")
 	caFile := fs.String("ca-file", envValue(lookupEnv, "SENTINEL_CA_FILE"), "additional Sentinel CA PEM")
 	poll := fs.Duration("poll", envDuration(lookupEnv, "SENTINEL_GITHUB_POLL_INTERVAL", 5*time.Second), "GitHub polling interval")
+	fileFallback := fs.Bool("file-fallback", envBool(lookupEnv, "SENTINEL_GITHUB_FILE_FALLBACK", false), "also poll immutable HMAC request files as a fallback carrier")
 	once := fs.Bool("once", false, "process active sessions once and exit")
 	appID := fs.Int64("github-app-id", envInt64(lookupEnv, "SENTINEL_GITHUB_APP_ID"), "GitHub App ID")
 	installationID := fs.Int64("github-installation-id", envInt64(lookupEnv, "SENTINEL_GITHUB_INSTALLATION_ID"), "GitHub App installation ID")
@@ -297,7 +298,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer, look
 		return report(stderr, err)
 	}
 	runner := &githubrelay.Runner{
-		Store: store, GitHub: gh, PollInterval: *poll,
+		Store: store, GitHub: gh, PollInterval: *poll, EnableFileFallback: *fileFallback,
 		AgentFactory: func(token string) (githubrelay.Agent, error) {
 			return agentclient.New(agentclient.Config{BaseURL: *baseURL, Capability: token, CAFile: *caFile})
 		},
@@ -312,7 +313,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer, look
 		fmt.Fprintln(stdout, "relay poll complete")
 		return 0
 	}
-	fmt.Fprintf(stdout, "sentinel-github-relay %s polling GitHub every %s\n", buildinfo.Version, poll.String())
+	fmt.Fprintf(stdout, "sentinel-github-relay %s polling GitHub every %s (file fallback=%t)\n", buildinfo.Version, poll.String(), *fileFallback)
 	if err := runner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return report(stderr, err)
 	}
@@ -559,6 +560,18 @@ func envInt64(lookupEnv func(string) (string, bool), key string) int64 {
 	value := envValue(lookupEnv, key)
 	parsed, _ := strconv.ParseInt(value, 10, 64)
 	return parsed
+}
+
+func envBool(lookupEnv func(string) (string, bool), key string, fallback bool) bool {
+	value := strings.ToLower(envValue(lookupEnv, key))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func envDuration(lookupEnv func(string) (string, bool), key string, fallback time.Duration) time.Duration {
