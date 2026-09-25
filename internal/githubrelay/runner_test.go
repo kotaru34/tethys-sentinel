@@ -642,7 +642,6 @@ func TestRelayResponseDoesNotSerializeAuthoritySecrets(t *testing.T) {
 	}
 }
 
-
 func TestRunnerActorTransportUsesPinnedGitHubUserAndDerivedRequestIdentity(t *testing.T) {
 	now := time.Date(2026, 9, 25, 19, 0, 0, 0, time.UTC)
 	store := openRunnerTestStore(t)
