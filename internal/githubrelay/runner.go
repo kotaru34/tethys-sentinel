@@ -408,7 +408,7 @@ func (r *Runner) finishJob(ctx context.Context, session *Session, agent Agent, j
 func (r *Runner) responseFromJob(session Session, job internalapi.AgentExecutionJob) ResponseEnvelope {
 	response := ResponseEnvelope{
 		RequestCommentID: session.Inflight.CommentID,
-		SessionID: session.ID, Sequence: session.Inflight.Request.Sequence, RequestID: session.Inflight.Request.RequestID,
+		SessionID:        session.ID, Sequence: session.Inflight.Request.Sequence, RequestID: session.Inflight.Request.RequestID,
 		Status: "completed", JobID: job.ID, JobStatus: string(job.Status),
 	}
 	if job.Result != nil {
