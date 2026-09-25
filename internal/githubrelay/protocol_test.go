@@ -125,12 +125,11 @@ func TestSessionRejectsSequenceTargetAndExactArgvViolations(t *testing.T) {
 	}
 }
 
-
 func TestActorRequestRoundTripHasNoAuthorityMaterial(t *testing.T) {
 	req := ActorRequestEnvelope{
-		SessionID: "sgr_abcdefghijklmnop",
-		Argv: []string{"id"},
-		AgentReason: "inspect identity",
+		SessionID:      "sgr_abcdefghijklmnop",
+		Argv:           []string{"id"},
+		AgentReason:    "inspect identity",
 		TimeoutSeconds: 30,
 	}
 	body, err := BuildActorRequestComment(req)
