@@ -17,9 +17,12 @@ import (
 
 const (
 	ProtocolVersion = 1
-	RequestMarker   = "TETHYS_SENTINEL_RELAY_REQUEST_V1\n"
-	ResponseMarker  = "TETHYS_SENTINEL_RELAY_RESPONSE_V1\n"
-	AuthMarker      = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\n"
+	RequestMarker       = "TETHYS_SENTINEL_RELAY_REQUEST_V1\n"
+	ResponseMarker      = "TETHYS_SENTINEL_RELAY_RESPONSE_V1\n"
+	AuthMarker          = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\n"
+	ActorRequestMarker  = "TETHYS_SENTINEL_ACTOR_REQUEST_V1\n"
+	ActorResponseMarker = "TETHYS_SENTINEL_ACTOR_RESPONSE_V1\n"
+	ActorAuthMarker     = "TETHYS_SENTINEL_ACTOR_AUTHORIZED_V1\n"
 
 	relaySecretPrefix = "tsr_"
 	macPrefix         = "h1_"
@@ -44,8 +47,17 @@ type RequestEnvelope struct {
 	MAC            string   `json:"mac"`
 }
 
+type ActorRequestEnvelope struct {
+	Version        int      `json:"version"`
+	SessionID      string   `json:"session_id"`
+	Argv           []string `json:"argv"`
+	AgentReason    string   `json:"agent_reason,omitempty"`
+	TimeoutSeconds int64    `json:"timeout_seconds,omitempty"`
+}
+
 type ResponseEnvelope struct {
-	Version         int    `json:"version"`
+	Version          int    `json:"version"`
+	RequestCommentID int64  `json:"-"`
 	SessionID       string `json:"session_id"`
 	Sequence        uint64 `json:"sequence"`
 	RequestID       string `json:"request_id"`
@@ -64,6 +76,42 @@ type ResponseEnvelope struct {
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 	Error           string `json:"error,omitempty"`
 	MAC             string `json:"mac"`
+}
+
+type ActorResponseEnvelope struct {
+	Version          int    `json:"version"`
+	SessionID        string `json:"session_id"`
+	RequestCommentID int64  `json:"request_comment_id"`
+	Sequence         uint64 `json:"sequence"`
+	Status           string `json:"status"`
+	Decision         string `json:"decision,omitempty"`
+	ApprovalID       string `json:"approval_id,omitempty"`
+	JobID            string `json:"job_id,omitempty"`
+	JobStatus        string `json:"job_status,omitempty"`
+	Success          *bool  `json:"success,omitempty"`
+	ExitCode         *int   `json:"exit_code,omitempty"`
+	ErrorKind        string `json:"error_kind,omitempty"`
+	OutputSHA256     string `json:"output_sha256,omitempty"`
+	StdoutB64        string `json:"stdout_b64,omitempty"`
+	StderrB64        string `json:"stderr_b64,omitempty"`
+	StdoutTruncated  bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated  bool   `json:"stderr_truncated,omitempty"`
+	Error            string `json:"error,omitempty"`
+}
+
+type ActorAuthorizationEnvelope struct {
+	Version       int      `json:"version"`
+	SessionID     string   `json:"session_id"`
+	RepositoryID  int64    `json:"repository_id"`
+	IssueNumber   int      `json:"issue_number"`
+	ActorID       int64    `json:"actor_id"`
+	ActorType     string   `json:"actor_type"`
+	Target        string   `json:"target"`
+	ExpiresAt     string   `json:"expires_at"`
+	MaxCommands   int      `json:"max_commands"`
+	ExactArgv     []string `json:"exact_argv,omitempty"`
+	PublishOutput bool     `json:"publish_output"`
+	OutputLimit   int      `json:"output_limit_bytes,omitempty"`
 }
 
 type AuthorizationEnvelope struct {
@@ -182,6 +230,34 @@ func ParseRequestComment(body string) (RequestEnvelope, error) {
 	return req, nil
 }
 
+func BuildActorRequestComment(req ActorRequestEnvelope) (string, error) {
+	req.Version = ProtocolVersion
+	data, err := marshalCompact(req)
+	if err != nil {
+		return "", err
+	}
+	if len(ActorRequestMarker)+len(data) > maxCommentBytes {
+		return "", errors.New("actor relay request comment exceeds transport limit")
+	}
+	return ActorRequestMarker + string(data), nil
+}
+
+func ParseActorRequestComment(body string) (ActorRequestEnvelope, error) {
+	if len(body) > maxCommentBytes {
+		return ActorRequestEnvelope{}, errors.New("actor relay request comment exceeds transport limit")
+	}
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, strings.TrimSpace(ActorRequestMarker)) {
+		return ActorRequestEnvelope{}, ErrNotRelayRequest
+	}
+	jsonText := strings.TrimSpace(strings.TrimPrefix(body, strings.TrimSpace(ActorRequestMarker)))
+	var req ActorRequestEnvelope
+	if err := decodeStrictJSON([]byte(jsonText), &req); err != nil {
+		return ActorRequestEnvelope{}, fmt.Errorf("decode actor relay request: %w", err)
+	}
+	return req, nil
+}
+
 func BuildResponseComment(secret string, response ResponseEnvelope) (string, error) {
 	response.Version = ProtocolVersion
 	response.MAC = ""
@@ -232,6 +308,69 @@ func BuildAuthorizationComment(secret string, auth AuthorizationEnvelope) (strin
 		return "", errors.New("relay authorization comment exceeds transport limit")
 	}
 	return AuthMarker + string(data), nil
+}
+
+func BuildActorAuthorizationComment(auth ActorAuthorizationEnvelope) (string, error) {
+	auth.Version = ProtocolVersion
+	data, err := marshalCompact(auth)
+	if err != nil {
+		return "", err
+	}
+	if len(ActorAuthMarker)+len(data) > maxCommentBytes {
+		return "", errors.New("actor relay authorization comment exceeds transport limit")
+	}
+	return ActorAuthMarker + string(data), nil
+}
+
+func ParseActorAuthorizationComment(body string) (ActorAuthorizationEnvelope, error) {
+	if len(body) > maxCommentBytes {
+		return ActorAuthorizationEnvelope{}, errors.New("actor relay authorization comment exceeds transport limit")
+	}
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, strings.TrimSpace(ActorAuthMarker)) {
+		return ActorAuthorizationEnvelope{}, errors.New("not an actor relay authorization")
+	}
+	jsonText := strings.TrimSpace(strings.TrimPrefix(body, strings.TrimSpace(ActorAuthMarker)))
+	var auth ActorAuthorizationEnvelope
+	if err := decodeStrictJSON([]byte(jsonText), &auth); err != nil {
+		return ActorAuthorizationEnvelope{}, fmt.Errorf("decode actor relay authorization: %w", err)
+	}
+	return auth, nil
+}
+
+func BuildActorResponseComment(response ResponseEnvelope) (string, error) {
+	wire := ActorResponseEnvelope{
+		Version: ProtocolVersion, SessionID: response.SessionID, RequestCommentID: response.RequestCommentID,
+		Sequence: response.Sequence, Status: response.Status, Decision: response.Decision, ApprovalID: response.ApprovalID,
+		JobID: response.JobID, JobStatus: response.JobStatus, Success: response.Success, ExitCode: response.ExitCode,
+		ErrorKind: response.ErrorKind, OutputSHA256: response.OutputSHA256, StdoutB64: response.StdoutB64,
+		StderrB64: response.StderrB64, StdoutTruncated: response.StdoutTruncated,
+		StderrTruncated: response.StderrTruncated, Error: response.Error,
+	}
+	data, err := marshalCompact(wire)
+	if err != nil {
+		return "", err
+	}
+	if len(ActorResponseMarker)+len(data) > maxCommentBytes {
+		return "", errors.New("actor relay response comment exceeds transport limit")
+	}
+	return ActorResponseMarker + string(data), nil
+}
+
+func ParseActorResponseComment(body string) (ActorResponseEnvelope, error) {
+	if len(body) > maxCommentBytes {
+		return ActorResponseEnvelope{}, errors.New("actor relay response comment exceeds transport limit")
+	}
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, strings.TrimSpace(ActorResponseMarker)) {
+		return ActorResponseEnvelope{}, errors.New("not an actor relay response")
+	}
+	jsonText := strings.TrimSpace(strings.TrimPrefix(body, strings.TrimSpace(ActorResponseMarker)))
+	var response ActorResponseEnvelope
+	if err := decodeStrictJSON([]byte(jsonText), &response); err != nil {
+		return ActorResponseEnvelope{}, fmt.Errorf("decode actor relay response: %w", err)
+	}
+	return response, nil
 }
 
 func BodySHA256(body string) string {
