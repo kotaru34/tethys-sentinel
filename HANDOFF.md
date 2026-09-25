@@ -54,7 +54,7 @@ Final external Agent HTTP acceptance is complete. A restricted public capability
 
 dev.26 starts the broader Ansible rollout from the accepted dev.25 baseline. The target role now supports Rocky Linux 9 in addition to Debian and Ubuntu, uses the platform package backend for prerequisites, and selects the correct OpenSSH service name on Debian-family versus Red Hat-family systems.
 
-Production preflight also confirmed that target-host firewalls are an independent operator-owned boundary: the Ansible target role does not silently widen UFW/firewalld/nftables policy. TCP/22 from the Ansible controller and Sentinel Worker must be permitted explicitly by the site's firewall source of truth before onboarding. The next step is to build the private production inventory, validate privilege escalation per host, then stage target -> Control registry -> Worker egress reconciliation before broader live execution acceptance.
+Production preflight also confirmed that target-host firewalls are an independent operator-owned boundary: the Ansible target role does not silently widen UFW/firewalld/nftables policy. TCP/22 from the Ansible controller and Sentinel Worker must be permitted explicitly by the site's firewall source of truth before onboarding. The private production inventory is now assembled and all intended targets pass SSH/Python connectivity preflight. Some operator accounts require distinct sudo passwords; those credentials stay outside Git and will be supplied through a private encrypted Ansible Vault file rather than plaintext inventory. CI #867 is green for the dev.26 candidate. The next step is to stage target onboarding, then reconcile the Control registry and Worker egress before broader live execution acceptance.
 
 ## dev.25 acceptance status
 
