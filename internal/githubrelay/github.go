@@ -46,9 +46,11 @@ type GitHubClient struct {
 	baseURL        string
 	http           *http.Client
 
-	mu          sync.Mutex
-	token       string
-	tokenExpiry time.Time
+	mu                  sync.Mutex
+	token               string
+	tokenExpiry         time.Time
+	contentsToken       string
+	contentsTokenExpiry time.Time
 }
 
 type GitHubRepository struct {
