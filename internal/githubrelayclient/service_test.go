@@ -3,6 +3,7 @@ package githubrelayclient
 import (
 	"context"
 	"encoding/base64"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,11 +35,18 @@ func (f *fakeGitHub) CreateComment(_ context.Context, _ string, _ int, body stri
 func newTestService(t *testing.T, exact []string, actorID, relayActorID int64) (*Service, *fakeGitHub, githubrelay.Session) {
 	t.Helper()
 	sessionDir := t.TempDir()
+	if err := os.Chmod(sessionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	sessions, err := githubrelay.OpenStore(sessionDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ops, err := OpenOperationStore(t.TempDir())
+	operationDir := t.TempDir()
+	if err := os.Chmod(operationDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ops, err := OpenOperationStore(operationDir)
 	if err != nil {
 		t.Fatal(err)
 	}
