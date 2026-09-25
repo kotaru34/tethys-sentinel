@@ -141,8 +141,15 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 		if comment.User.ID != session.ActorID {
 			continue
 		}
+		if session.TransportMode == TransportModeActor && comment.User.Type != session.ActorType {
+			continue
+		}
 		trimmed := strings.TrimSpace(comment.Body)
-		if !strings.HasPrefix(trimmed, strings.TrimSpace(RequestMarker)) {
+		if session.TransportMode == TransportModeActor {
+			if !strings.HasPrefix(trimmed, strings.TrimSpace(ActorRequestMarker)) {
+				continue
+			}
+		} else if !strings.HasPrefix(trimmed, strings.TrimSpace(RequestMarker)) {
 			continue
 		}
 		if !comment.CreatedAt.Equal(comment.UpdatedAt) {
@@ -150,15 +157,31 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 			_ = r.Store.Save(*session)
 			return errors.New("relay request comment was edited before processing")
 		}
-		req, err := ParseRequestComment(comment.Body)
-		if err != nil {
+
+		var req RequestEnvelope
+		var parseErr error
+		if session.TransportMode == TransportModeActor {
+			var actorReq ActorRequestEnvelope
+			actorReq, parseErr = ParseActorRequestComment(comment.Body)
+			if parseErr == nil {
+				req = RequestEnvelope{
+					Version: ProtocolVersion, SessionID: actorReq.SessionID, Sequence: session.NextSequence,
+					RequestID: fmt.Sprintf("ghc-%d", comment.ID), Target: session.Target,
+					Argv: append([]string(nil), actorReq.Argv...), AgentReason: actorReq.AgentReason,
+					TimeoutSeconds: actorReq.TimeoutSeconds,
+				}
+			}
+		} else {
+			req, parseErr = ParseRequestComment(comment.Body)
+		}
+		if parseErr != nil {
 			session.SeenComments[commentKey] = bodyHash
 			session.FailedAuth++
 			if session.FailedAuth >= MaximumFailedAuth {
 				session.Close("too many malformed relay requests")
 			}
 			_ = r.Store.Save(*session)
-			return fmt.Errorf("malformed relay request comment %d: %w", comment.ID, err)
+			return fmt.Errorf("malformed relay request comment %d: %w", comment.ID, parseErr)
 		}
 		if req.SessionID != session.ID {
 			// A dedicated issue may be reused across relay sessions. Requests for
@@ -167,17 +190,24 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 			session.SeenComments[commentKey] = bodyHash
 			continue
 		}
-		if err := session.ValidateRequest(req, now); err != nil {
+
+		var validationErr error
+		if session.TransportMode == TransportModeActor {
+			validationErr = session.ValidateActorRequest(req, now)
+		} else {
+			validationErr = session.ValidateRequest(req, now)
+		}
+		if validationErr != nil {
 			session.SeenComments[commentKey] = bodyHash
-			if errors.Is(err, ErrInvalidMAC) {
+			if session.TransportMode == TransportModeActor || errors.Is(validationErr, ErrInvalidMAC) {
 				session.FailedAuth++
 			}
 			response := ResponseEnvelope{
-				SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
-				Status: "relay_denied", Error: err.Error(),
+				RequestCommentID: comment.ID, SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+				Status: "relay_denied", Error: validationErr.Error(),
 			}
 			if postErr := r.postResponse(ctx, session, response); postErr != nil {
-				return errors.Join(err, postErr)
+				return errors.Join(validationErr, postErr)
 			}
 			if session.FailedAuth >= MaximumFailedAuth {
 				session.Close("too many relay authentication failures")
