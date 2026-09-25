@@ -40,7 +40,7 @@ func (f *fakeGitHub) Issue(context.Context, string, int) (GitHubIssue, error) {
 	if f.issue.ID != 0 {
 		return f.issue, nil
 	}
-	return GitHubIssue{ID: 3, Number: 2, State: "open", User: GitHubUser{ID: 42}}, nil
+	return GitHubIssue{ID: 3, Number: 2, State: "open", User: GitHubUser{ID: 42, Type: "User"}}, nil
 }
 
 func (f *fakeGitHub) Comments(_ context.Context, _ string, _ int, etag string) ([]GitHubComment, string, bool, error) {
