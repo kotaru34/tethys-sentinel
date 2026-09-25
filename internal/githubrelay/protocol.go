@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	ProtocolVersion = 1
+	ProtocolVersion     = 1
 	RequestMarker       = "TETHYS_SENTINEL_RELAY_REQUEST_V1\n"
 	ResponseMarker      = "TETHYS_SENTINEL_RELAY_RESPONSE_V1\n"
 	AuthMarker          = "TETHYS_SENTINEL_RELAY_AUTHORIZED_V1\n"
@@ -58,24 +58,24 @@ type ActorRequestEnvelope struct {
 type ResponseEnvelope struct {
 	Version          int    `json:"version"`
 	RequestCommentID int64  `json:"-"`
-	SessionID       string `json:"session_id"`
-	Sequence        uint64 `json:"sequence"`
-	RequestID       string `json:"request_id"`
-	Status          string `json:"status"`
-	Decision        string `json:"decision,omitempty"`
-	ApprovalID      string `json:"approval_id,omitempty"`
-	JobID           string `json:"job_id,omitempty"`
-	JobStatus       string `json:"job_status,omitempty"`
-	Success         *bool  `json:"success,omitempty"`
-	ExitCode        *int   `json:"exit_code,omitempty"`
-	ErrorKind       string `json:"error_kind,omitempty"`
-	OutputSHA256    string `json:"output_sha256,omitempty"`
-	StdoutB64       string `json:"stdout_b64,omitempty"`
-	StderrB64       string `json:"stderr_b64,omitempty"`
-	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
-	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
-	Error           string `json:"error,omitempty"`
-	MAC             string `json:"mac"`
+	SessionID        string `json:"session_id"`
+	Sequence         uint64 `json:"sequence"`
+	RequestID        string `json:"request_id"`
+	Status           string `json:"status"`
+	Decision         string `json:"decision,omitempty"`
+	ApprovalID       string `json:"approval_id,omitempty"`
+	JobID            string `json:"job_id,omitempty"`
+	JobStatus        string `json:"job_status,omitempty"`
+	Success          *bool  `json:"success,omitempty"`
+	ExitCode         *int   `json:"exit_code,omitempty"`
+	ErrorKind        string `json:"error_kind,omitempty"`
+	OutputSHA256     string `json:"output_sha256,omitempty"`
+	StdoutB64        string `json:"stdout_b64,omitempty"`
+	StderrB64        string `json:"stderr_b64,omitempty"`
+	StdoutTruncated  bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated  bool   `json:"stderr_truncated,omitempty"`
+	Error            string `json:"error,omitempty"`
+	MAC              string `json:"mac"`
 }
 
 type ActorResponseEnvelope struct {
