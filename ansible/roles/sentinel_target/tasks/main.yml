@@ -1,10 +1,11 @@
 ---
-- name: Require a Debian-family target
+- name: Require a supported Linux target
   ansible.builtin.assert:
     that:
-      - ansible_facts.os_family == "Debian"
-      - ansible_facts.distribution in ["Debian", "Ubuntu"]
-    fail_msg: "sentinel_target currently supports Debian and Ubuntu only."
+      - ansible_facts.distribution in ["Debian", "Ubuntu", "Rocky"]
+      - ansible_facts.os_family in ["Debian", "RedHat"]
+      - ansible_facts.distribution != "Rocky" or ansible_facts.distribution_major_version == "9"
+    fail_msg: "sentinel_target currently supports Debian, Ubuntu, and Rocky Linux 9 only."
 
 - name: Check controller-side target inputs
   ansible.builtin.stat:
@@ -59,14 +60,20 @@
       - "{{ sentinel_target_address }}"
   changed_when: false
 
-- name: Install target prerequisites
+- name: Refresh Debian-family package cache
   ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - sentinel_target_manage_packages | bool
+    - ansible_facts.os_family == "Debian"
+
+- name: Install target prerequisites
+  ansible.builtin.package:
     name:
       - openssh-server
       - sudo
     state: present
-    update_cache: true
-    cache_valid_time: 3600
   when: sentinel_target_manage_packages | bool
 
 - name: Create Sentinel target group

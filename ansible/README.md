@@ -1,6 +1,6 @@
 # Sentinel target onboarding with Ansible
 
-This automation onboards Debian/Ubuntu VMs and unprivileged Proxmox LXC containers as Tethys Sentinel SSH execution targets. It deliberately keeps target configuration, Control inventory authority, and Proxmox Worker egress authority in separate roles while exposing one normal entry point.
+This automation onboards Debian/Ubuntu/Rocky Linux 9 VMs and unprivileged Proxmox LXC containers as Tethys Sentinel SSH execution targets. It deliberately keeps target configuration, Control inventory authority, and Proxmox Worker egress authority in separate roles while exposing one normal entry point.
 
 ## Layout
 
@@ -40,7 +40,7 @@ secrets/ssh-user-ca.pub
 
 Both directories are gitignored. Never put the SSH CA private key here.
 
-The dev.23 CI artifact includes all three binaries above plus `sentinel-control` and `BUILDINFO.txt`. The target and egress roles run `sha256sum -c SHA256SUMS` on the controller before installing any artifact binary.
+The current linux-amd64 CI artifact includes all three binaries above plus `sentinel-control`, the GitHub relay sidecar, and `BUILDINFO.txt`. The target and egress roles run `sha256sum -c SHA256SUMS` on the controller before installing any artifact binary.
 
 ## Inventory
 
@@ -113,3 +113,9 @@ After the first successful onboarding run:
 6. revoke the test grant.
 
 Use the disposable target first when changing this automation. Do not treat a new onboarding implementation as accepted solely because `ansible-playbook --syntax-check` passes.
+
+## Host firewall preflight
+
+The target role intentionally does not silently rewrite host firewall policy. Before onboarding, the operator must ensure TCP/22 is reachable from the Ansible controller and from the Sentinel Worker source address. Keep these allows as exact source addresses where practical; do not widen an entire management subnet merely for Sentinel.
+
+For hosts using UFW, firewalld, nftables, cloud security groups, or another site-specific firewall manager, keep those rules in the operator-owned firewall source of truth. The Worker-side Proxmox egress role remains separate and only constrains outbound Worker reachability.

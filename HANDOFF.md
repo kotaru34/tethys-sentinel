@@ -2,14 +2,14 @@
 
 Updated: 2026-09-24  
 Current accepted development version: `0.1.0-dev.25`  
-Current candidate version: none; next feature work will bump to `0.1.0-dev.26`  
-Accepted branch: `main` after the dev.25 merge
+Current candidate version: `0.1.0-dev.26`  
+Branch: `wip/dev26-ansible-rollout`
 
 ## Status
 
 `0.1.0-dev.25` is the accepted development baseline.
 
-The current development milestone returns to reproducible Ansible onboarding for Debian/Ubuntu VM and unprivileged-LXC execution targets. The separate repository-history/public-release cleanup gate remains outstanding and is not coupled to this runtime-tooling milestone.
+The current development milestone is the broader Ansible target rollout across the operator's intended VM/LXC estate. The separate repository-history/public-release cleanup gate remains outstanding and is not coupled to this runtime-tooling milestone.
 
 The public repository must not contain site-specific deployment data. Real addresses, hostnames, VM identifiers, local usernames or home paths, certificate/SSH fingerprints, acceptance-only topology, capability material, tokens, or other operator-specific evidence belong in private operator records.
 
@@ -49,6 +49,12 @@ Live dev.22 Worker egress acceptance is now complete. The generated policy was i
 Final external Agent HTTP acceptance is complete. A restricted public capability submitted a harmless structured `id` command through the public edge, Gateway, Control, Worker, short-lived SSH certificate path and target wrapper; the job succeeded with the expected unprivileged target identity. `GET /v1/requests/{request_id}` resolved to the same completed job, proving request-ID recovery. The acceptance grant was then revoked through the protected Control admin surface, and the same bearer immediately received HTTP 401 with `valid capability required` on bootstrap. No acceptance capability remains active.
 
 `0.1.0-dev.22` is accepted on the intended infrastructure and may be merged. This acceptance is independent of the separate public-release historical-ref/cache purge still awaiting GitHub Support.
+
+## dev.26 candidate status
+
+dev.26 starts the broader Ansible rollout from the accepted dev.25 baseline. The target role now supports Rocky Linux 9 in addition to Debian and Ubuntu, uses the platform package backend for prerequisites, and selects the correct OpenSSH service name on Debian-family versus Red Hat-family systems.
+
+Production preflight also confirmed that target-host firewalls are an independent operator-owned boundary: the Ansible target role does not silently widen UFW/firewalld/nftables policy. TCP/22 from the Ansible controller and Sentinel Worker must be permitted explicitly by the site's firewall source of truth before onboarding. The next step is to build the private production inventory, validate privilege escalation per host, then stage target -> Control registry -> Worker egress reconciliation before broader live execution acceptance.
 
 ## dev.25 acceptance status
 
