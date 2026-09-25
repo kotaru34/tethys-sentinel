@@ -103,6 +103,11 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 		session.Close("relay session command limit reached")
 		return r.Store.Save(*session)
 	}
+	if session.TransportMode == TransportModeActor && session.RelayActorID <= 0 {
+		// Actor transport is not armed until authorize has persisted the
+		// GitHub App identity that published the authorization marker.
+		return nil
+	}
 
 	if session.Inflight != nil {
 		return r.resumeInflight(ctx, session)
@@ -255,6 +260,14 @@ func (r *Runner) verifyTransportBinding(ctx context.Context, session *Session) e
 	}
 	if issue.ID != session.IssueID || issue.Number != session.IssueNumber || issue.State != "open" || issue.PullRequest != nil {
 		session.Close("GitHub issue binding changed, closed, or is no longer an issue")
+		if saveErr := r.Store.Save(*session); saveErr != nil {
+			return errors.Join(errors.New(session.CloseReason), saveErr)
+		}
+		return errors.New(session.CloseReason)
+	}
+	if session.TransportMode == TransportModeActor &&
+		(issue.User.ID != session.ActorID || issue.User.Type != session.ActorType) {
+		session.Close("GitHub issue author no longer matches actor transport binding")
 		if saveErr := r.Store.Save(*session); saveErr != nil {
 			return errors.Join(errors.New(session.CloseReason), saveErr)
 		}
