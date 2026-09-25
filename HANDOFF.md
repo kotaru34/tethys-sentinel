@@ -2,14 +2,14 @@
 
 Updated: 2026-09-24  
 Current accepted development version: `0.1.0-dev.25`  
-Current candidate version: none; next feature work will bump to `0.1.0-dev.26`  
-Accepted branch: `main` after the dev.25 merge
+Current candidate version: `0.1.0-dev.26`  
+Branch: `wip/dev26-ansible-rollout`
 
 ## Status
 
 `0.1.0-dev.25` is the accepted development baseline.
 
-The current development milestone returns to reproducible Ansible onboarding for Debian/Ubuntu VM and unprivileged-LXC execution targets. The separate repository-history/public-release cleanup gate remains outstanding and is not coupled to this runtime-tooling milestone.
+The current development milestone is the broader Ansible target rollout across the operator's intended VM/LXC estate. The separate repository-history/public-release cleanup gate remains outstanding and is not coupled to this runtime-tooling milestone.
 
 The public repository must not contain site-specific deployment data. Real addresses, hostnames, VM identifiers, local usernames or home paths, certificate/SSH fingerprints, acceptance-only topology, capability material, tokens, or other operator-specific evidence belong in private operator records.
 
@@ -49,6 +49,18 @@ Live dev.22 Worker egress acceptance is now complete. The generated policy was i
 Final external Agent HTTP acceptance is complete. A restricted public capability submitted a harmless structured `id` command through the public edge, Gateway, Control, Worker, short-lived SSH certificate path and target wrapper; the job succeeded with the expected unprivileged target identity. `GET /v1/requests/{request_id}` resolved to the same completed job, proving request-ID recovery. The acceptance grant was then revoked through the protected Control admin surface, and the same bearer immediately received HTTP 401 with `valid capability required` on bootstrap. No acceptance capability remains active.
 
 `0.1.0-dev.22` is accepted on the intended infrastructure and may be merged. This acceptance is independent of the separate public-release historical-ref/cache purge still awaiting GitHub Support.
+
+## dev.27 candidate status
+
+dev.27 is the blocker-fix candidate for the wider Ansible rollout. A live Debian-family target using systemd `ssh.socket` activation exposed a service-control incompatibility in dev.26: the role validated the new sshd configuration successfully, then asked systemd to reload sshd. The reload delivered SIGHUP to sshd, which attempted to bind the already systemd-owned listener and exited with `Cannot bind any address`. systemd recovered the service, so execution authority was not silently widened, but the Ansible run correctly failed and dev.26 is blocked from acceptance.
+
+dev.27 changes the validated sshd handler from reload to a systemd-managed restart. This keeps configuration validation before service activation while respecting socket-activated OpenSSH lifecycle semantics. CI #873 is green on the dev.27 blocker-fix commit, and live re-acceptance on the previously failing socket-activated target completes successfully with no failures or unreachable hosts. The wider target rollout has now completed across the full intended inventory with no failures or unreachable hosts; hosts that had previously received dev.26 changed only to install the dev.27 target binaries, while already-updated hosts remained unchanged. A subsequent full-inventory target rerun completed with zero changes, zero failures, and zero unreachable hosts across the entire intended target set, closing target-side dev.27 idempotency. Control-registry reconciliation has now also completed successfully: the Control host applied the desired managed target state, returned active after reconciliation, and all delegated target host-key reads completed without failures or unreachable hosts. The fix and rollout record contain no site-specific deployment data. Worker-egress reconciliation has now completed successfully against the reconciled Control target registry. The PVE operator host applied and verified the regenerated Worker egress policy with no failures or unreachable hosts. Packet-level acceptance from the Worker also passed: every registered target SSH path and the Control path were reachable, representative unlisted/Internet/DNS paths remained blocked, trusted time synchronization remained healthy, and no global/default IPv6 path was present. The generated policy retained deny-by-default outbound behavior and only the intended Control, registered-target SSH, and trusted-time destinations. A subsequent full Worker-egress rerun completed with zero changes, zero failures, and zero unreachable hosts, closing egress idempotency. At this point the target, Control-registry, and Worker-egress layers are all reconciled and idempotent. Broader live execution acceptance has also passed across representative newly onboarded Linux targets covering Debian-family, Red Hat-family, and remote-routed cases: each exact `id` execution completed successfully through the normal Sentinel authority path and ran as the locked `sentinel-ai` account. dev.27 is therefore live-accepted and ready for merge once CI is green on the final handoff-only commit.
+
+## dev.26 candidate status
+
+dev.26 starts the broader Ansible rollout from the accepted dev.25 baseline. The target role now supports Rocky Linux 9 in addition to Debian and Ubuntu, uses the platform package backend for prerequisites, and selects the correct OpenSSH service name on Debian-family versus Red Hat-family systems.
+
+Production preflight also confirmed that target-host firewalls are an independent operator-owned boundary: the Ansible target role does not silently widen UFW/firewalld/nftables policy. TCP/22 from the Ansible controller and Sentinel Worker must be permitted explicitly by the site's firewall source of truth before onboarding. The private production inventory is assembled, all intended targets pass SSH/Python connectivity preflight, and per-host privilege escalation succeeds using a private encrypted Ansible Vault for distinct sudo passwords. CI #869 is green on the current dev.26 head. The first staged target deployment passed live on representative Ubuntu, Rocky Linux 9, and Debian targets and then passed a zero-change idempotency rerun. During the wider rollout, one Ubuntu target exposed a local interpreter mismatch: Ansible auto-selected Python 3.13 while the distro-managed apt/cffi modules were for Python 3.12. Pinning that host to `/usr/bin/python3.12` in private host_vars restored the target role, which then completed successfully with no failures or unreachable hosts. A later live Debian socket-activation failure blocks dev.26 from acceptance; the fix is carried by dev.27. Do not merge or accept dev.26.
 
 ## dev.25 acceptance status
 
