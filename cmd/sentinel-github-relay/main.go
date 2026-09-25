@@ -441,6 +441,8 @@ func runInspect(args []string, stdout, stderr io.Writer, lookupEnv func(string) 
 		RepositoryID     int64    `json:"repository_id"`
 		IssueNumber      int      `json:"issue_number"`
 		ActorID          int64    `json:"actor_id"`
+		ActorType        string   `json:"actor_type,omitempty"`
+		TransportMode    string   `json:"transport_mode"`
 		RelayActorID     int64    `json:"relay_actor_id,omitempty"`
 		RelayActorLogin  string   `json:"relay_actor_login,omitempty"`
 		Target           string   `json:"target"`
@@ -455,7 +457,8 @@ func runInspect(args []string, stdout, stderr io.Writer, lookupEnv func(string) 
 		CloseReason      string   `json:"close_reason,omitempty"`
 	}{
 		ID: session.ID, GrantID: session.GrantID, Repository: session.Repository, RepositoryID: session.RepositoryID,
-		IssueNumber: session.IssueNumber, ActorID: session.ActorID, RelayActorID: session.RelayActorID, RelayActorLogin: session.RelayActorLogin, Target: session.Target,
+		IssueNumber: session.IssueNumber, ActorID: session.ActorID, ActorType: session.ActorType, TransportMode: string(session.TransportMode),
+		RelayActorID: session.RelayActorID, RelayActorLogin: session.RelayActorLogin, Target: session.Target,
 		CreatedAt: session.CreatedAt.Format(time.RFC3339), ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
 		MaxCommands: session.MaxCommands, CommandsComplete: session.CommandsComplete, NextSequence: session.NextSequence,
 		ExactArgv: session.ExactArgv, PublishOutput: session.PublishOutput, Closed: session.Closed, CloseReason: session.CloseReason,
