@@ -26,6 +26,7 @@ type fakeGitHub struct {
 	notModified bool
 	commentsErr error
 	seenETags   []string
+	postUser    GitHubUser
 }
 
 func (f *fakeGitHub) Repository(context.Context, string) (GitHubRepository, error) {
@@ -56,7 +57,7 @@ func (f *fakeGitHub) Comments(_ context.Context, _ string, _ int, etag string) (
 
 func (f *fakeGitHub) CreateComment(_ context.Context, _ string, _ int, body string) (GitHubComment, error) {
 	f.posted = append(f.posted, body)
-	return GitHubComment{ID: int64(100 + len(f.posted)), Body: body}, nil
+	return GitHubComment{ID: int64(100 + len(f.posted)), Body: body, User: f.postUser}, nil
 }
 
 type fakeAgent struct {
@@ -639,4 +640,141 @@ func TestRelayResponseDoesNotSerializeAuthoritySecrets(t *testing.T) {
 	if strings.Contains(body, secret) || strings.Contains(body, capability) {
 		t.Fatal("relay response serialized authority secret material")
 	}
+}
+
+
+func TestRunnerActorTransportUsesPinnedGitHubUserAndDerivedRequestIdentity(t *testing.T) {
+	now := time.Date(2026, 9, 25, 19, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-actor",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3,
+		ActorID: 42, ActorType: "User", TransportMode: TransportModeActor,
+		RelayActorID: 9001, RelayActorLogin: "relay[bot]", Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(20 * time.Minute), MaxCommands: 2, NextSequence: 1,
+		PublishOutput: true, OutputLimitBytes: 1024,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	body, err := BuildActorRequestComment(ActorRequestEnvelope{
+		SessionID: s.ID, Argv: []string{"id"}, AgentReason: "inspect identity", TimeoutSeconds: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeGitHub{
+		comments: []GitHubComment{{
+			ID: 77, Body: body, User: GitHubUser{ID: s.ActorID, Type: "User"},
+			CreatedAt: now, UpdatedAt: now,
+		}},
+		postUser: GitHubUser{ID: s.RelayActorID, Login: s.RelayActorLogin, Type: "Bot"},
+	}
+	requestID := "ghc-77"
+	job := internalapi.AgentExecutionJob{
+		ID: "job-actor", RequestID: requestID, Target: s.Target, Argv: []string{"id"}, Status: executionjob.Succeeded,
+		Result: &executionjob.Result{Success: true, ExitCode: 0},
+		Output: &executionoutput.Output{Stdout: []byte("uid=1001(sentinel-ai)\n")},
+	}
+	agent := &fakeAgent{
+		bootstrap: domain.Bootstrap{
+			SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true},
+			ExpiresAt: s.ExpiresAt,
+		},
+		submit: internalapi.SubmitCommandResponse{
+			Decision: "accepted", Accepted: true,
+			Job: &internalapi.ExecutionJobReceipt{ID: job.ID, RequestID: requestID, Status: executionjob.Staged},
+		},
+		job: job,
+	}
+	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if agent.submits != 1 || len(gh.posted) != 1 {
+		t.Fatalf("submits=%d posted=%d", agent.submits, len(gh.posted))
+	}
+	response, err := ParseActorResponseComment(gh.posted[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.RequestCommentID != 77 || response.Status != "completed" || response.Success == nil || !*response.Success {
+		t.Fatalf("unexpected actor response: %+v", response)
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CommandsComplete != 1 || loaded.NextSequence != 2 || loaded.Inflight != nil {
+		t.Fatalf("unexpected actor session state: %+v", loaded)
+	}
+}
+
+func TestRunnerActorTransportRejectsWrongGitHubTypeAndWidenedGrant(t *testing.T) {
+	now := time.Date(2026, 9, 25, 19, 0, 0, 0, time.UTC)
+	makeSession := func(t *testing.T) (*Store, Session, string) {
+		t.Helper()
+		store := openRunnerTestStore(t)
+		s := Session{
+			Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-actor",
+			Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3,
+			ActorID: 42, ActorType: "User", TransportMode: TransportModeActor,
+			RelayActorID: 9001, Target: "target-test",
+			CreatedAt: now, ExpiresAt: now.Add(20 * time.Minute), MaxCommands: 2, NextSequence: 1,
+		}
+		if err := store.Save(s); err != nil {
+			t.Fatal(err)
+		}
+		body, err := BuildActorRequestComment(ActorRequestEnvelope{SessionID: s.ID, Argv: []string{"id"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store, s, body
+	}
+
+	t.Run("wrong GitHub actor type is ignored", func(t *testing.T) {
+		store, s, body := makeSession(t)
+		gh := &fakeGitHub{comments: []GitHubComment{{
+			ID: 78, Body: body, User: GitHubUser{ID: s.ActorID, Type: "Bot"}, CreatedAt: now, UpdatedAt: now,
+		}}}
+		called := false
+		runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) {
+			called = true
+			return nil, errors.New("must not be called")
+		}}
+		if err := runner.RunOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if called {
+			t.Fatal("wrong GitHub actor type reached Sentinel")
+		}
+	})
+
+	t.Run("widened grant closes before submit", func(t *testing.T) {
+		store, s, body := makeSession(t)
+		gh := &fakeGitHub{
+			comments: []GitHubComment{{
+				ID: 79, Body: body, User: GitHubUser{ID: s.ActorID, Type: "User"}, CreatedAt: now, UpdatedAt: now,
+			}},
+			postUser: GitHubUser{ID: s.RelayActorID, Type: "Bot"},
+		}
+		agent := &fakeAgent{bootstrap: domain.Bootstrap{
+			SessionID: s.GrantID, Targets: []string{s.Target},
+			Permissions: domain.Permissions{Exec: true, Shell: true}, ExpiresAt: s.ExpiresAt,
+		}}
+		runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
+		if err := runner.RunOnce(context.Background()); err == nil {
+			t.Fatal("expected widened grant to fail closed")
+		}
+		if agent.submits != 0 {
+			t.Fatal("widened actor grant reached submit")
+		}
+		loaded, err := store.Load(s.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !loaded.Closed {
+			t.Fatal("widened actor grant did not close the session")
+		}
+	})
 }
