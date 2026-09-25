@@ -73,6 +73,7 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	expectedRepositoryID := fs.Int64("repository-id", envInt64(lookupEnv, "SENTINEL_GITHUB_REPOSITORY_ID"), "optional expected numeric GitHub repository ID")
 	issueNumber := fs.Int("issue", 0, "existing GitHub issue number to bind")
 	actorIDOverride := fs.Int64("actor-id", 0, "optional numeric GitHub request actor ID; defaults to issue author")
+	transportMode := fs.String("transport-mode", string(githubrelay.TransportModeHMAC), "relay request transport: hmac or actor")
 	target := fs.String("target", "", "single logical Sentinel target")
 	ttl := fs.Duration("ttl", 15*time.Minute, "relay session lifetime, bounded by the Sentinel grant")
 	maxCommands := fs.Int("max-commands", githubrelay.DefaultMaxCommands, "maximum authenticated requests in this relay session")
@@ -85,6 +86,20 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	appKeyFile := fs.String("github-app-key-file", envValue(lookupEnv, "SENTINEL_GITHUB_APP_PRIVATE_KEY_FILE"), "protected GitHub App RSA private key")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	maxCommandsExplicit := false
+	fs.Visit(func(value *flag.Flag) {
+		if value.Name == "max-commands" {
+			maxCommandsExplicit = true
+		}
+	})
+	mode := githubrelay.TransportMode(strings.ToLower(strings.TrimSpace(*transportMode)))
+	if mode != githubrelay.TransportModeHMAC && mode != githubrelay.TransportModeActor {
+		fmt.Fprintln(stderr, "sentinel-github-relay: --transport-mode must be hmac or actor")
+		return 2
+	}
+	if mode == githubrelay.TransportModeActor && !maxCommandsExplicit {
+		*maxCommands = githubrelay.ActorMaxCommands
 	}
 	if len(fs.Args()) != 0 {
 		fmt.Fprintln(stderr, "sentinel-github-relay: authorize takes no positional arguments")
