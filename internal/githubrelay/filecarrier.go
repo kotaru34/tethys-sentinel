@@ -17,7 +17,29 @@ import (
 
 const FileRequestRoot = ".tethys-sentinel/relay-requests"
 
-var fileRequestNamePattern = regexp.MustCompile(`^[0-9]{20}\.req$`)
+var (
+	fileRequestNamePattern = regexp.MustCompile(`^[0-9]{20}\.reqpackage githubrelay
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"path"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const FileRequestRoot = ".tethys-sentinel/relay-requests"
+
+)
+	ErrInvalidFileCarrier  = errors.New("invalid GitHub fallback request file")
+)
 
 type GitHubRequestFile struct {
 	Name      string
@@ -107,20 +129,20 @@ func (c *GitHubClient) RequestFile(ctx context.Context, repository, filePath str
 		return GitHubRequestFile{}, err
 	}
 	if status != http.StatusOK || entry.Type != "file" || entry.Path != filePath {
-		return GitHubRequestFile{}, errors.New("GitHub fallback request path is not a regular file")
+		return GitHubRequestFile{}, fmt.Errorf("%w: path is not a regular file", ErrInvalidFileCarrier)
 	}
 	if entry.Size < 1 || entry.Size > maxCommentBytes {
-		return GitHubRequestFile{}, errors.New("GitHub fallback request file exceeds relay transport limit")
+		return GitHubRequestFile{}, fmt.Errorf("%w: file exceeds relay transport limit", ErrInvalidFileCarrier)
 	}
 	if entry.Encoding != "base64" {
-		return GitHubRequestFile{}, fmt.Errorf("unsupported GitHub fallback request encoding %q", entry.Encoding)
+		return GitHubRequestFile{}, fmt.Errorf("%w: unsupported encoding %q", ErrInvalidFileCarrier, entry.Encoding)
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(entry.Content, "\n", ""))
 	if err != nil {
-		return GitHubRequestFile{}, fmt.Errorf("decode GitHub fallback request: %w", err)
+		return GitHubRequestFile{}, fmt.Errorf("%w: decode content: %v", ErrInvalidFileCarrier, err)
 	}
 	if len(raw) < 1 || len(raw) > maxCommentBytes {
-		return GitHubRequestFile{}, errors.New("decoded GitHub fallback request exceeds relay transport limit")
+		return GitHubRequestFile{}, fmt.Errorf("%w: decoded content exceeds relay transport limit", ErrInvalidFileCarrier)
 	}
 
 	commitPath := fmt.Sprintf(
@@ -133,10 +155,10 @@ func (c *GitHubClient) RequestFile(ctx context.Context, repository, filePath str
 		return GitHubRequestFile{}, err
 	}
 	if status != http.StatusOK || len(commits) != 1 {
-		return GitHubRequestFile{}, errors.New("GitHub fallback request file is not immutable single-commit content")
+		return GitHubRequestFile{}, fmt.Errorf("%w: file is not immutable single-commit content", ErrInvalidFileCarrier)
 	}
 	if commits[0].SHA == "" || commits[0].Author.ID <= 0 {
-		return GitHubRequestFile{}, errors.New("GitHub fallback request file has no stable commit actor")
+		return GitHubRequestFile{}, fmt.Errorf("%w: file has no stable commit actor", ErrInvalidFileCarrier)
 	}
 
 	return GitHubRequestFile{
