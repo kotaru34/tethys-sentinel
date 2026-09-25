@@ -267,7 +267,11 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		fmt.Fprintf(stdout, "exact argv: %s\n", data)
 	}
 	fmt.Fprintf(stdout, "publish output: %t\n", session.PublishOutput)
-	fmt.Fprintf(stdout, "\nrelay session secret (deliver to the authorized chat OUT OF BAND; never post it to GitHub):\n%s\n", secret)
+	if *hideSecret {
+		fmt.Fprintln(stdout, "\nrelay session secret retained in protected local state")
+	} else {
+		fmt.Fprintf(stdout, "\nrelay session secret (deliver to the authorized chat OUT OF BAND; never post it to GitHub):\n%s\n", secret)
+	}
 	return 0
 }
 
