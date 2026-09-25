@@ -25,6 +25,7 @@
 .DS_Store
 
 # Local Ansible deployment material
+/ansible/.venv/
 /ansible/artifacts/
 /ansible/secrets/
 /ansible/inventory/*
