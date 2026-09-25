@@ -903,8 +903,8 @@ func TestRunnerInvalidFallbackArtifactFailsClosed(t *testing.T) {
 	}
 	filePath, _ := FileRequestPath(s.ID, 1)
 	gh := &fakeGitHub{
-		notModified:  true,
-		requestFiles: []GitHubRequestFile{{Name: "00000000000000000001.req", Path: filePath, SHA: "blob-invalid"}},
+		notModified:    true,
+		requestFiles:   []GitHubRequestFile{{Name: "00000000000000000001.req", Path: filePath, SHA: "blob-invalid"}},
 		requestFileErr: fmt.Errorf("%w: edited fallback file", ErrInvalidFileCarrier),
 	}
 	called := false
