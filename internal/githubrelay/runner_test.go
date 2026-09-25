@@ -888,3 +888,43 @@ func TestRunnerFallbackFileModificationFailsClosed(t *testing.T) {
 		t.Fatalf("modified fallback file did not close session: %+v", loaded)
 	}
 }
+
+func TestRunnerInvalidFallbackArtifactFailsClosed(t *testing.T) {
+	now := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	filePath, _ := FileRequestPath(s.ID, 1)
+	gh := &fakeGitHub{
+		notModified:  true,
+		requestFiles: []GitHubRequestFile{{Name: "00000000000000000001.req", Path: filePath, SHA: "blob-invalid"}},
+		requestFileErr: fmt.Errorf("%w: edited fallback file", ErrInvalidFileCarrier),
+	}
+	called := false
+	runner := &Runner{
+		Store: store, GitHub: gh, EnableFileFallback: true, Now: func() time.Time { return now },
+		AgentFactory: func(string) (Agent, error) {
+			called = true
+			return nil, errors.New("invalid fallback artifact must not reach Sentinel")
+		},
+	}
+	if err := runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected invalid fallback artifact to fail closed")
+	}
+	if called {
+		t.Fatal("invalid fallback artifact reached Sentinel")
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Closed || !strings.Contains(loaded.CloseReason, "invalid GitHub fallback request file") {
+		t.Fatalf("invalid fallback artifact did not close session: %+v", loaded)
+	}
+}
