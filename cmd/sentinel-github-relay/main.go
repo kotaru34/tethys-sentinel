@@ -277,12 +277,22 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if err := store.Save(session); err != nil {
 		return report(stderr, err)
 	}
-	authBody, err := githubrelay.BuildAuthorizationComment(secret, githubrelay.AuthorizationEnvelope{
-		SessionID: session.ID, RepositoryID: session.RepositoryID, IssueNumber: session.IssueNumber,
-		ActorID: session.ActorID, Target: session.Target, ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
-		MaxCommands: session.MaxCommands, ExactArgv: session.ExactArgv, PublishOutput: session.PublishOutput,
-		OutputLimit: session.OutputLimitBytes,
-	})
+	var authBody string
+	if mode == githubrelay.TransportModeActor {
+		authBody, err = githubrelay.BuildActorAuthorizationComment(githubrelay.ActorAuthorizationEnvelope{
+			SessionID: session.ID, RepositoryID: session.RepositoryID, IssueNumber: session.IssueNumber,
+			ActorID: session.ActorID, ActorType: session.ActorType, Target: session.Target,
+			ExpiresAt: session.ExpiresAt.Format(time.RFC3339), MaxCommands: session.MaxCommands,
+			ExactArgv: session.ExactArgv, PublishOutput: session.PublishOutput, OutputLimit: session.OutputLimitBytes,
+		})
+	} else {
+		authBody, err = githubrelay.BuildAuthorizationComment(secret, githubrelay.AuthorizationEnvelope{
+			SessionID: session.ID, RepositoryID: session.RepositoryID, IssueNumber: session.IssueNumber,
+			ActorID: session.ActorID, Target: session.Target, ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
+			MaxCommands: session.MaxCommands, ExactArgv: session.ExactArgv, PublishOutput: session.PublishOutput,
+			OutputLimit: session.OutputLimitBytes,
+		})
+	}
 	if err != nil {
 		return report(stderr, err)
 	}
