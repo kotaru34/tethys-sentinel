@@ -11,9 +11,16 @@ import (
 	"time"
 )
 
+type TransportMode string
+
 const (
+	TransportModeHMAC  TransportMode = "hmac"
+	TransportModeActor TransportMode = "actor"
+
 	DefaultMaxCommands       = 16
 	MaxCommands              = 32
+	ActorMaxCommands         = 8
+	ActorMaxLifetime         = 30 * time.Minute
 	DefaultOutputLimitBytes  = 8 << 10
 	MaximumOutputLimitBytes  = 16 << 10
 	MaximumRequestReasonSize = 2 << 10
@@ -42,8 +49,10 @@ type Session struct {
 	RepositoryID    int64  `json:"repository_id"`
 	IssueNumber     int    `json:"issue_number"`
 	IssueID         int64  `json:"issue_id"`
-	ActorID         int64  `json:"actor_id"`
-	RelayActorID    int64  `json:"relay_actor_id,omitempty"`
+	ActorID         int64         `json:"actor_id"`
+	ActorType       string        `json:"actor_type,omitempty"`
+	TransportMode   TransportMode `json:"transport_mode,omitempty"`
+	RelayActorID    int64         `json:"relay_actor_id,omitempty"`
 	RelayActorLogin string `json:"relay_actor_login,omitempty"`
 	Target          string `json:"target"`
 
@@ -78,6 +87,9 @@ func (s *Session) Normalize() {
 	if s.Version == 0 {
 		s.Version = ProtocolVersion
 	}
+	if s.TransportMode == "" {
+		s.TransportMode = TransportModeHMAC
+	}
 	if s.NextSequence == 0 {
 		s.NextSequence = 1
 	}
@@ -89,6 +101,9 @@ func (s *Session) Normalize() {
 func (s Session) Validate(now time.Time) error {
 	if s.Version != ProtocolVersion {
 		return fmt.Errorf("unsupported relay session version %d", s.Version)
+	}
+	if s.TransportMode != TransportModeHMAC && s.TransportMode != TransportModeActor {
+		return fmt.Errorf("unsupported relay transport mode %q", s.TransportMode)
 	}
 	if !sessionIDPattern.MatchString(s.ID) {
 		return errors.New("invalid relay session id")
@@ -113,6 +128,17 @@ func (s Session) Validate(now time.Time) error {
 	}
 	if s.MaxCommands < 1 || s.MaxCommands > MaxCommands {
 		return fmt.Errorf("max_commands must be 1..%d", MaxCommands)
+	}
+	if s.TransportMode == TransportModeActor {
+		if s.ActorType != "User" {
+			return errors.New("actor transport requires a pinned GitHub User identity")
+		}
+		if s.MaxCommands > ActorMaxCommands {
+			return fmt.Errorf("actor transport max_commands must be 1..%d", ActorMaxCommands)
+		}
+		if s.ExpiresAt.Sub(s.CreatedAt) > ActorMaxLifetime {
+			return fmt.Errorf("actor transport lifetime must not exceed %s", ActorMaxLifetime)
+		}
 	}
 	if s.CommandsComplete < 0 || s.CommandsComplete > s.MaxCommands {
 		return errors.New("relay session command counter is invalid")
@@ -144,6 +170,23 @@ func (s *Session) Close(reason string) {
 }
 
 func (s Session) ValidateRequest(req RequestEnvelope, now time.Time) error {
+	if s.TransportMode != TransportModeHMAC {
+		return errors.New("HMAC relay request is not valid for this transport mode")
+	}
+	if err := VerifyRequestMAC(s.Secret, req); err != nil {
+		return err
+	}
+	return s.validateRequestCommon(req, now)
+}
+
+func (s Session) ValidateActorRequest(req RequestEnvelope, now time.Time) error {
+	if s.TransportMode != TransportModeActor {
+		return errors.New("actor relay request is not valid for this transport mode")
+	}
+	return s.validateRequestCommon(req, now)
+}
+
+func (s Session) validateRequestCommon(req RequestEnvelope, now time.Time) error {
 	if !s.Active(now) {
 		return errors.New("relay session is not active")
 	}
@@ -152,9 +195,6 @@ func (s Session) ValidateRequest(req RequestEnvelope, now time.Time) error {
 	}
 	if req.SessionID != s.ID {
 		return errors.New("request is bound to a different relay session")
-	}
-	if err := VerifyRequestMAC(s.Secret, req); err != nil {
-		return err
 	}
 	if req.Sequence != s.NextSequence {
 		return fmt.Errorf("expected sequence %d", s.NextSequence)
