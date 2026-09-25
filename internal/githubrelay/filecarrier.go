@@ -18,26 +18,7 @@ import (
 const FileRequestRoot = ".tethys-sentinel/relay-requests"
 
 var (
-	fileRequestNamePattern = regexp.MustCompile(`^[0-9]{20}\.reqpackage githubrelay
-
-import (
-	"context"
-	"encoding/base64"
-	"errors"
-	"fmt"
-	"net/http"
-	"net/url"
-	"path"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-)
-
-const FileRequestRoot = ".tethys-sentinel/relay-requests"
-
-)
+	fileRequestNamePattern = regexp.MustCompile(`^[0-9]{20}\.req$`)
 	ErrInvalidFileCarrier  = errors.New("invalid GitHub fallback request file")
 )
 
