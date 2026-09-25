@@ -166,7 +166,7 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 			if parseErr == nil {
 				req = RequestEnvelope{
 					Version: ProtocolVersion, SessionID: actorReq.SessionID, Sequence: session.NextSequence,
-					RequestID: fmt.Sprintf("ghc-%d", comment.ID), Target: session.Target,
+					RequestID: fmt.Sprintf("ghc-comment-%d", comment.ID), Target: session.Target,
 					Argv: append([]string(nil), actorReq.Argv...), AgentReason: actorReq.AgentReason,
 					TimeoutSeconds: actorReq.TimeoutSeconds,
 				}
