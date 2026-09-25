@@ -24,7 +24,7 @@ import (
 
 const operationVersion = 1
 
-var operationIDPattern = regexp.MustCompile(\`^rgo_[a-f0-9]{32}$\`)
+var operationIDPattern = regexp.MustCompile(`^rgo_[a-f0-9]{32}$`)
 
 type GitHub interface {
 	Comments(context.Context, string, int, string) ([]githubrelay.GitHubComment, string, bool, error)
@@ -32,19 +32,19 @@ type GitHub interface {
 }
 
 type Operation struct {
-	Version          int       \`json:"version"\`
-	ID               string    \`json:"id"\`
-	SessionID        string    \`json:"session_id"\`
-	Sequence         uint64    \`json:"sequence"\`
-	RequestID        string    \`json:"request_id"\`
-	Target           string    \`json:"target"\`
-	Argv             []string  \`json:"argv"\`
-	AgentReason      string    \`json:"agent_reason,omitempty"\`
-	TimeoutSeconds   int64     \`json:"timeout_seconds,omitempty"\`
-	CreatedAt        time.Time \`json:"created_at"\`
-	RequestCommentID int64     \`json:"request_comment_id,omitempty"\`
-	Status           string    \`json:"status"\`
-	CompletedAt      time.Time \`json:"completed_at,omitempty"\`
+	Version          int       `json:"version"`
+	ID               string    `json:"id"`
+	SessionID        string    `json:"session_id"`
+	Sequence         uint64    `json:"sequence"`
+	RequestID        string    `json:"request_id"`
+	Target           string    `json:"target"`
+	Argv             []string  `json:"argv"`
+	AgentReason      string    `json:"agent_reason,omitempty"`
+	TimeoutSeconds   int64     `json:"timeout_seconds,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	RequestCommentID int64     `json:"request_comment_id,omitempty"`
+	Status           string    `json:"status"`
+	CompletedAt      time.Time `json:"completed_at,omitempty"`
 }
 
 type OperationStore struct {
@@ -216,42 +216,42 @@ type Service struct {
 }
 
 type ExecInput struct {
-	SessionID      string   \`json:"session_id" jsonschema:"operator-authorized relay session id"\`
-	Argv           []string \`json:"argv" jsonschema:"command and arguments as separate strings; target is fixed by the relay session"\`
-	AgentReason    string   \`json:"agent_reason,omitempty" jsonschema:"brief reason for the operation"\`
-	TimeoutSeconds int64    \`json:"timeout_seconds,omitempty" jsonschema:"optional Sentinel timeout in seconds, 0 to 900"\`
+	SessionID      string   `json:"session_id" jsonschema:"operator-authorized relay session id"`
+	Argv           []string `json:"argv" jsonschema:"command and arguments as separate strings; target is fixed by the relay session"`
+	AgentReason    string   `json:"agent_reason,omitempty" jsonschema:"brief reason for the operation"`
+	TimeoutSeconds int64    `json:"timeout_seconds,omitempty" jsonschema:"optional Sentinel timeout in seconds, 0 to 900"`
 }
 
 type CheckInput struct {
-	ID string \`json:"id" jsonschema:"relay operation id returned by relay_exec"\`
+	ID string `json:"id" jsonschema:"relay operation id returned by relay_exec"`
 }
 
 type SessionInput struct {
-	SessionID string \`json:"session_id" jsonschema:"operator-authorized relay session id"\`
+	SessionID string `json:"session_id" jsonschema:"operator-authorized relay session id"`
 }
 
 type Result struct {
-	ID              string \`json:"id,omitempty"\`
-	Status          string \`json:"status"\`
-	Target          string \`json:"target,omitempty"\`
-	ExitCode        *int   \`json:"exit_code,omitempty"\`
-	Stdout          string \`json:"stdout,omitempty"\`
-	Stderr          string \`json:"stderr,omitempty"\`
-	StdoutTruncated bool   \`json:"stdout_truncated,omitempty"\`
-	StderrTruncated bool   \`json:"stderr_truncated,omitempty"\`
-	Error           string \`json:"error,omitempty"\`
+	ID              string `json:"id,omitempty"`
+	Status          string `json:"status"`
+	Target          string `json:"target,omitempty"`
+	ExitCode        *int   `json:"exit_code,omitempty"`
+	Stdout          string `json:"stdout,omitempty"`
+	Stderr          string `json:"stderr,omitempty"`
+	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 type SessionView struct {
-	SessionID         string   \`json:"session_id"\`
-	Target            string   \`json:"target"\`
-	ExpiresAt         string   \`json:"expires_at"\`
-	Active            bool     \`json:"active"\`
-	CommandsComplete  int      \`json:"commands_complete"\`
-	CommandsRemaining int      \`json:"commands_remaining"\`
-	ExactArgv         []string \`json:"exact_argv,omitempty"\`
-	PublishOutput     bool     \`json:"publish_output"\`
-	ClosedReason      string   \`json:"closed_reason,omitempty"\`
+	SessionID         string   `json:"session_id"`
+	Target            string   `json:"target"`
+	ExpiresAt         string   `json:"expires_at"`
+	Active            bool     `json:"active"`
+	CommandsComplete  int      `json:"commands_complete"`
+	CommandsRemaining int      `json:"commands_remaining"`
+	ExactArgv         []string `json:"exact_argv,omitempty"`
+	PublishOutput     bool     `json:"publish_output"`
+	ClosedReason      string   `json:"closed_reason,omitempty"`
 }
 
 func NewService(sessions *githubrelay.Store, ops *OperationStore, gh GitHub) (*Service, error) {
