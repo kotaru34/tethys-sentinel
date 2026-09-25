@@ -321,6 +321,7 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		fmt.Fprintf(stdout, "exact argv: %s\n", data)
 	}
 	fmt.Fprintf(stdout, "publish output: %t\n", session.PublishOutput)
+	fmt.Fprintf(stdout, "transport mode: %s\n", session.TransportMode)
 	if mode == githubrelay.TransportModeActor || *hideSecret {
 		fmt.Fprintln(stdout, "\nrelay session secret retained in protected local state")
 	} else {
