@@ -33,6 +33,11 @@ type GitHubTransport interface {
 	CreateComment(context.Context, string, int, string) (GitHubComment, error)
 }
 
+type GitHubFileTransport interface {
+	RequestFiles(context.Context, string, string) ([]GitHubRequestFile, error)
+	RequestFile(context.Context, string, string) (GitHubRequestFile, error)
+}
+
 type Runner struct {
 	Store              *Store
 	GitHub             GitHubTransport
@@ -40,6 +45,7 @@ type Runner struct {
 	PollInterval       time.Duration
 	ApprovalPoll       time.Duration
 	JobPoll            time.Duration
+	EnableFileFallback bool
 	Now                func() time.Time
 	Logf               func(string, ...any)
 	githubBackoffUntil time.Time
@@ -116,95 +122,209 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 		}
 		return err
 	}
-	if notModified {
+	if !notModified {
+		for _, comment := range comments {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if strings.Contains(comment.Body, session.Secret) {
+				session.Close("relay session secret was exposed in the GitHub issue")
+				_ = r.Store.Save(*session)
+				return errors.New("relay session secret was exposed in the GitHub issue")
+			}
+			carrierKey := strconv.FormatInt(comment.ID, 10)
+			bodyHash := BodySHA256(comment.Body)
+			if oldHash, seen := session.SeenComments[carrierKey]; seen {
+				if oldHash != bodyHash {
+					session.Close("previously observed request comment was edited")
+					_ = r.Store.Save(*session)
+					return errors.New("previously observed request comment was edited")
+				}
+				continue
+			}
+			if comment.User.ID != session.ActorID {
+				continue
+			}
+			trimmed := strings.TrimSpace(comment.Body)
+			if !strings.HasPrefix(trimmed, strings.TrimSpace(RequestMarker)) {
+				continue
+			}
+			if !comment.CreatedAt.Equal(comment.UpdatedAt) {
+				session.Close("relay request comment was edited before processing")
+				_ = r.Store.Save(*session)
+				return errors.New("relay request comment was edited before processing")
+			}
+			req, err := ParseRequestComment(comment.Body)
+			if err != nil {
+				session.SeenComments[carrierKey] = bodyHash
+				session.FailedAuth++
+				if session.FailedAuth >= MaximumFailedAuth {
+					session.Close("too many malformed relay requests")
+				}
+				_ = r.Store.Save(*session)
+				return fmt.Errorf("malformed relay request comment %d: %w", comment.ID, err)
+			}
+			if req.SessionID != session.ID {
+				session.SeenComments[carrierKey] = bodyHash
+				continue
+			}
+			if _, err := r.processParsedRequest(ctx, session, req, now, carrierKey, bodyHash, comment.ID); err != nil {
+				return err
+			}
+			if session.Closed {
+				return nil
+			}
+		}
+		if etag != "" && etag != session.ETag {
+			session.ETag = etag
+			if err := r.Store.Save(*session); err != nil {
+				return err
+			}
+		}
+	}
+
+	if !r.EnableFileFallback {
 		return nil
 	}
-	for _, comment := range comments {
+	return r.processFileRequests(ctx, session, now)
+}
+
+func (r *Runner) processFileRequests(ctx context.Context, session *Session, now time.Time) error {
+	transport, ok := r.GitHub.(GitHubFileTransport)
+	if !ok {
+		return errors.New("GitHub transport does not implement fallback request files")
+	}
+	files, err := transport.RequestFiles(ctx, session.Repository, session.ID)
+	if err != nil {
+		if delay := githubRetryDelay(err); delay > 0 {
+			r.githubBackoffUntil = r.now().Add(delay)
+			r.logf("GitHub file-carrier rate limit for session %s; retry after %s", session.ID, delay)
+		}
+		return err
+	}
+	for _, metadata := range files {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if strings.Contains(comment.Body, session.Secret) {
-			session.Close("relay session secret was exposed in the GitHub issue")
-			_ = r.Store.Save(*session)
-			return errors.New("relay session secret was exposed in the GitHub issue")
-		}
-		commentKey := strconv.FormatInt(comment.ID, 10)
-		bodyHash := BodySHA256(comment.Body)
-		if oldHash, seen := session.SeenComments[commentKey]; seen {
-			if oldHash != bodyHash {
-				session.Close("previously observed request comment was edited")
+		carrierKey := "file:" + metadata.Path
+		if oldSHA, seen := session.SeenComments[carrierKey]; seen {
+			if oldSHA != metadata.SHA {
+				session.Close("previously observed fallback request file was modified")
 				_ = r.Store.Save(*session)
-				return errors.New("previously observed request comment was edited")
+				return errors.New("previously observed fallback request file was modified")
 			}
 			continue
 		}
-		if comment.User.ID != session.ActorID {
-			continue
-		}
-		trimmed := strings.TrimSpace(comment.Body)
-		if !strings.HasPrefix(trimmed, strings.TrimSpace(RequestMarker)) {
-			continue
-		}
-		if !comment.CreatedAt.Equal(comment.UpdatedAt) {
-			session.Close("relay request comment was edited before processing")
-			_ = r.Store.Save(*session)
-			return errors.New("relay request comment was edited before processing")
-		}
-		req, err := ParseRequestComment(comment.Body)
+		file, err := transport.RequestFile(ctx, session.Repository, metadata.Path)
 		if err != nil {
-			session.SeenComments[commentKey] = bodyHash
+			return err
+		}
+		if file.SHA != metadata.SHA {
+			session.Close("fallback request file changed while being read")
+			_ = r.Store.Save(*session)
+			return errors.New("fallback request file changed while being read")
+		}
+		if strings.Contains(file.Body, session.Secret) {
+			session.Close("relay session secret was exposed in a GitHub fallback request file")
+			_ = r.Store.Save(*session)
+			return errors.New("relay session secret was exposed in a GitHub fallback request file")
+		}
+		if file.Actor.ID != session.ActorID {
+			session.SeenComments[carrierKey] = file.SHA
+			if err := r.Store.Save(*session); err != nil {
+				return err
+			}
+			continue
+		}
+		req, err := ParseRequestComment(file.Body)
+		if err != nil {
+			session.SeenComments[carrierKey] = file.SHA
 			session.FailedAuth++
 			if session.FailedAuth >= MaximumFailedAuth {
 				session.Close("too many malformed relay requests")
 			}
 			_ = r.Store.Save(*session)
-			return fmt.Errorf("malformed relay request comment %d: %w", comment.ID, err)
+			return fmt.Errorf("malformed relay fallback request %s: %w", file.Path, err)
 		}
 		if req.SessionID != session.ID {
-			// A dedicated issue may be reused across relay sessions. Requests for
-			// another session are mailbox traffic for that session, not failures
-			// of this one. Mark them seen to avoid reprocessing as the issue grows.
-			session.SeenComments[commentKey] = bodyHash
+			session.SeenComments[carrierKey] = file.SHA
+			if err := r.Store.Save(*session); err != nil {
+				return err
+			}
 			continue
 		}
-		if err := session.ValidateRequest(req, now); err != nil {
-			session.SeenComments[commentKey] = bodyHash
-			if errors.Is(err, ErrInvalidMAC) {
-				session.FailedAuth++
-			}
-			response := ResponseEnvelope{
-				SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
-				Status: "relay_denied", Error: err.Error(),
-			}
-			if postErr := r.postResponse(ctx, session, response); postErr != nil {
-				return errors.Join(err, postErr)
-			}
-			if session.FailedAuth >= MaximumFailedAuth {
-				session.Close("too many relay authentication failures")
-			}
-			return r.Store.Save(*session)
-		}
-
-		if err := r.verifyTransportBinding(ctx, session); err != nil {
-			return err
-		}
-		session.SeenComments[commentKey] = bodyHash
-		session.Inflight = &Inflight{CommentID: comment.ID, BodyHash: bodyHash, Request: req}
-		if err := r.Store.Save(*session); err != nil {
-			return err
-		}
-		if err := r.resumeInflight(ctx, session); err != nil {
+		if _, err := r.processParsedRequest(ctx, session, req, now, carrierKey, file.SHA, 0); err != nil {
 			return err
 		}
 		if session.Closed {
 			return nil
 		}
 	}
-	if etag != "" && etag != session.ETag {
-		session.ETag = etag
-		return r.Store.Save(*session)
-	}
 	return nil
+}
+
+func (r *Runner) processParsedRequest(ctx context.Context, session *Session, req RequestEnvelope, now time.Time, carrierKey, carrierHash string, commentID int64) (bool, error) {
+	requestKey := requestIdentityKey(req)
+	fingerprint, err := requestFingerprint(req)
+	if err != nil {
+		return false, err
+	}
+	if previous, seen := session.SeenComments[requestKey]; seen {
+		if previous != fingerprint {
+			session.Close("relay request identity was rebound to different authenticated content")
+			_ = r.Store.Save(*session)
+			return false, errors.New("relay request identity was rebound to different authenticated content")
+		}
+		session.SeenComments[carrierKey] = carrierHash
+		if err := r.Store.Save(*session); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	if err := session.ValidateRequest(req, now); err != nil {
+		session.SeenComments[carrierKey] = carrierHash
+		if errors.Is(err, ErrInvalidMAC) {
+			session.FailedAuth++
+		}
+		response := ResponseEnvelope{
+			SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+			Status: "relay_denied", Error: err.Error(),
+		}
+		if postErr := r.postResponse(ctx, session, response); postErr != nil {
+			return false, errors.Join(err, postErr)
+		}
+		if session.FailedAuth >= MaximumFailedAuth {
+			session.Close("too many relay authentication failures")
+		}
+		return false, r.Store.Save(*session)
+	}
+
+	if err := r.verifyTransportBinding(ctx, session); err != nil {
+		return false, err
+	}
+	session.SeenComments[carrierKey] = carrierHash
+	session.SeenComments[requestKey] = fingerprint
+	session.Inflight = &Inflight{CommentID: commentID, BodyHash: carrierHash, Request: req}
+	if err := r.Store.Save(*session); err != nil {
+		return false, err
+	}
+	if err := r.resumeInflight(ctx, session); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func requestIdentityKey(req RequestEnvelope) string {
+	return "request:" + BodySHA256(fmt.Sprintf("%d\x00%s", req.Sequence, req.RequestID))
+}
+
+func requestFingerprint(req RequestEnvelope) (string, error) {
+	data, err := marshalCompact(req)
+	if err != nil {
+		return "", err
+	}
+	return BodySHA256(string(data)), nil
 }
 
 func (r *Runner) verifyTransportBinding(ctx context.Context, session *Session) error {
