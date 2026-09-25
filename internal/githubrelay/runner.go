@@ -285,6 +285,15 @@ func (r *Runner) resumeInflight(ctx context.Context, session *Session) error {
 		_ = r.Store.Save(*session)
 		return errors.New("underlying Sentinel grant no longer matches relay session")
 	}
+	if session.TransportMode == TransportModeActor {
+		p := bootstrap.Permissions
+		if len(bootstrap.Targets) != 1 || bootstrap.Targets[0] != session.Target ||
+			p.Shell || p.Upload || p.Download || p.HistoryRead || p.NotesRead || p.NotesWrite {
+			session.Close("actor transport requires a single-target exec-only Sentinel grant")
+			_ = r.Store.Save(*session)
+			return errors.New(session.CloseReason)
+		}
+	}
 	if !r.now().Before(bootstrap.ExpiresAt) || bootstrap.ExpiresAt.Before(session.ExpiresAt) {
 		session.Close("underlying Sentinel grant expired or narrowed below relay lifetime")
 		_ = r.Store.Save(*session)
@@ -398,6 +407,7 @@ func (r *Runner) finishJob(ctx context.Context, session *Session, agent Agent, j
 
 func (r *Runner) responseFromJob(session Session, job internalapi.AgentExecutionJob) ResponseEnvelope {
 	response := ResponseEnvelope{
+		RequestCommentID: session.Inflight.CommentID,
 		SessionID: session.ID, Sequence: session.Inflight.Request.Sequence, RequestID: session.Inflight.Request.RequestID,
 		Status: "completed", JobID: job.ID, JobStatus: string(job.Status),
 	}
@@ -434,6 +444,9 @@ func (r *Runner) responseFromJob(session Session, job internalapi.AgentExecution
 }
 
 func (r *Runner) finishWithResponse(ctx context.Context, session *Session, response ResponseEnvelope, closeSession bool) error {
+	if response.RequestCommentID == 0 && session.Inflight != nil {
+		response.RequestCommentID = session.Inflight.CommentID
+	}
 	if err := r.postResponse(ctx, session, response); err != nil {
 		return err
 	}
@@ -451,7 +464,13 @@ func (r *Runner) finishWithResponse(ctx context.Context, session *Session, respo
 }
 
 func (r *Runner) postResponse(ctx context.Context, session *Session, response ResponseEnvelope) error {
-	body, err := BuildResponseComment(session.Secret, response)
+	var body string
+	var err error
+	if session.TransportMode == TransportModeActor {
+		body, err = BuildActorResponseComment(response)
+	} else {
+		body, err = BuildResponseComment(session.Secret, response)
+	}
 	if err != nil {
 		return err
 	}
