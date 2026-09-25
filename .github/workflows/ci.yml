@@ -91,11 +91,11 @@ jobs:
           go-version: '1.27.1'
           cache: false
 
-      - name: Build dev.27 binaries
+      - name: Build dev.30 binaries
         shell: bash
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.1.0-dev.27'
+          test "$(cat VERSION)" = '0.1.0-dev.30'
           mkdir -p out
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-control ./cmd/sentinel-control
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
@@ -120,7 +120,7 @@ jobs:
       - name: Upload linux amd64 deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dev27-linux-amd64
+          name: dev30-linux-amd64
           if-no-files-found: error
           retention-days: 1
           path: |
