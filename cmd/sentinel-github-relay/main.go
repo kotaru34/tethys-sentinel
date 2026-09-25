@@ -43,6 +43,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, lookupEnv
 		return runAuthorize(ctx, args[1:], stdout, stderr, lookupEnv)
 	case "serve":
 		return runServe(ctx, args[1:], stdout, stderr, lookupEnv)
+	case "mcp":
+		return runMCP(ctx, args[1:], stdout, stderr, lookupEnv)
 	case "sign":
 		return runSign(args[1:], stdout, stderr, lookupEnv)
 	case "inspect":
@@ -77,6 +79,7 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	exactArgvJSON := fs.String("exact-argv-json", "", "optional exact allowed argv JSON array")
 	publishOutput := fs.Bool("publish-output", false, "publish bounded grant-visible stdout/stderr into the private GitHub issue")
 	outputLimit := fs.Int("output-limit", githubrelay.DefaultOutputLimitBytes, "per-stream GitHub output limit when --publish-output is set")
+	hideSecret := fs.Bool("hide-secret", false, "retain the relay session secret only in protected local state instead of printing it")
 	appID := fs.Int64("github-app-id", envInt64(lookupEnv, "SENTINEL_GITHUB_APP_ID"), "GitHub App ID")
 	installationID := fs.Int64("github-installation-id", envInt64(lookupEnv, "SENTINEL_GITHUB_INSTALLATION_ID"), "GitHub App installation ID")
 	appKeyFile := fs.String("github-app-key-file", envValue(lookupEnv, "SENTINEL_GITHUB_APP_PRIVATE_KEY_FILE"), "protected GitHub App RSA private key")
@@ -584,6 +587,7 @@ func usage(w io.Writer) {
 commands:
   authorize   bind one private GitHub issue to one existing Sentinel grant/session
   serve       poll authorized issues and forward authenticated requests through the existing Agent API
+  mcp         expose a narrow typed relay client over stdio or loopback Streamable HTTP
   sign        produce an authenticated request comment (secret via protected file/env/stdin, never argv)
   inspect     show non-secret local relay session metadata
   close       locally disable a relay session
