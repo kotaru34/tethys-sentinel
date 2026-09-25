@@ -669,7 +669,7 @@ func TestRunnerActorTransportUsesPinnedGitHubUserAndDerivedRequestIdentity(t *te
 		}},
 		postUser: GitHubUser{ID: s.RelayActorID, Login: s.RelayActorLogin, Type: "Bot"},
 	}
-	requestID := "ghc-77"
+	requestID := "ghc-comment-77"
 	job := internalapi.AgentExecutionJob{
 		ID: "job-actor", RequestID: requestID, Target: s.Target, Argv: []string{"id"}, Status: executionjob.Succeeded,
 		Result: &executionjob.Result{Success: true, ExitCode: 0},
