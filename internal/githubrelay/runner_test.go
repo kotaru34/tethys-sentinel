@@ -18,12 +18,12 @@ import (
 )
 
 type fakeGitHub struct {
-	comments    []GitHubComment
-	posted      []string
-	repository  GitHubRepository
-	issue       GitHubIssue
-	etag        string
-	notModified bool
+	comments        []GitHubComment
+	posted          []string
+	repository      GitHubRepository
+	issue           GitHubIssue
+	etag            string
+	notModified     bool
 	commentsErr     error
 	seenETags       []string
 	requestFiles    []GitHubRequestFile
@@ -662,7 +662,6 @@ func TestRelayResponseDoesNotSerializeAuthoritySecrets(t *testing.T) {
 	}
 }
 
-
 func TestRunnerFallbackFileExecutesAuthenticatedRequest(t *testing.T) {
 	now := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
 	store := openRunnerTestStore(t)
@@ -686,7 +685,7 @@ func TestRunnerFallbackFileExecutesAuthenticatedRequest(t *testing.T) {
 	}
 	meta := GitHubRequestFile{Name: "00000000000000000001.req", Path: filePath, SHA: "blob-file-1", Size: len(body)}
 	gh := &fakeGitHub{
-		notModified: true,
+		notModified:  true,
 		requestFiles: []GitHubRequestFile{meta},
 		requestFileData: map[string]GitHubRequestFile{
 			filePath: {
@@ -765,7 +764,7 @@ func TestRunnerCommentAndFallbackFileSameRequestExecuteExactlyOnce(t *testing.T)
 	filePath, _ := FileRequestPath(s.ID, req.Sequence)
 	meta := GitHubRequestFile{Name: "00000000000000000001.req", Path: filePath, SHA: "blob-dual-1", Size: len(body)}
 	gh := &fakeGitHub{
-		comments: []GitHubComment{{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}},
+		comments:     []GitHubComment{{ID: 10, Body: body, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now}},
 		requestFiles: []GitHubRequestFile{meta},
 		requestFileData: map[string]GitHubRequestFile{
 			filePath: {Name: meta.Name, Path: filePath, SHA: meta.SHA, Size: len(body), Body: body, CommitSHA: "commit-dual-1", Actor: GitHubUser{ID: s.ActorID, Type: "User"}},
