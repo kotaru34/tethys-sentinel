@@ -217,6 +217,10 @@ func (r *Runner) processFileRequests(ctx context.Context, session *Session, now 
 		}
 		file, err := transport.RequestFile(ctx, session.Repository, metadata.Path)
 		if err != nil {
+			if errors.Is(err, ErrInvalidFileCarrier) {
+				session.Close(err.Error())
+				_ = r.Store.Save(*session)
+			}
 			return err
 		}
 		if file.SHA != metadata.SHA {
