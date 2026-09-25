@@ -119,7 +119,7 @@ func TestExecAndCheckVerifiedResponse(t *testing.T) {
 	if checked.Status != "succeeded" || checked.ExitCode == nil || *checked.ExitCode != 0 {
 		t.Fatalf("unexpected checked result: %+v", checked)
 	}
-	if !strings.Contains(checked.Stdout, "sentinel-ai") || strings.ContainsRune(checked.Stdout, '\x1b') || !strings.Contains(checked.Stdout, \`\\x1b\`) {
+	if !strings.Contains(checked.Stdout, "sentinel-ai") || strings.ContainsRune(checked.Stdout, '\x1b') || !strings.Contains(checked.Stdout, `\\x1b`) {
 		t.Fatalf("output was not safely rendered: %q", checked.Stdout)
 	}
 	again, err := service.Check(context.Background(), CheckInput{ID: result.ID})
