@@ -159,10 +159,22 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if !contains(bootstrap.Targets, requestedTarget) {
 		return report(stderr, errors.New("requested target is outside the underlying Sentinel grant"))
 	}
+	if mode == githubrelay.TransportModeActor {
+		p := bootstrap.Permissions
+		if len(bootstrap.Targets) != 1 || bootstrap.Targets[0] != requestedTarget {
+			return report(stderr, errors.New("actor transport requires a Sentinel grant scoped to exactly one target"))
+		}
+		if p.Shell || p.Upload || p.Download || p.HistoryRead || p.NotesRead || p.NotesWrite {
+			return report(stderr, errors.New("actor transport requires exec-only Sentinel permissions"))
+		}
+	}
 	if *publishOutput && !bootstrap.History.IncludeOutput {
 		return report(stderr, errors.New("--publish-output requires history.include_output in the underlying Sentinel grant"))
 	}
 	now := time.Now().UTC()
+	if mode == githubrelay.TransportModeActor && bootstrap.ExpiresAt.Sub(now) > githubrelay.ActorMaxLifetime {
+		return report(stderr, fmt.Errorf("actor transport requires the Sentinel grant to expire within %s", githubrelay.ActorMaxLifetime))
+	}
 	if !now.Before(bootstrap.ExpiresAt) {
 		return report(stderr, errors.New("underlying Sentinel grant is already expired"))
 	}
@@ -209,6 +221,9 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 	if issue.User.ID <= 0 {
 		return report(stderr, errors.New("relay issue has no stable numeric author identity"))
+	}
+	if mode == githubrelay.TransportModeActor && issue.User.Type != "User" {
+		return report(stderr, errors.New("actor transport requires the private relay issue to be owned by a GitHub User identity"))
 	}
 	requestActorID := issue.User.ID
 	requestActorLogin := issue.User.Login
