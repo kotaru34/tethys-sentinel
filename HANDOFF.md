@@ -54,7 +54,7 @@ Final external Agent HTTP acceptance is complete. A restricted public capability
 
 dev.27 is the blocker-fix candidate for the wider Ansible rollout. A live Debian-family target using systemd `ssh.socket` activation exposed a service-control incompatibility in dev.26: the role validated the new sshd configuration successfully, then asked systemd to reload sshd. The reload delivered SIGHUP to sshd, which attempted to bind the already systemd-owned listener and exited with `Cannot bind any address`. systemd recovered the service, so execution authority was not silently widened, but the Ansible run correctly failed and dev.26 is blocked from acceptance.
 
-dev.27 changes the validated sshd handler from reload to a systemd-managed restart. This keeps configuration validation before service activation while respecting socket-activated OpenSSH lifecycle semantics. The fix contains no site-specific deployment data; live re-acceptance should rerun the affected target, then the remaining target batch and idempotency checks before Control-registry and Worker-egress reconciliation.
+dev.27 changes the validated sshd handler from reload to a systemd-managed restart. This keeps configuration validation before service activation while respecting socket-activated OpenSSH lifecycle semantics. CI #873 is green on the dev.27 blocker-fix commit, and live re-acceptance on the previously failing socket-activated target now completes successfully with no failures or unreachable hosts. The fix contains no site-specific deployment data. The next step is to rerun the remaining target batch and idempotency checks before Control-registry and Worker-egress reconciliation.
 
 ## dev.26 candidate status
 
