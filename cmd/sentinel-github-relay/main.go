@@ -121,6 +121,20 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		fmt.Fprintf(stderr, "sentinel-github-relay: --max-commands must be 1..%d\n", githubrelay.MaxCommands)
 		return 2
 	}
+	if mode == githubrelay.TransportModeActor {
+		if *ttl > githubrelay.ActorMaxLifetime {
+			fmt.Fprintf(stderr, "sentinel-github-relay: actor transport --ttl must not exceed %s\n", githubrelay.ActorMaxLifetime)
+			return 2
+		}
+		if *maxCommands > githubrelay.ActorMaxCommands {
+			fmt.Fprintf(stderr, "sentinel-github-relay: actor transport --max-commands must be 1..%d\n", githubrelay.ActorMaxCommands)
+			return 2
+		}
+		if *actorIDOverride != 0 {
+			fmt.Fprintln(stderr, "sentinel-github-relay: actor transport does not allow --actor-id override")
+			return 2
+		}
+	}
 	if *publishOutput && (*outputLimit < 1 || *outputLimit > githubrelay.MaximumOutputLimitBytes) {
 		fmt.Fprintf(stderr, "sentinel-github-relay: --output-limit must be 1..%d\n", githubrelay.MaximumOutputLimitBytes)
 		return 2
