@@ -1,5 +1,5 @@
 ---
-- name: Reload OpenSSH
+- name: Restart OpenSSH
   ansible.builtin.service:
     name: "{{ sentinel_target_sshd_service }}"
-    state: reloaded
+    state: restarted

@@ -114,6 +114,8 @@ After the first successful onboarding run:
 
 Use the disposable target first when changing this automation. Do not treat a new onboarding implementation as accepted solely because `ansible-playbook --syntax-check` passes.
 
+When the Sentinel sshd drop-in changes, the target role restarts the OpenSSH service through systemd after a successful `sshd -t` validation. It deliberately does not use an sshd SIGHUP reload: on Debian-family hosts using `ssh.socket` socket activation, a reload can make sshd attempt to bind the already systemd-owned listener and fail with `Cannot bind any address`. A systemd-managed restart preserves the socket-activation contract and avoids that failure mode.
+
 ## Host firewall preflight
 
 The target role intentionally does not silently rewrite host firewall policy. Before onboarding, the operator must ensure TCP/22 is reachable from the Ansible controller and from the Sentinel Worker source address. Keep these allows as exact source addresses where practical; do not widen an entire management subnet merely for Sentinel.
