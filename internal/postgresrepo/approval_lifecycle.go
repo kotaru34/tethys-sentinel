@@ -187,12 +187,12 @@ func (l *ApprovalLifecycle) Decide(ctx context.Context, id string, decision appr
 }
 
 type lockedGrantAuthority struct {
-	authorityEpoch int64
-	grantEpoch     int64
-	disabled       bool
-	revokedAt      *time.Time
-	expiresAt      time.Time
-	now            time.Time
+	authorityEpoch    int64
+	grantEpoch        int64
+	disabled          bool
+	revokedAt         *time.Time
+	expiresAt         time.Time
+	now               time.Time
 	agent             string
 	exec              bool
 	unrestrictedShell bool
