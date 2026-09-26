@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	archiveSHA256     = "ba838f656d471a9630443156e64b7bfdafbf59fe1cbaf314271ff97596c48c16"
+	archiveSHA256     = "23a2e86e0aa2dc0c89b5ad77079a9720ccb1e211d4edcfa987568bcd4b868f7"
 	maxArchiveFile    = 4 << 20
 	maxArchiveTotal   = 8 << 20
 	maxArchiveEntries = 64

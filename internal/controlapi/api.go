@@ -246,7 +246,10 @@ func (a *API) submitCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	if riskResult.Decision == risk.Allow {
+	bypassApproval := riskResult.Decision == risk.ApprovalRequired &&
+		grant.Permissions.UnrestrictedShell &&
+		risk.RequiresShell(riskResult)
+	if riskResult.Decision == risk.Allow || bypassApproval {
 		a.stageAndFinalize(w, r, grant, req, response, "")
 		return
 	}
@@ -332,8 +335,12 @@ func (a *API) finalizeStagedJob(w http.ResponseWriter, r *http.Request, grant do
 		return
 	}
 
+	bypassApproval := riskResult.Decision == risk.ApprovalRequired &&
+		grant.Permissions.UnrestrictedShell &&
+		risk.RequiresShell(riskResult)
+
 	var approvalItem approval.Request
-	if riskResult.Decision == risk.ApprovalRequired {
+	if riskResult.Decision == risk.ApprovalRequired && !bypassApproval {
 		if job.ApprovalID == "" {
 			_ = a.jobs.CancelPending(r.Context(), job.ID)
 			writeError(w, http.StatusConflict, "staged risky job has no approval binding")
@@ -373,14 +380,17 @@ func (a *API) finalizeStagedJob(w http.ResponseWriter, r *http.Request, grant do
 		}
 	}
 
+	metadata := map[string]string{
+		"job_id": job.ID, "request_id": job.RequestID, "command_sha256": job.CommandSHA256,
+		"expires_at": job.ExpiresAt.Format(time.RFC3339Nano),
+	}
+	if bypassApproval {
+		metadata["approval_bypass"] = "unrestricted_shell"
+	}
 	if _, err := a.audit.Append(r.Context(), audit.Input{
 		Kind: "execution.job_authorized", Actor: grant.Agent, GrantID: grant.ID, Target: job.Target, Argv: job.Argv,
 		Decision: "allow", Category: riskResult.Category, ScopeKey: riskResult.ScopeKey,
-		ApprovalID: job.ApprovalID, Reason: strings.TrimSpace(req.AgentReason),
-		Metadata: map[string]string{
-			"job_id": job.ID, "request_id": job.RequestID, "command_sha256": job.CommandSHA256,
-			"expires_at": job.ExpiresAt.Format(time.RFC3339Nano),
-		},
+		ApprovalID: job.ApprovalID, Reason: strings.TrimSpace(req.AgentReason), Metadata: metadata,
 	}); err != nil {
 		_ = a.jobs.CancelPending(r.Context(), job.ID)
 		writeError(w, http.StatusInternalServerError, "staged job canceled because audit append failed")

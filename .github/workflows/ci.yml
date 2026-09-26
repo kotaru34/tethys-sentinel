@@ -347,7 +347,7 @@ jobs:
           set -euo pipefail
           cat internal/operatorweb/operator-dist.b64.* | tr -d '[:space:]' | base64 -d > /tmp/operator-dist-embedded.tar.gz
           test "$(sha256sum /tmp/operator-dist-embedded.tar.gz | cut -d' ' -f1)" = \
-            'ba838f656d471a9630443156e64b7bfdafbf59fe1cbaf314271ff97596c48c16'
+            '23a2e86e0aa2dc0c89b5ad77079a9720ccb1e211d4edcfa987568bcd4b868f7'
           rm -rf /tmp/operator-dist-embedded
           mkdir -p /tmp/operator-dist-embedded
           tar --no-same-owner -xzf /tmp/operator-dist-embedded.tar.gz -C /tmp/operator-dist-embedded
