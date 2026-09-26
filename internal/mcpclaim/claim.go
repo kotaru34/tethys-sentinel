@@ -102,6 +102,9 @@ func ValidateIssueInput(input IssueInput) (IssueInput, error) {
 	if !input.Permissions.Exec {
 		return IssueInput{}, errors.New("MCP claim must grant exec permission")
 	}
+	if input.Permissions.UnrestrictedShell && !input.Permissions.Shell {
+		return IssueInput{}, errors.New("unrestricted_shell requires shell permission")
+	}
 	return input, nil
 }
 
