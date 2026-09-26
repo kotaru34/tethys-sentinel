@@ -123,3 +123,34 @@ func TestUnrestrictedShellRequiresExecAndShell(t *testing.T) {
 		t.Fatalf("unrestricted shell authority was not preserved: %+v", grant.Permissions)
 	}
 }
+
+
+func TestUnrestrictedShellRequiresExecAndShell(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	svc := NewService(store.NewMemoryGrantStore())
+
+	for _, permissions := range []domain.Permissions{
+		{UnrestrictedShell: true},
+		{Exec: true, UnrestrictedShell: true},
+		{Shell: true, UnrestrictedShell: true},
+	} {
+		if _, _, err := svc.Issue(context.Background(), domain.Grant{
+			Agent: "test-agent", Targets: []string{"target-a"}, Permissions: permissions,
+			IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		}); err == nil {
+			t.Fatalf("invalid unrestricted shell permissions were accepted: %+v", permissions)
+		}
+	}
+
+	grant, _, err := svc.Issue(context.Background(), domain.Grant{
+		Agent: "test-agent", Targets: []string{"target-a"},
+		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
+		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !grant.Permissions.UnrestrictedShell {
+		t.Fatal("valid unrestricted shell permission was not preserved")
+	}
+}
