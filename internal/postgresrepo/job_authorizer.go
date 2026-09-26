@@ -133,7 +133,7 @@ func (a *JobAuthorizer) Authorize(ctx context.Context, id, agentReason string) (
 	}
 
 	consumeAllowOnce := false
-	if currentRisk.Decision == risk.ApprovalRequired && !active.unrestrictedShell {
+	if currentRisk.Decision == risk.ApprovalRequired && !(active.unrestrictedShell && risk.RequiresShell(currentRisk)) {
 		if job.ApprovalID == "" {
 			return a.rejectAuthorization(ctx, tx, job.ID, job.Agent, job.GrantID, job.Target, currentRisk, "", "risky staged job has no approval binding", controlops.ErrApprovalInvalid)
 		}
@@ -185,7 +185,7 @@ func (a *JobAuthorizer) Authorize(ctx context.Context, id, agentReason string) (
 		"job_id": job.ID, "request_id": job.RequestID, "command_sha256": job.CommandSHA256,
 		"expires_at": job.ExpiresAt.Format(time.RFC3339Nano),
 	}
-	if currentRisk.Decision == risk.ApprovalRequired && active.unrestrictedShell {
+	if currentRisk.Decision == risk.ApprovalRequired && active.unrestrictedShell && risk.RequiresShell(currentRisk) {
 		metadata["approval_bypass"] = "unrestricted_shell"
 	}
 	if _, err := a.repo.appendAuditTx(ctx, tx, now, audit.Input{
