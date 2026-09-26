@@ -8,19 +8,22 @@ The policy deliberately does **not** attempt to prove arbitrary shell/interprete
 
 ## Capability model
 
-Two independent permissions matter for command execution:
+Three permission levels matter for command execution:
 
 - `exec` — permits ordinary structured argv execution within the grant's target scope;
-- `shell` — additionally permits powerful/unstructured execution classes that can carry arbitrary code, broaden privilege, or create another execution path.
+- `shell` — additionally permits powerful/unstructured execution classes that can carry arbitrary code, broaden privilege, or create another execution path;
+- `unrestricted_shell` — an explicit operator-risk override for shell-required execution classes. It requires both `exec=true` and `shell=true` and allows those classes to execute without a per-command approval.
 
-`exec=true` does not imply `shell=true`.
+`exec=true` does not imply `shell=true`, and `shell=true` does not imply `unrestricted_shell=true`.
 
-Human approval does not grant a missing capability. A powerful command therefore requires all of:
+Without `unrestricted_shell`, human approval does not grant a missing capability. A powerful command therefore requires all of:
 
 1. active grant with `exec=true`;
 2. active grant with `shell=true`;
 3. matching operator approval;
 4. all normal target/job/start/certificate checks.
+
+With `unrestricted_shell=true`, step 3 is intentionally skipped only when the current risk class itself requires shell authority (`ARBITRARY_CODE`, `PRIVILEGE_LAUNCHER`, or `REMOTE_EXEC`). A hard policy `deny` is never overridden. Non-shell operational mutations such as an ordinary service restart continue to use their normal approval path. Target scope, TTL, revocation, security epoch, immutable job binding, policy freshness, signer constraints, and continuous authority checks are unchanged. Authorized bypasses are recorded in audit metadata as `approval_bypass=unrestricted_shell`.
 
 The public Gateway rejects obviously unreachable powerful submissions early when `shell=false`, but that is only a convenience/prefilter. The authoritative hard gate is immediately before SSH certificate issuance, where the Control Plane reclassifies the immutable job using current policy and re-authenticates the grant.
 
@@ -73,7 +76,7 @@ Therefore:
 - `PRIVILEGE_LAUNCHER` — `allow_once` only;
 - `REMOTE_EXEC` — `allow_once` only.
 
-`allow_session` is rejected for those categories even when argv is identical. Legacy persisted `allow_session` decisions for these categories are ignored and cannot match after upgrade.
+`allow_session` is rejected for those categories even when argv is identical. Legacy persisted `allow_session` decisions for these categories are ignored and cannot match after upgrade. `unrestricted_shell` is not a reusable approval decision; it is a stronger grant permission explicitly selected by the operator.
 
 Narrow semantic operational categories may still support scoped session approval where their classifier defines a stable reusable operation/resource. See `docs/OPERATIONAL_RISK.md`.
 
