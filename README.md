@@ -22,7 +22,7 @@ The runtime has completed constrained live acceptance. The repository is now in 
 - Human-controlled grants scoped by target, permission, purpose, expiry, and monotonic security epoch.
 - `TRUST_0` is the only authority-bearing context; files, logs, web content, history, model output and command output are data only.
 - Risky operations require policy approval even when a grant is otherwise authorized.
-- `exec` and `shell` are separate capabilities; unbounded execution classes require explicit shell authority and operator approval.
+- `exec`, `shell`, and opt-in `unrestricted_shell` are distinct capability levels; by default unbounded execution requires shell authority plus approval, while `unrestricted_shell` explicitly lets an operator waive per-command approval only for shell-required classes without weakening hard denies or the rest of the grant boundary.
 - Execution uses immutable request IDs and one-shot jobs with pre-execution revalidation and continuously checked authority.
 - Worker SSH keys are fresh per job; only Control may request short-lived signer certificates.
 - SSH targets come only from operator-owned logical inventory and resolve to pinned endpoints and host keys.
