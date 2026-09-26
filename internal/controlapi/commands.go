@@ -93,6 +93,10 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 		a.stageAndAuthorizeResponse(w, r, grant, req, "", currentRisk, executionTTL, authorizer)
 		return
 	}
+	if grant.Permissions.UnrestrictedShell {
+		a.stageAndAuthorizeResponse(w, r, grant, req, "", currentRisk, executionTTL, authorizer)
+		return
+	}
 
 	matchedApproval, matched, err := a.approvals.Match(r.Context(), grant.ID, req.Target, currentRisk.Category, currentRisk.ScopeKey)
 	if err != nil {
