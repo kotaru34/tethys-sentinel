@@ -22,9 +22,10 @@ interface MCPClaimResponse {
   claim_code: string;
 }
 
-const permissions = (shell: boolean): Permissions => ({
+const permissions = (shell: boolean, unrestrictedShell: boolean): Permissions => ({
   exec: true,
   shell,
+  unrestricted_shell: unrestrictedShell,
   upload: false,
   download: false,
   history_read: false,
@@ -52,6 +53,7 @@ function MCPClaimLauncher() {
   const [claimTTL, setClaimTTL] = useState(120);
   const [grantTTL, setGrantTTL] = useState(3600);
   const [shell, setShell] = useState(false);
+  const [unrestrictedShell, setUnrestrictedShell] = useState(false);
   const [includeOutput, setIncludeOutput] = useState(true);
   const [busy, setBusy] = useState(false);
   const [loadingTargets, setLoadingTargets] = useState(false);
@@ -110,7 +112,7 @@ function MCPClaimLauncher() {
         agent: agent.trim(),
         purpose: purpose.trim(),
         targets: selectedTargets,
-        permissions: permissions(shell),
+        permissions: permissions(shell, unrestrictedShell),
         history: history(includeOutput),
         claim_ttl_seconds: claimTTL,
         grant_ttl_seconds: grantTTL,
@@ -184,10 +186,16 @@ function MCPClaimLauncher() {
                 </fieldset>
 
                 <div class="mcp-claim-switches">
-                  <label><input type="checkbox" checked={shell} onChange={(event) => setShell(event.currentTarget.checked)} /><span>Allow arbitrary Python code (shell authority)</span></label>
+                  <label><input type="checkbox" checked={shell} onChange={(event) => {
+                    const checked = event.currentTarget.checked;
+                    setShell(checked);
+                    if (!checked) setUnrestrictedShell(false);
+                  }} /><span>Allow arbitrary Python code (shell authority)</span></label>
+                  <label><input type="checkbox" checked={unrestrictedShell} disabled={!shell} onChange={(event) => setUnrestrictedShell(event.currentTarget.checked)} /><span>Unrestricted shell: skip per-command approvals for shell-required classes</span></label>
                   <label><input type="checkbox" checked={includeOutput} onChange={(event) => setIncludeOutput(event.currentTarget.checked)} /><span>Allow command output readback</span></label>
                 </div>
 
+                {unrestrictedShell && <p class="mcp-claim-warning">High-risk authority: shell-required commands can execute without per-command approval until this grant expires or is revoked. Hard policy denies and all other grant boundaries remain active.</p>}
                 <p class="mcp-claim-note">Execution is always enabled. Upload, download, notes and broader history permissions stay disabled for this MCP bootstrap flow.</p>
                 {error && <p class="mcp-claim-error" role="alert">{error}</p>}
                 <div class="mcp-claim-actions">
