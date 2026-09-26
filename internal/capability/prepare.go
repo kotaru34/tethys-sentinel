@@ -11,6 +11,9 @@ import (
 // preparation without persisting authority. Transactional persistence backends
 // use it immediately before their own atomic grant+audit transaction.
 func PrepareGrant(grant domain.Grant) (domain.Grant, string, error) {
+	if err := validateGrantPermissions(grant.Permissions); err != nil {
+		return domain.Grant{}, "", err
+	}
 	if grant.ID == "" {
 		id, err := randomID()
 		if err != nil {
@@ -30,4 +33,11 @@ func PrepareGrant(grant domain.Grant) (domain.Grant, string, error) {
 	}
 	grant.TokenHash = hash
 	return grant, token, nil
+}
+
+func validateGrantPermissions(permissions domain.Permissions) error {
+	if permissions.UnrestrictedShell && (!permissions.Exec || !permissions.Shell) {
+		return errors.New("unrestricted_shell requires both exec and shell permissions")
+	}
+	return nil
 }
