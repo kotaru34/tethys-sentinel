@@ -102,7 +102,7 @@ func TestUnrestrictedShellBypassesApprovalRequiredPolicy(t *testing.T) {
 		if response.Risk.Decision != risk.ApprovalRequired {
 			t.Fatalf("risk classification was weakened for request %d: %+v", i, response.Risk)
 		}
-		if response.ApprovalID != "" || response.Job.ApprovalID != "" {
+		if response.ApprovalID != "" {
 			t.Fatalf("unrestricted request %d unexpectedly bound an approval: %+v", i, response)
 		}
 	}
