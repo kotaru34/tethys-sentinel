@@ -163,7 +163,6 @@ func TestIntegrationAllowOnceBindsToExactlyOneConcurrentJob(t *testing.T) {
 	}
 }
 
-
 func TestIntegrationUnrestrictedShellSkipsOnlyShellClassApprovals(t *testing.T) {
 	repo := openIntegrationRepository(t)
 	ctx := context.Background()
@@ -174,7 +173,7 @@ func TestIntegrationUnrestrictedShellSkipsOnlyShellClassApprovals(t *testing.T) 
 		ID: "grant-pg-unrestricted-shell", Agent: "agent-pg-unrestricted-shell",
 		Purpose: "operator accepted unrestricted shell risk", Targets: []string{"dns01"},
 		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
-		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		IssuedAt:    now, ExpiresAt: now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
