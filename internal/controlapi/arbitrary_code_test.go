@@ -72,14 +72,13 @@ func TestArbitraryCodeRequiresAllowOncePerRequest(t *testing.T) {
 	}
 }
 
-
 func TestUnrestrictedShellBypassesApprovalRequiredPolicy(t *testing.T) {
 	a := testAPI(t)
 	ctx := context.Background()
 	_, token, err := a.caps.Issue(ctx, domain.Grant{
 		Agent: "agent-a", Purpose: "operator accepted unrestricted shell risk", Targets: []string{"dns01"},
 		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
-		IssuedAt: a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
+		IssuedAt:    a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,10 +89,10 @@ func TestUnrestrictedShellBypassesApprovalRequiredPolicy(t *testing.T) {
 		{"/bin/bash", "-c", "rm -f /tmp/sentinel-unrestricted-shell-test"},
 	} {
 		request := internalapi.SubmitCommandRequest{
-			TokenHash: encodeTokenHash(token),
-			RequestID: fmt.Sprintf("req-unrestricted-%02d", i+1),
-			Target: "dns01",
-			Argv: argv,
+			TokenHash:   encodeTokenHash(token),
+			RequestID:   fmt.Sprintf("req-unrestricted-%02d", i+1),
+			Target:      "dns01",
+			Argv:        argv,
 			AgentReason: "operator-authorized unrestricted shell test",
 		}
 		status, response := submitRequest(t, a, request)
@@ -119,7 +118,7 @@ func TestUnrestrictedShellDoesNotBypassStructuredRiskApprovals(t *testing.T) {
 	_, token, err := a.caps.Issue(ctx, domain.Grant{
 		Agent: "agent-a", Purpose: "operator accepted unrestricted shell risk", Targets: []string{"dns01"},
 		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
-		IssuedAt: a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
+		IssuedAt:    a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +142,7 @@ func TestUnrestrictedShellDoesNotOverrideHardDeny(t *testing.T) {
 	_, token, err := a.caps.Issue(ctx, domain.Grant{
 		Agent: "agent-a", Purpose: "operator accepted unrestricted shell risk", Targets: []string{"dns01"},
 		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
-		IssuedAt: a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
+		IssuedAt:    a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
