@@ -193,8 +193,9 @@ type lockedGrantAuthority struct {
 	revokedAt      *time.Time
 	expiresAt      time.Time
 	now            time.Time
-	agent          string
-	exec           bool
+	agent             string
+	exec              bool
+	unrestrictedShell bool
 }
 
 func (s lockedGrantAuthority) allowed() bool {
@@ -212,11 +213,11 @@ func lockGrantAuthority(ctx context.Context, tx pgx.Tx, grantID string) (lockedG
 		return lockedGrantAuthority{}, err
 	}
 	if err := tx.QueryRow(ctx, `
-		SELECT security_epoch, revoked_at, expires_at, agent, permission_exec
+		SELECT security_epoch, revoked_at, expires_at, agent, permission_exec, permission_unrestricted_shell
 		FROM sentinel.grants
 		WHERE id = $1
 		FOR SHARE
-	`, grantID).Scan(&state.grantEpoch, &state.revokedAt, &state.expiresAt, &state.agent, &state.exec); errors.Is(err, pgx.ErrNoRows) {
+	`, grantID).Scan(&state.grantEpoch, &state.revokedAt, &state.expiresAt, &state.agent, &state.exec, &state.unrestrictedShell); errors.Is(err, pgx.ErrNoRows) {
 		return lockedGrantAuthority{}, errors.New("grant not found")
 	} else if err != nil {
 		return lockedGrantAuthority{}, err
