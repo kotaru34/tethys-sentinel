@@ -7,10 +7,10 @@ type Permissions struct {
 	Shell             bool `json:"shell"`
 	UnrestrictedShell bool `json:"unrestricted_shell"`
 	Upload            bool `json:"upload"`
-	Download    bool `json:"download"`
-	HistoryRead bool `json:"history_read"`
-	NotesRead   bool `json:"notes_read"`
-	NotesWrite  bool `json:"notes_write"`
+	Download          bool `json:"download"`
+	HistoryRead       bool `json:"history_read"`
+	NotesRead         bool `json:"notes_read"`
+	NotesWrite        bool `json:"notes_write"`
 }
 
 type HistoryScope struct {
