@@ -163,6 +163,75 @@ func TestIntegrationAllowOnceBindsToExactlyOneConcurrentJob(t *testing.T) {
 	}
 }
 
+
+func TestIntegrationUnrestrictedShellSkipsOnlyShellClassApprovals(t *testing.T) {
+	repo := openIntegrationRepository(t)
+	ctx := context.Background()
+	ensureIntegrationAuthorityEnabled(t, repo)
+
+	now := time.Now().UTC()
+	grant, _, err := repo.Grants().Issue(ctx, domain.Grant{
+		ID: "grant-pg-unrestricted-shell", Agent: "agent-pg-unrestricted-shell",
+		Purpose: "operator accepted unrestricted shell risk", Targets: []string{"dns01"},
+		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
+		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	shellArgv := []string{"/bin/bash", "-c", "id"}
+	shellRisk := risk.Classify(shellArgv)
+	if shellRisk.Decision != risk.ApprovalRequired || !risk.RequiresShell(shellRisk) {
+		t.Fatalf("shell test risk=%+v, want shell approval-required", shellRisk)
+	}
+	shellJob, created, err := repo.Jobs().Enqueue(ctx, executionjob.EnqueueInput{
+		RequestID: "request-pg-unrestricted-shell", GrantID: grant.ID, Agent: grant.Agent, Target: "dns01",
+		Argv: shellArgv, RiskCategory: shellRisk.Category, ScopeKey: shellRisk.ScopeKey,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	})
+	if err != nil || !created {
+		t.Fatalf("enqueue unrestricted shell: created=%v err=%v", created, err)
+	}
+	authorized, _, err := repo.Authorizer().Authorize(ctx, shellJob.ID, "unrestricted shell integration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authorized.Status != executionjob.Pending || authorized.ApprovalID != "" {
+		t.Fatalf("unexpected unrestricted shell job: %+v", authorized)
+	}
+
+	var bypass string
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT COALESCE(metadata->>'approval_bypass', '')
+		FROM sentinel.audit_events
+		WHERE kind = 'execution.job_authorized' AND metadata->>'job_id' = $1
+		ORDER BY sequence DESC LIMIT 1
+	`, shellJob.ID).Scan(&bypass); err != nil {
+		t.Fatal(err)
+	}
+	if bypass != "unrestricted_shell" {
+		t.Fatalf("approval bypass audit marker=%q", bypass)
+	}
+
+	structuredArgv := []string{"systemctl", "restart", "pdns"}
+	structuredRisk := risk.Classify(structuredArgv)
+	if structuredRisk.Decision != risk.ApprovalRequired || risk.RequiresShell(structuredRisk) {
+		t.Fatalf("structured test risk=%+v, want non-shell approval-required", structuredRisk)
+	}
+	structuredJob, created, err := repo.Jobs().Enqueue(ctx, executionjob.EnqueueInput{
+		RequestID: "request-pg-unrestricted-structured", GrantID: grant.ID, Agent: grant.Agent, Target: "dns01",
+		Argv: structuredArgv, RiskCategory: structuredRisk.Category, ScopeKey: structuredRisk.ScopeKey,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	})
+	if err != nil || !created {
+		t.Fatalf("enqueue structured risk: created=%v err=%v", created, err)
+	}
+	if _, _, err := repo.Authorizer().Authorize(ctx, structuredJob.ID, "structured risk still needs approval"); !errors.Is(err, controlops.ErrApprovalInvalid) {
+		t.Fatalf("structured approval unexpectedly bypassed: %v", err)
+	}
+}
+
 func ensureIntegrationAuthorityEnabled(t *testing.T, repo *Repository) {
 	t.Helper()
 	ctx := context.Background()
