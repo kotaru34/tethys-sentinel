@@ -91,7 +91,7 @@ jobs:
           go-version: '1.27.1'
           cache: false
 
-      - name: Build dev.27 binaries
+      - name: Build dev.31 binaries
         shell: bash
         run: |
           set -euo pipefail
@@ -278,7 +278,7 @@ jobs:
           test "$(npm --version)" = '11.19.0'
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          expected='23e4bcff0a807198afb06b0916969074f165fe201d1cbcdb5852536cf8a6b813'
+          expected='059c6b1385d10cb947494d37b7508fdd61541c9e1f317ce4d958c40370190c94'
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [ "$actual" != "$expected" ]; then
             echo "frontend dependency graph drift: expected=${expected} actual=${actual}"
