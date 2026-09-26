@@ -65,7 +65,8 @@ func (a *LegacyJobAuthorizer) Authorize(ctx context.Context, id, agentReason str
 		_ = a.jobs.CancelPending(ctx, job.ID)
 		return executionjob.Job{}, currentRisk, executionjob.ErrIntegrity
 	}
-	if _, err := a.caps.AuthenticateID(ctx, job.GrantID, a.now()); err != nil {
+	grant, err := a.caps.AuthenticateID(ctx, job.GrantID, a.now())
+	if err != nil {
 		_ = a.jobs.CancelPending(ctx, job.ID)
 		return executionjob.Job{}, currentRisk, ErrGrantInactive
 	}
@@ -80,7 +81,7 @@ func (a *LegacyJobAuthorizer) Authorize(ctx context.Context, id, agentReason str
 	}
 
 	var approvalItem approval.Request
-	if currentRisk.Decision == risk.ApprovalRequired {
+	if currentRisk.Decision == risk.ApprovalRequired && !grant.Permissions.UnrestrictedShell {
 		if job.ApprovalID == "" {
 			_ = a.jobs.CancelPending(ctx, job.ID)
 			return executionjob.Job{}, currentRisk, ErrApprovalInvalid
@@ -113,14 +114,17 @@ func (a *LegacyJobAuthorizer) Authorize(ctx context.Context, id, agentReason str
 		}
 	}
 
+	metadata := map[string]string{
+		"job_id": job.ID, "request_id": job.RequestID, "command_sha256": job.CommandSHA256,
+		"expires_at": job.ExpiresAt.Format(time.RFC3339Nano),
+	}
+	if currentRisk.Decision == risk.ApprovalRequired && grant.Permissions.UnrestrictedShell {
+		metadata["approval_bypass"] = "unrestricted_shell"
+	}
 	if _, err := a.audit.Append(ctx, audit.Input{
 		Kind: "execution.job_authorized", Actor: job.Agent, GrantID: job.GrantID, Target: job.Target, Argv: job.Argv,
 		Decision: "allow", Category: currentRisk.Category, ScopeKey: currentRisk.ScopeKey,
-		ApprovalID: job.ApprovalID, Reason: strings.TrimSpace(agentReason),
-		Metadata: map[string]string{
-			"job_id": job.ID, "request_id": job.RequestID, "command_sha256": job.CommandSHA256,
-			"expires_at": job.ExpiresAt.Format(time.RFC3339Nano),
-		},
+		ApprovalID: job.ApprovalID, Reason: strings.TrimSpace(agentReason), Metadata: metadata,
 	}); err != nil {
 		_ = a.jobs.CancelPending(ctx, job.ID)
 		return executionjob.Job{}, currentRisk, err
