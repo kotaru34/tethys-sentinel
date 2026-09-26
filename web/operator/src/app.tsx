@@ -35,6 +35,7 @@ const routes: Array<{ name: RouteName; label: string }> = [
 const emptyPermissions = (): Permissions => ({
   exec: true,
   shell: false,
+  unrestricted_shell: false,
   upload: false,
   download: false,
   history_read: false,
@@ -424,7 +425,15 @@ function GrantsPage() {
   const toggleTarget = (name: string) => {
     setSelectedTargets((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
   };
-  const setPermission = (name: keyof Permissions, checked: boolean) => setPermissions((current) => ({ ...current, [name]: checked }));
+  const setPermission = (name: keyof Permissions, checked: boolean) => setPermissions((current) => {
+    if (name === "unrestricted_shell" && checked) {
+      return { ...current, exec: true, shell: true, unrestricted_shell: true };
+    }
+    if ((name === "shell" || name === "exec") && !checked) {
+      return { ...current, [name]: false, unrestricted_shell: false };
+    }
+    return { ...current, [name]: checked };
+  });
   const setHistoryFlag = (name: keyof HistoryScope, checked: boolean) => setHistory((current) => ({ ...current, [name]: checked }));
 
   const issue = async (event: Event) => {
@@ -507,9 +516,15 @@ function GrantsPage() {
               ))}
             </fieldset>
             <fieldset class="check-group"><legend>Permissions</legend>
-              {(["exec", "shell", "upload", "download", "history_read", "notes_read", "notes_write"] as Array<keyof Permissions>).map((name) => (
+              {(["exec", "shell", "unrestricted_shell", "upload", "download", "history_read", "notes_read", "notes_write"] as Array<keyof Permissions>).map((name) => (
                 <label class="check-row compact-check" key={name}><input type="checkbox" checked={permissions[name]} onChange={(event) => setPermission(name, event.currentTarget.checked)} /><span>{name}</span></label>
               ))}
+              {permissions.unrestricted_shell && (
+                <p class="one-shot-note">
+                  High-risk authority: shell-required execution classes will run without per-command approval for this grant.
+                  Hard policy denies, target scope, TTL, revocation, audit, and all other capability bounds still apply.
+                </p>
+              )}
             </fieldset>
             <fieldset class="check-group"><legend>History scope</legend>
               {(["current_session", "previous_sessions", "other_agents", "include_output"] as Array<keyof HistoryScope>).map((name) => (
