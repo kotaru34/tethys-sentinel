@@ -55,20 +55,20 @@ func (m *MCPClaimLifecycle) Issue(ctx context.Context, input mcpclaim.IssueInput
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO sentinel.mcp_claims (
 			id, code_hash, purpose, agent,
-			permission_exec, permission_shell, permission_upload, permission_download,
+			permission_exec, permission_shell, permission_unrestricted_shell, permission_upload, permission_download,
 			permission_history_read, permission_notes_read, permission_notes_write,
 			history_current_session, history_previous, history_other_agents, history_include_output,
 			grant_ttl_seconds, security_epoch, issued_at, expires_at
 		) VALUES (
 			$1, $2, $3, $4,
-			$5, $6, $7, $8,
-			$9, $10, $11,
-			$12, $13, $14, $15,
-			$16, $17, $18, $19
+			$5, $6, $7, $8, $9,
+			$10, $11, $12,
+			$13, $14, $15, $16,
+			$17, $18, $19, $20
 		)
 	`,
 		id, codeHash[:], input.Purpose, input.Agent,
-		input.Permissions.Exec, input.Permissions.Shell, input.Permissions.Upload, input.Permissions.Download,
+		input.Permissions.Exec, input.Permissions.Shell, input.Permissions.UnrestrictedShell, input.Permissions.Upload, input.Permissions.Download,
 		input.Permissions.HistoryRead, input.Permissions.NotesRead, input.Permissions.NotesWrite,
 		input.History.CurrentSession, input.History.Previous, input.History.OtherAgents, input.History.IncludeOutput,
 		input.GrantTTLSeconds, epoch, now.UTC(), expiresAt.UTC(),
@@ -130,7 +130,7 @@ func (m *MCPClaimLifecycle) Redeem(ctx context.Context, codeHash [32]byte) (mcpc
 	var storedEpoch int64
 	err = tx.QueryRow(ctx, `
 		SELECT id, purpose, agent,
-		       permission_exec, permission_shell, permission_upload, permission_download,
+		       permission_exec, permission_shell, permission_unrestricted_shell, permission_upload, permission_download,
 		       permission_history_read, permission_notes_read, permission_notes_write,
 		       history_current_session, history_previous, history_other_agents, history_include_output,
 		       grant_ttl_seconds, security_epoch, issued_at, expires_at, used_at
@@ -139,7 +139,7 @@ func (m *MCPClaimLifecycle) Redeem(ctx context.Context, codeHash [32]byte) (mcpc
 		FOR UPDATE
 	`, codeHash[:]).Scan(
 		&claim.ID, &claim.Purpose, &claim.Agent,
-		&claim.Permissions.Exec, &claim.Permissions.Shell, &claim.Permissions.Upload, &claim.Permissions.Download,
+		&claim.Permissions.Exec, &claim.Permissions.Shell, &claim.Permissions.UnrestrictedShell, &claim.Permissions.Upload, &claim.Permissions.Download,
 		&claim.Permissions.HistoryRead, &claim.Permissions.NotesRead, &claim.Permissions.NotesWrite,
 		&claim.History.CurrentSession, &claim.History.Previous, &claim.History.OtherAgents, &claim.History.IncludeOutput,
 		&claim.GrantTTLSeconds, &storedEpoch, &claim.IssuedAt, &claim.ExpiresAt, &claim.UsedAt,
@@ -241,20 +241,20 @@ func insertGrantTx(ctx context.Context, tx pgx.Tx, grant domain.Grant) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO sentinel.grants (
 			id, token_hash, purpose, agent,
-			permission_exec, permission_shell, permission_upload, permission_download,
+			permission_exec, permission_shell, permission_unrestricted_shell, permission_upload, permission_download,
 			permission_history_read, permission_notes_read, permission_notes_write,
 			history_current_session, history_previous, history_other_agents, history_include_output,
 			security_epoch, issued_at, expires_at, revoked_at
 		) VALUES (
 			$1, $2, $3, $4,
-			$5, $6, $7, $8,
-			$9, $10, $11,
-			$12, $13, $14, $15,
-			$16, $17, $18, $19
+			$5, $6, $7, $8, $9,
+			$10, $11, $12,
+			$13, $14, $15, $16,
+			$17, $18, $19, $20
 		)
 	`,
 		grant.ID, grant.TokenHash[:], grant.Purpose, grant.Agent,
-		grant.Permissions.Exec, grant.Permissions.Shell, grant.Permissions.Upload, grant.Permissions.Download,
+		grant.Permissions.Exec, grant.Permissions.Shell, grant.Permissions.UnrestrictedShell, grant.Permissions.Upload, grant.Permissions.Download,
 		grant.Permissions.HistoryRead, grant.Permissions.NotesRead, grant.Permissions.NotesWrite,
 		grant.History.CurrentSession, grant.History.Previous, grant.History.OtherAgents, grant.History.IncludeOutput,
 		grant.SecurityEpoch, grant.IssuedAt.UTC(), grant.ExpiresAt.UTC(), grant.RevokedAt,
