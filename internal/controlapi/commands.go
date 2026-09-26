@@ -93,7 +93,7 @@ func (a *API) submitCommandWithOperations(w http.ResponseWriter, r *http.Request
 		a.stageAndAuthorizeResponse(w, r, grant, req, "", currentRisk, executionTTL, authorizer)
 		return
 	}
-	if grant.Permissions.UnrestrictedShell {
+	if grant.Permissions.UnrestrictedShell && risk.RequiresShell(currentRisk) {
 		a.stageAndAuthorizeResponse(w, r, grant, req, "", currentRisk, executionTTL, authorizer)
 		return
 	}
