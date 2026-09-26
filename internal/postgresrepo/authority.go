@@ -81,20 +81,20 @@ func (r *Repository) IssueGrant(ctx context.Context, grant domain.Grant) (domain
 	_, err = tx.Exec(ctx, `
 		INSERT INTO sentinel.grants (
 			id, token_hash, purpose, agent,
-			permission_exec, permission_shell, permission_upload, permission_download,
+			permission_exec, permission_shell, permission_unrestricted_shell, permission_upload, permission_download,
 			permission_history_read, permission_notes_read, permission_notes_write,
 			history_current_session, history_previous, history_other_agents, history_include_output,
 			security_epoch, issued_at, expires_at, revoked_at
 		) VALUES (
 			$1, $2, $3, $4,
-			$5, $6, $7, $8,
-			$9, $10, $11,
-			$12, $13, $14, $15,
-			$16, $17, $18, $19
+			$5, $6, $7, $8, $9,
+			$10, $11, $12,
+			$13, $14, $15, $16,
+			$17, $18, $19, $20
 		)
 	`,
 		grant.ID, grant.TokenHash[:], grant.Purpose, grant.Agent,
-		grant.Permissions.Exec, grant.Permissions.Shell, grant.Permissions.Upload, grant.Permissions.Download,
+		grant.Permissions.Exec, grant.Permissions.Shell, grant.Permissions.UnrestrictedShell, grant.Permissions.Upload, grant.Permissions.Download,
 		grant.Permissions.HistoryRead, grant.Permissions.NotesRead, grant.Permissions.NotesWrite,
 		grant.History.CurrentSession, grant.History.Previous, grant.History.OtherAgents, grant.History.IncludeOutput,
 		epoch, grant.IssuedAt.UTC(), grant.ExpiresAt.UTC(), grant.RevokedAt,
@@ -140,7 +140,7 @@ func (r *Repository) authenticate(ctx context.Context, predicate string, arg any
 		SELECT
 			g.id, g.token_hash, g.purpose, g.agent,
 			ARRAY(SELECT gt.target FROM sentinel.grant_targets gt WHERE gt.grant_id = g.id ORDER BY gt.target),
-			g.permission_exec, g.permission_shell, g.permission_upload, g.permission_download,
+			g.permission_exec, g.permission_shell, g.permission_unrestricted_shell, g.permission_upload, g.permission_download,
 			g.permission_history_read, g.permission_notes_read, g.permission_notes_write,
 			g.history_current_session, g.history_previous, g.history_other_agents, g.history_include_output,
 			g.security_epoch, g.issued_at, g.expires_at, g.revoked_at,
@@ -156,7 +156,7 @@ func (r *Repository) authenticate(ctx context.Context, predicate string, arg any
 	var dbNow time.Time
 	err := r.pool.QueryRow(ctx, query, arg).Scan(
 		&grant.ID, &tokenHash, &grant.Purpose, &grant.Agent, &grant.Targets,
-		&grant.Permissions.Exec, &grant.Permissions.Shell, &grant.Permissions.Upload, &grant.Permissions.Download,
+		&grant.Permissions.Exec, &grant.Permissions.Shell, &grant.Permissions.UnrestrictedShell, &grant.Permissions.Upload, &grant.Permissions.Download,
 		&grant.Permissions.HistoryRead, &grant.Permissions.NotesRead, &grant.Permissions.NotesWrite,
 		&grant.History.CurrentSession, &grant.History.Previous, &grant.History.OtherAgents, &grant.History.IncludeOutput,
 		&grantEpoch, &grant.IssuedAt, &grant.ExpiresAt, &grant.RevokedAt,
