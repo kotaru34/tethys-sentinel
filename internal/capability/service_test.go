@@ -92,3 +92,34 @@ func TestGlobalRevokePermanentlyInvalidatesOldCapabilities(t *testing.T) {
 		t.Fatalf("new epoch token rejected: %v", err)
 	}
 }
+
+
+func TestUnrestrictedShellRequiresExecAndShell(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 26, 18, 0, 0, 0, time.UTC)
+	svc := NewService(store.NewMemoryGrantStore())
+
+	for _, permissions := range []domain.Permissions{
+		{UnrestrictedShell: true},
+		{Exec: true, UnrestrictedShell: true},
+		{Shell: true, UnrestrictedShell: true},
+	} {
+		if _, _, err := svc.Issue(ctx, domain.Grant{
+			Permissions: permissions,
+			IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		}); err == nil {
+			t.Fatalf("invalid unrestricted shell permissions accepted: %+v", permissions)
+		}
+	}
+
+	grant, _, err := svc.Issue(ctx, domain.Grant{
+		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
+		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !grant.Permissions.UnrestrictedShell || !grant.Permissions.Exec || !grant.Permissions.Shell {
+		t.Fatalf("unrestricted shell authority was not preserved: %+v", grant.Permissions)
+	}
+}
