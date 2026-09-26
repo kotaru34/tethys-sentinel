@@ -46,6 +46,9 @@ func (s *Service) Issue(ctx context.Context, grant domain.Grant) (domain.Grant, 
 	if s == nil || s.backend == nil {
 		return domain.Grant{}, "", ErrBackendUnavailable
 	}
+	if err := validateGrantPermissions(grant.Permissions); err != nil {
+		return domain.Grant{}, "", err
+	}
 	if grant.ID == "" {
 		id, err := randomID()
 		if err != nil {
