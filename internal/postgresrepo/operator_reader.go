@@ -386,7 +386,7 @@ const operatorGrantSelect = `
 	SELECT
 		g.id, g.purpose, g.agent,
 		ARRAY(SELECT gt.target FROM sentinel.grant_targets gt WHERE gt.grant_id = g.id ORDER BY gt.target),
-		g.permission_exec, g.permission_shell, g.permission_upload, g.permission_download,
+		g.permission_exec, g.permission_shell, g.permission_unrestricted_shell, g.permission_upload, g.permission_download,
 		g.permission_history_read, g.permission_notes_read, g.permission_notes_write,
 		g.history_current_session, g.history_previous, g.history_other_agents, g.history_include_output,
 		g.security_epoch, g.issued_at, g.expires_at, g.revoked_at
@@ -407,7 +407,7 @@ func scanOperatorGrant(row rowScanner) (domain.Grant, error) {
 	var epoch int64
 	if err := row.Scan(
 		&grant.ID, &grant.Purpose, &grant.Agent, &grant.Targets,
-		&grant.Permissions.Exec, &grant.Permissions.Shell, &grant.Permissions.Upload, &grant.Permissions.Download,
+		&grant.Permissions.Exec, &grant.Permissions.Shell, &grant.Permissions.UnrestrictedShell, &grant.Permissions.Upload, &grant.Permissions.Download,
 		&grant.Permissions.HistoryRead, &grant.Permissions.NotesRead, &grant.Permissions.NotesWrite,
 		&grant.History.CurrentSession, &grant.History.Previous, &grant.History.OtherAgents, &grant.History.IncludeOutput,
 		&epoch, &grant.IssuedAt, &grant.ExpiresAt, &grant.RevokedAt,
