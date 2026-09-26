@@ -3,9 +3,10 @@ package domain
 import "time"
 
 type Permissions struct {
-	Exec        bool `json:"exec"`
-	Shell       bool `json:"shell"`
-	Upload      bool `json:"upload"`
+	Exec              bool `json:"exec"`
+	Shell             bool `json:"shell"`
+	UnrestrictedShell bool `json:"unrestricted_shell"`
+	Upload            bool `json:"upload"`
 	Download    bool `json:"download"`
 	HistoryRead bool `json:"history_read"`
 	NotesRead   bool `json:"notes_read"`
