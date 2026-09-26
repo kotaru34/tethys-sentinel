@@ -98,6 +98,8 @@ jobs:
           test "$(cat VERSION)" = '0.1.0-dev.31'
           mkdir -p out
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-control ./cmd/sentinel-control
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-gateway ./cmd/sentinel-gateway
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-operator ./cmd/sentinel-operator
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-egress-policy ./cmd/sentinel-egress-policy
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/sentinel-github-relay ./cmd/sentinel-github-relay
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o out/tethys-sentinel-exec ./cmd/tethys-sentinel-exec
@@ -106,6 +108,8 @@ jobs:
             cd out
             sha256sum \
               sentinel-control \
+              sentinel-gateway \
+              sentinel-operator \
               sentinel-egress-policy \
               sentinel-github-relay \
               tethys-sentinel-exec \
@@ -125,6 +129,8 @@ jobs:
           retention-days: 1
           path: |
             out/sentinel-control
+            out/sentinel-gateway
+            out/sentinel-operator
             out/sentinel-egress-policy
             out/sentinel-github-relay
             out/tethys-sentinel-exec
