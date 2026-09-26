@@ -3,6 +3,7 @@ import type { AuditEvent, Job } from "./types";
 export interface Permissions {
   exec: boolean;
   shell: boolean;
+  unrestricted_shell: boolean;
   upload: boolean;
   download: boolean;
   history_read: boolean;
