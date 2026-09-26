@@ -93,7 +93,6 @@ func TestGlobalRevokePermanentlyInvalidatesOldCapabilities(t *testing.T) {
 	}
 }
 
-
 func TestUnrestrictedShellRequiresExecAndShell(t *testing.T) {
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
 	svc := NewService(store.NewMemoryGrantStore())
@@ -105,7 +104,7 @@ func TestUnrestrictedShellRequiresExecAndShell(t *testing.T) {
 	} {
 		if _, _, err := svc.Issue(context.Background(), domain.Grant{
 			Agent: "test-agent", Targets: []string{"target-a"}, Permissions: permissions,
-			IssuedAt:    now, ExpiresAt: now.Add(time.Hour),
+			IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 		}); err == nil {
 			t.Fatalf("invalid unrestricted shell permissions were accepted: %+v", permissions)
 		}
@@ -114,7 +113,7 @@ func TestUnrestrictedShellRequiresExecAndShell(t *testing.T) {
 	grant, _, err := svc.Issue(context.Background(), domain.Grant{
 		Agent: "test-agent", Targets: []string{"target-a"},
 		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
-		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		IssuedAt:    now, ExpiresAt: now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
