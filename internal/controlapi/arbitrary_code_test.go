@@ -87,7 +87,7 @@ func TestUnrestrictedShellBypassesApprovalRequiredPolicy(t *testing.T) {
 
 	for i, argv := range [][]string{
 		{"/bin/bash", "-c", "id"},
-		{"rm", "/tmp/sentinel-unrestricted-shell-test"},
+		{"/bin/bash", "-c", "rm -f /tmp/sentinel-unrestricted-shell-test"},
 	} {
 		request := internalapi.SubmitCommandRequest{
 			TokenHash: encodeTokenHash(token),
@@ -110,6 +110,30 @@ func TestUnrestrictedShellBypassesApprovalRequiredPolicy(t *testing.T) {
 
 	if pending := a.approvals.Pending(ctx); len(pending) != 0 {
 		t.Fatalf("unrestricted shell created %d approval request(s)", len(pending))
+	}
+}
+
+func TestUnrestrictedShellDoesNotBypassStructuredRiskApprovals(t *testing.T) {
+	a := testAPI(t)
+	ctx := context.Background()
+	_, token, err := a.caps.Issue(ctx, domain.Grant{
+		Agent: "agent-a", Purpose: "operator accepted unrestricted shell risk", Targets: []string{"dns01"},
+		Permissions: domain.Permissions{Exec: true, Shell: true, UnrestrictedShell: true},
+		IssuedAt: a.now().Add(-time.Minute), ExpiresAt: a.now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status, response := submitRequest(t, a, internalapi.SubmitCommandRequest{
+		TokenHash: encodeTokenHash(token), RequestID: "req-unrestricted-structured",
+		Target: "dns01", Argv: []string{"systemctl", "restart", "pdns"},
+	})
+	if status != http.StatusOK || response.Decision != "approval_required" || response.Accepted || response.ApprovalID == "" {
+		t.Fatalf("structured risk approval was bypassed: status=%d response=%+v", status, response)
+	}
+	if risk.RequiresShell(response.Risk) {
+		t.Fatalf("structured risk unexpectedly classified as shell-required: %+v", response.Risk)
 	}
 }
 
