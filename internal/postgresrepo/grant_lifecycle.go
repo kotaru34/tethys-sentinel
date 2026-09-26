@@ -57,20 +57,20 @@ func (g *GrantLifecycle) Issue(ctx context.Context, grant domain.Grant) (domain.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO sentinel.grants (
 			id, token_hash, purpose, agent,
-			permission_exec, permission_shell, permission_upload, permission_download,
+			permission_exec, permission_shell, permission_unrestricted_shell, permission_upload, permission_download,
 			permission_history_read, permission_notes_read, permission_notes_write,
 			history_current_session, history_previous, history_other_agents, history_include_output,
 			security_epoch, issued_at, expires_at, revoked_at
 		) VALUES (
 			$1, $2, $3, $4,
-			$5, $6, $7, $8,
-			$9, $10, $11,
-			$12, $13, $14, $15,
-			$16, $17, $18, $19
+			$5, $6, $7, $8, $9,
+			$10, $11, $12,
+			$13, $14, $15, $16,
+			$17, $18, $19, $20
 		)
 	`,
 		prepared.ID, prepared.TokenHash[:], prepared.Purpose, prepared.Agent,
-		prepared.Permissions.Exec, prepared.Permissions.Shell, prepared.Permissions.Upload, prepared.Permissions.Download,
+		prepared.Permissions.Exec, prepared.Permissions.Shell, prepared.Permissions.UnrestrictedShell, prepared.Permissions.Upload, prepared.Permissions.Download,
 		prepared.Permissions.HistoryRead, prepared.Permissions.NotesRead, prepared.Permissions.NotesWrite,
 		prepared.History.CurrentSession, prepared.History.Previous, prepared.History.OtherAgents, prepared.History.IncludeOutput,
 		epoch, prepared.IssuedAt.UTC(), prepared.ExpiresAt.UTC(), prepared.RevokedAt,
