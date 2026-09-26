@@ -14,7 +14,7 @@ BEGIN
 
     SELECT version INTO v_version
     FROM sentinel.schema_version WHERE id = 1;
-    IF v_version <> 4 THEN
+    IF v_version <> 5 THEN
         RAISE EXCEPTION 'unexpected schema version: %', v_version;
     END IF;
 
@@ -117,6 +117,42 @@ BEGIN
     END;
 END
 $mcp_claim_constraints$;
+
+-- Unrestricted shell is an explicit stronger authority and cannot exist
+-- without both normal execution and shell permissions.
+DO $unrestricted_shell_constraints$
+BEGIN
+    BEGIN
+        INSERT INTO sentinel.grants (
+            id, token_hash, agent,
+            permission_exec, permission_shell, permission_unrestricted_shell,
+            security_epoch, issued_at, expires_at
+        ) VALUES (
+            'grant-bad-unrestricted', decode(repeat('66', 32), 'hex'), 'agent-a',
+            true, false, true,
+            0, clock_timestamp(), clock_timestamp() + interval '1 hour'
+        );
+        RAISE EXCEPTION 'unrestricted shell grant without shell permission was accepted';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
+
+    BEGIN
+        INSERT INTO sentinel.mcp_claims (
+            id, code_hash, purpose, agent,
+            permission_exec, permission_shell, permission_unrestricted_shell,
+            grant_ttl_seconds, security_epoch, issued_at, expires_at
+        ) VALUES (
+            'mcpclaim-bad-unrestricted', decode(repeat('77', 32), 'hex'), 'ci claim', 'agent-a',
+            true, false, true,
+            3600, 0, clock_timestamp(), clock_timestamp() + interval '1 minute'
+        );
+        RAISE EXCEPTION 'unrestricted shell MCP claim without shell permission was accepted';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
+END
+$unrestricted_shell_constraints$;
 
 -- Seed one valid grant for relational/uniqueness checks.
 INSERT INTO sentinel.grants (
