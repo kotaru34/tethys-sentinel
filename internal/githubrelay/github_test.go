@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -77,6 +78,106 @@ func TestGitHubAppMintsAndCachesInstallationToken(t *testing.T) {
 	}
 	if got := tokenRequests.Load(); got != 1 {
 		t.Fatalf("installation token requests = %d, want 1", got)
+	}
+}
+
+func TestInstallationTokenRetriesTransientEOF(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "app.pem")
+	data := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(keyPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var attempts atomic.Int32
+	client, err := NewGitHubClient(GitHubAppConfig{
+		AppID: 5, InstallationID: 7, PrivateKeyFile: keyPath,
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path != "/app/installations/7/access_tokens" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if attempts.Add(1) < 3 {
+					return nil, io.EOF
+				}
+				body := fmt.Sprintf(`{"token":"ghs_retry","expires_at":%q}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+				return &http.Response{
+					StatusCode: http.StatusCreated,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Request:    r,
+				}, nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := client.installationToken(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "ghs_retry" {
+		t.Fatalf("token = %q, want ghs_retry", token)
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestDefaultGitHubTransportUsesHTTP1Only(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "app.pem")
+	data := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(keyPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := NewGitHubClient(GitHubAppConfig{
+		AppID: 5, InstallationID: 7, PrivateKeyFile: keyPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("default transport type = %T, want *http.Transport", client.http.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatal("default GitHub transport unexpectedly honors proxy environment")
+	}
+	if transport.ForceAttemptHTTP2 {
+		t.Fatal("default GitHub transport unexpectedly forces HTTP/2")
+	}
+	if transport.Protocols != nil {
+		t.Fatal("default GitHub transport unexpectedly uses Protocols plumbing")
+	}
+	if transport.TLSNextProto == nil {
+		t.Fatal("default GitHub transport does not explicitly disable alternate TLS protocols")
+	}
+	if _, ok := transport.TLSNextProto["h2"]; ok {
+		t.Fatal("default GitHub transport unexpectedly enables h2")
+	}
+	if transport.TLSClientConfig == nil || len(transport.TLSClientConfig.NextProtos) != 1 || transport.TLSClientConfig.NextProtos[0] != "http/1.1" {
+		t.Fatalf("default GitHub ALPN = %#v, want only http/1.1", transport.TLSClientConfig)
+	}
+	if !transport.DisableKeepAlives {
+		t.Fatal("default GitHub transport unexpectedly reuses connections")
+	}
+	if transport.TLSHandshakeTimeout <= 0 || transport.ResponseHeaderTimeout <= 0 {
+		t.Fatal("default GitHub transport lost transport timeouts")
 	}
 }
 

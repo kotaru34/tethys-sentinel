@@ -34,6 +34,23 @@ func TestRequestCommentRoundTripAndMAC(t *testing.T) {
 	}
 }
 
+func TestBestEffortRequestIdentityFromMalformedJSON(t *testing.T) {
+	body := RequestMarker + `{"version":1,"session_id":"sgr_abcdefghijklmnop","sequence":7,"request_id":"request-0007","argv":["python","-c","line1
+line2"]}`
+	sessionID, sequence, requestID, ok := BestEffortRequestIdentity(body)
+	if !ok {
+		t.Fatal("failed to recover malformed request identity")
+	}
+	if sessionID != "sgr_abcdefghijklmnop" || sequence != 7 || requestID != "request-0007" {
+		t.Fatalf("unexpected recovered identity: session=%q sequence=%d request=%q", sessionID, sequence, requestID)
+	}
+
+	ambiguous := body + `{"session_id":"sgr_qrstuvwxyzABCDEF"}`
+	if _, _, _, ok := BestEffortRequestIdentity(ambiguous); ok {
+		t.Fatal("ambiguous malformed request identity was accepted")
+	}
+}
+
 func TestCanonicalMACSupportsUnicodeWithoutHTMLEscaping(t *testing.T) {
 	secret := testSecret()
 	req := RequestEnvelope{

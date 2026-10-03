@@ -96,6 +96,22 @@ func openRunnerTestStore(t *testing.T) *Store {
 	return store
 }
 
+func parsePostedResponses(t *testing.T, secret string, posted []string) []ResponseEnvelope {
+	t.Helper()
+	responses := make([]ResponseEnvelope, 0, len(posted))
+	for _, body := range posted {
+		response, err := ParseResponseComment(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := VerifyResponseMAC(secret, response); err != nil {
+			t.Fatal(err)
+		}
+		responses = append(responses, response)
+	}
+	return responses
+}
+
 func TestRunnerForwardsOnlyAuthenticatedRequestThroughAgentAPI(t *testing.T) {
 	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
 	store := openRunnerTestStore(t)
@@ -133,18 +149,19 @@ func TestRunnerForwardsOnlyAuthenticatedRequestThroughAgentAPI(t *testing.T) {
 	if agent.submits != 1 {
 		t.Fatalf("submits = %d, want 1", agent.submits)
 	}
-	if len(gh.posted) != 1 {
-		t.Fatalf("posted responses = %d, want 1", len(gh.posted))
+	responses := parsePostedResponses(t, s.Secret, gh.posted)
+	if len(responses) != 3 {
+		t.Fatalf("posted responses = %d, want received+accepted+completed", len(responses))
 	}
-	response, err := ParseResponseComment(gh.posted[0])
-	if err != nil {
-		t.Fatal(err)
+	if responses[0].Status != "received" {
+		t.Fatalf("first response = %+v, want received", responses[0])
 	}
-	if err := VerifyResponseMAC(s.Secret, response); err != nil {
-		t.Fatal(err)
+	if responses[1].Status != "accepted" || responses[1].JobID != job.ID {
+		t.Fatalf("second response = %+v, want accepted job %s", responses[1], job.ID)
 	}
+	response := responses[2]
 	if response.Status != "completed" || response.Success == nil || !*response.Success {
-		t.Fatalf("unexpected response: %+v", response)
+		t.Fatalf("unexpected terminal response: %+v", response)
 	}
 	stdout, err := base64.StdEncoding.DecodeString(response.StdoutB64)
 	if err != nil {
@@ -159,6 +176,54 @@ func TestRunnerForwardsOnlyAuthenticatedRequestThroughAgentAPI(t *testing.T) {
 	}
 	if !loaded.Closed || loaded.CommandsComplete != 1 || loaded.NextSequence != 2 || loaded.Inflight != nil {
 		t.Fatalf("unexpected persisted session: %+v", loaded)
+	}
+}
+
+func TestRunnerMalformedRequestIsSeenWithoutAuthStrike(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	malformed := RequestMarker + "{\"version\":1,\"session_id\":\"sgr_abcdefghijklmnop\",\"sequence\":1,\"request_id\":\"request-0001\",\"argv\":[\"python\",\"-c\",\"line1\nline2\"]}"
+	gh := &fakeGitHub{comments: []GitHubComment{{
+		ID: 10, Body: malformed, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now,
+	}}}
+	called := false
+	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) {
+		called = true
+		return nil, errors.New("must not be called")
+	}}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("malformed request reached Agent API")
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Closed {
+		t.Fatalf("malformed request closed session: %+v", loaded)
+	}
+	if loaded.FailedAuth != 0 {
+		t.Fatalf("failed_auth = %d, want 0", loaded.FailedAuth)
+	}
+	if _, ok := loaded.SeenComments["10"]; !ok {
+		t.Fatal("malformed request was not marked seen")
+	}
+	responses := parsePostedResponses(t, s.Secret, gh.posted)
+	if len(responses) != 1 || responses[0].Status != "relay_malformed" {
+		t.Fatalf("malformed request responses = %+v, want one relay_malformed NACK", responses)
+	}
+	if responses[0].SessionID != s.ID || !strings.Contains(responses[0].Error, "comment 10") {
+		t.Fatalf("malformed NACK did not identify the failed mailbox request: %+v", responses[0])
 	}
 }
 
@@ -303,16 +368,14 @@ func TestRunnerSentinel403BecomesTerminalSignedDenial(t *testing.T) {
 	if err := runner.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if agent.submits != 1 || len(gh.posted) != 1 {
-		t.Fatalf("submits=%d posted=%d", agent.submits, len(gh.posted))
+	if agent.submits != 1 {
+		t.Fatalf("submits=%d, want 1", agent.submits)
 	}
-	response, err := ParseResponseComment(gh.posted[0])
-	if err != nil {
-		t.Fatal(err)
+	responses := parsePostedResponses(t, s.Secret, gh.posted)
+	if len(responses) != 2 || responses[0].Status != "received" {
+		t.Fatalf("responses=%+v, want received then sentinel_denied", responses)
 	}
-	if err := VerifyResponseMAC(s.Secret, response); err != nil {
-		t.Fatal(err)
-	}
+	response := responses[1]
 	if response.Status != "sentinel_denied" || !strings.Contains(response.Error, "403") {
 		t.Fatalf("unexpected denial response: %+v", response)
 	}
@@ -468,6 +531,7 @@ func TestRunnerRestartRecoveryDoesNotResubmit(t *testing.T) {
 	agent := &fakeAgent{
 		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
 		request:   job,
+		job:       job,
 	}
 	gh := &fakeGitHub{}
 	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
@@ -576,6 +640,132 @@ func TestRunnerSeenCommentReplayDoesNotResubmit(t *testing.T) {
 	}
 	if agent.submits != 1 {
 		t.Fatalf("replayed comment caused %d submits, want 1", agent.submits)
+	}
+}
+
+func TestRunnerIntermediateResponsesAreIdempotent(t *testing.T) {
+	now := time.Date(2026, 9, 24, 20, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	req := RequestEnvelope{Version: ProtocolVersion, SessionID: "sgr_abcdefghijklmnop", Sequence: 1, RequestID: "request-0001", Target: "target-test", Argv: []string{"id"}}
+	s := Session{
+		Version: ProtocolVersion, ID: req.SessionID, Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: req.Target,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+		Inflight: &Inflight{
+			CommentID: 10, BodyHash: "durable", Request: req, JobID: "job-existing",
+			ReceivedPosted: true, AcceptedPosted: true,
+		},
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	job := internalapi.AgentExecutionJob{
+		ID: "job-existing", RequestID: req.RequestID, Target: req.Target, Argv: append([]string(nil), req.Argv...),
+		Status: executionjob.Succeeded, Result: &executionjob.Result{Success: true, ExitCode: 0},
+	}
+	agent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
+		request:   job,
+		job:       job,
+	}
+	gh := &fakeGitHub{}
+	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	responses := parsePostedResponses(t, s.Secret, gh.posted)
+	if len(responses) != 1 || responses[0].Status != "completed" {
+		t.Fatalf("restart reposted intermediate phases: %+v", responses)
+	}
+}
+
+func TestRunnerLongRunningSessionDoesNotBlockAnotherSession(t *testing.T) {
+	now := time.Date(2026, 9, 24, 20, 30, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+
+	firstReq := RequestEnvelope{Version: ProtocolVersion, SessionID: "sgr_aaaaaaaaaaaaaaaa", Sequence: 1, RequestID: "request-first", Target: "target-test", Argv: []string{"sleep", "30"}}
+	first := Session{
+		Version: ProtocolVersion, ID: firstReq.SessionID, Secret: testSecret(), Capability: "cap-first", GrantID: "grant-first",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: firstReq.Target,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+		Inflight: &Inflight{
+			CommentID: 9, BodyHash: "first", Request: firstReq, JobID: "job-first",
+			ReceivedPosted: true, AcceptedPosted: true,
+		},
+	}
+	if err := store.Save(first); err != nil {
+		t.Fatal(err)
+	}
+
+	second := Session{
+		Version: ProtocolVersion, ID: "sgr_bbbbbbbbbbbbbbbb", Secret: testSecret(), Capability: "cap-second", GrantID: "grant-second",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(second); err != nil {
+		t.Fatal(err)
+	}
+	secondReq := RequestEnvelope{SessionID: second.ID, Sequence: 1, RequestID: "request-second", Target: second.Target, Argv: []string{"id"}}
+	secondBody, err := BuildRequestComment(second.Secret, secondReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstJob := internalapi.AgentExecutionJob{
+		ID: "job-first", RequestID: firstReq.RequestID, Target: firstReq.Target, Argv: append([]string(nil), firstReq.Argv...),
+		Status: executionjob.Running,
+	}
+	secondJob := internalapi.AgentExecutionJob{
+		ID: "job-second", RequestID: secondReq.RequestID, Target: secondReq.Target, Argv: append([]string(nil), secondReq.Argv...),
+		Status: executionjob.Succeeded, Result: &executionjob.Result{Success: true, ExitCode: 0},
+	}
+	firstAgent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: first.GrantID, Targets: []string{first.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: first.ExpiresAt},
+		job:       firstJob,
+	}
+	secondAgent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: second.GrantID, Targets: []string{second.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: second.ExpiresAt},
+		submit: internalapi.SubmitCommandResponse{
+			Decision: "accepted", Accepted: true,
+			Job: &internalapi.ExecutionJobReceipt{ID: secondJob.ID, RequestID: secondReq.RequestID, Status: executionjob.Staged},
+		},
+		job: secondJob,
+	}
+	gh := &fakeGitHub{comments: []GitHubComment{{
+		ID: 10, Body: secondBody, User: GitHubUser{ID: second.ActorID}, CreatedAt: now, UpdatedAt: now,
+	}}}
+	runner := &Runner{
+		Store: store, GitHub: gh, Now: func() time.Time { return now },
+		AgentFactory: func(capability string) (Agent, error) {
+			switch capability {
+			case "cap-first":
+				return firstAgent, nil
+			case "cap-second":
+				return secondAgent, nil
+			default:
+				return nil, errors.New("unexpected capability")
+			}
+		},
+	}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if secondAgent.submits != 1 {
+		t.Fatalf("second session submits = %d, want 1", secondAgent.submits)
+	}
+	loadedFirst, err := store.Load(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedFirst.Inflight == nil || loadedFirst.CommandsComplete != 0 {
+		t.Fatalf("long-running first session unexpectedly completed: %+v", loadedFirst)
+	}
+	loadedSecond, err := store.Load(second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedSecond.Inflight != nil || loadedSecond.CommandsComplete != 1 {
+		t.Fatalf("second session was blocked by first session: %+v", loadedSecond)
 	}
 }
 

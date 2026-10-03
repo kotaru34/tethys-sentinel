@@ -152,13 +152,26 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 		}
 		req, err := ParseRequestComment(comment.Body)
 		if err != nil {
+			// Malformed JSON cannot be authenticated and therefore must never
+			// count as an auth strike. If we can unambiguously recover the bound
+			// session ID, return a signed transport NACK so malformed requests do
+			// not fail silently.
 			session.SeenComments[commentKey] = bodyHash
-			session.FailedAuth++
-			if session.FailedAuth >= MaximumFailedAuth {
-				session.Close("too many malformed relay requests")
+			if malformedSessionID, sequence, requestID, ok := BestEffortRequestIdentity(comment.Body); ok && malformedSessionID == session.ID {
+				response := ResponseEnvelope{
+					SessionID: session.ID, Sequence: sequence, RequestID: requestID,
+					Status: "relay_malformed",
+					Error:  fmt.Sprintf("GitHub comment %d is not a valid relay request: %v", comment.ID, err),
+				}
+				if postErr := r.postResponse(ctx, session, response); postErr != nil {
+					return errors.Join(err, postErr)
+				}
 			}
-			_ = r.Store.Save(*session)
-			return fmt.Errorf("malformed relay request comment %d: %w", comment.ID, err)
+			if saveErr := r.Store.Save(*session); saveErr != nil {
+				return saveErr
+			}
+			r.logf("ignored malformed relay request comment %d: %v", comment.ID, err)
+			continue
 		}
 		if req.SessionID != session.ID {
 			// A dedicated issue may be reused across relay sessions. Requests for
@@ -237,6 +250,9 @@ func (r *Runner) resumeInflight(ctx context.Context, session *Session) error {
 	if session.Inflight == nil {
 		return nil
 	}
+	if err := r.ensureReceived(ctx, session); err != nil {
+		return err
+	}
 	req := session.Inflight.Request
 	agent, err := r.AgentFactory(session.Capability)
 	if err != nil {
@@ -261,72 +277,93 @@ func (r *Runner) resumeInflight(ctx context.Context, session *Session) error {
 		return errors.New("underlying Sentinel grant expired or narrowed below relay lifetime")
 	}
 
+	// Never block the whole relay on one long-running job. Once a job ID is
+	// durable, inspect it once per outer poll so other relay sessions continue
+	// to receive intake/phase responses.
+	if session.Inflight.JobID != "" {
+		job, err := agent.Job(ctx, session.Inflight.JobID)
+		if err != nil {
+			return err
+		}
+		if err := validateRecoveredJob(req, job); err != nil {
+			return err
+		}
+		if err := r.ensureAccepted(ctx, session, job.ID, job.Status); err != nil {
+			return err
+		}
+		return r.finishJob(ctx, session, job)
+	}
+
 	job, recovered, err := r.recoverRequest(ctx, agent, req)
 	if err != nil {
 		return err
 	}
 	if recovered {
-		if session.Inflight.JobID == "" {
-			session.Inflight.JobID = job.ID
-			if err := r.Store.Save(*session); err != nil {
-				return err
-			}
-		}
-		return r.finishJob(ctx, session, agent, job)
-	}
-
-	for {
-		if !r.now().Before(session.ExpiresAt) {
-			return r.finishWithResponse(ctx, session, ResponseEnvelope{
-				SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
-				Status: "expired", Error: "relay session expired while waiting for Sentinel",
-			}, true)
-		}
-		response, err := agent.Submit(ctx, gatewayapi.CommandRequest{
-			RequestID: req.RequestID, Target: req.Target, Argv: append([]string(nil), req.Argv...),
-			AgentReason: req.AgentReason, TimeoutSeconds: req.TimeoutSeconds,
-		})
-		if err != nil {
-			if isAgentHTTPStatus(err, 401) {
-				session.Close("underlying Sentinel capability was revoked or expired")
-				_ = r.Store.Save(*session)
-				return err
-			}
-			if isAgentHTTPStatus(err, 403) {
-				return r.finishWithResponse(ctx, session, ResponseEnvelope{
-					SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
-					Status: "sentinel_denied", Error: err.Error(),
-				}, false)
-			}
+		session.Inflight.JobID = job.ID
+		if err := r.Store.Save(*session); err != nil {
 			return err
 		}
-		switch response.Decision {
-		case "accepted":
-			if response.Job == nil {
-				return errors.New("Sentinel accepted relay request without a job receipt")
-			}
-			session.Inflight.JobID = response.Job.ID
-			if err := r.Store.Save(*session); err != nil {
-				return err
-			}
-			job, err := agent.Job(ctx, response.Job.ID)
-			if err != nil {
-				return err
-			}
-			return r.finishJob(ctx, session, agent, job)
-		case "approval_required":
-			if err := sleepContext(ctx, r.approvalPoll()); err != nil {
-				return err
-			}
-			continue
-		case "deny":
+		if err := r.ensureAccepted(ctx, session, job.ID, job.Status); err != nil {
+			return err
+		}
+		return r.finishJob(ctx, session, job)
+	}
+
+	if !r.now().Before(session.ExpiresAt) {
+		return r.finishWithResponse(ctx, session, ResponseEnvelope{
+			SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+			Status: "expired", Error: "relay session expired while waiting for Sentinel",
+		}, true)
+	}
+
+	response, err := agent.Submit(ctx, gatewayapi.CommandRequest{
+		RequestID: req.RequestID, Target: req.Target, Argv: append([]string(nil), req.Argv...),
+		AgentReason: req.AgentReason, TimeoutSeconds: req.TimeoutSeconds,
+	})
+	if err != nil {
+		if isAgentHTTPStatus(err, 401) {
+			session.Close("underlying Sentinel capability was revoked or expired")
+			_ = r.Store.Save(*session)
+			return err
+		}
+		if isAgentHTTPStatus(err, 403) {
 			return r.finishWithResponse(ctx, session, ResponseEnvelope{
 				SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
-				Status: "sentinel_denied", Decision: response.Decision, ApprovalID: response.ApprovalID,
+				Status: "sentinel_denied", Error: err.Error(),
 			}, false)
-		default:
-			return fmt.Errorf("unexpected Sentinel decision %q", response.Decision)
 		}
+		return err
+	}
+
+	switch response.Decision {
+	case "accepted":
+		if response.Job == nil {
+			return errors.New("Sentinel accepted relay request without a job receipt")
+		}
+		session.Inflight.JobID = response.Job.ID
+		if err := r.Store.Save(*session); err != nil {
+			return err
+		}
+		if err := r.ensureAccepted(ctx, session, response.Job.ID, response.Job.Status); err != nil {
+			return err
+		}
+		job, err := agent.Job(ctx, response.Job.ID)
+		if err != nil {
+			return err
+		}
+		if err := validateRecoveredJob(req, job); err != nil {
+			return err
+		}
+		return r.finishJob(ctx, session, job)
+	case "approval_required":
+		return r.ensureApprovalRequired(ctx, session, response.ApprovalID)
+	case "deny":
+		return r.finishWithResponse(ctx, session, ResponseEnvelope{
+			SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+			Status: "sentinel_denied", Decision: response.Decision, ApprovalID: response.ApprovalID,
+		}, false)
+	default:
+		return fmt.Errorf("unexpected Sentinel decision %q", response.Decision)
 	}
 }
 
@@ -338,14 +375,66 @@ func (r *Runner) recoverRequest(ctx context.Context, agent Agent, req RequestEnv
 		}
 		return internalapi.AgentExecutionJob{}, false, err
 	}
-	if job.RequestID != req.RequestID || job.Target != req.Target || !slices.Equal(job.Argv, req.Argv) {
-		return internalapi.AgentExecutionJob{}, false, errors.New("Sentinel request recovery returned a different immutable binding")
+	if err := validateRecoveredJob(req, job); err != nil {
+		return internalapi.AgentExecutionJob{}, false, err
 	}
 	return job, true, nil
 }
 
-func (r *Runner) finishJob(ctx context.Context, session *Session, agent Agent, job internalapi.AgentExecutionJob) error {
-	for !terminalJob(job.Status) {
+func validateRecoveredJob(req RequestEnvelope, job internalapi.AgentExecutionJob) error {
+	if job.RequestID != req.RequestID || job.Target != req.Target || !slices.Equal(job.Argv, req.Argv) {
+		return errors.New("Sentinel request recovery returned a different immutable binding")
+	}
+	return nil
+}
+
+func (r *Runner) ensureReceived(ctx context.Context, session *Session) error {
+	if session.Inflight == nil || session.Inflight.ReceivedPosted {
+		return nil
+	}
+	req := session.Inflight.Request
+	if err := r.postResponse(ctx, session, ResponseEnvelope{
+		SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+		Status: "received",
+	}); err != nil {
+		return err
+	}
+	session.Inflight.ReceivedPosted = true
+	return r.Store.Save(*session)
+}
+
+func (r *Runner) ensureAccepted(ctx context.Context, session *Session, jobID string, jobStatus executionjob.Status) error {
+	if session.Inflight == nil || session.Inflight.AcceptedPosted {
+		return nil
+	}
+	req := session.Inflight.Request
+	if err := r.postResponse(ctx, session, ResponseEnvelope{
+		SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+		Status: "accepted", JobID: jobID, JobStatus: string(jobStatus),
+	}); err != nil {
+		return err
+	}
+	session.Inflight.AcceptedPosted = true
+	return r.Store.Save(*session)
+}
+
+func (r *Runner) ensureApprovalRequired(ctx context.Context, session *Session, approvalID string) error {
+	if session.Inflight == nil || session.Inflight.ApprovalPosted {
+		return nil
+	}
+	req := session.Inflight.Request
+	if err := r.postResponse(ctx, session, ResponseEnvelope{
+		SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+		Status: "approval_required", Decision: "approval_required", ApprovalID: approvalID,
+	}); err != nil {
+		return err
+	}
+	session.Inflight.ApprovalPosted = true
+	return r.Store.Save(*session)
+}
+
+func (r *Runner) finishJob(ctx context.Context, session *Session, job internalapi.AgentExecutionJob) error {
+	if !terminalJob(job.Status) {
 		if !r.now().Before(session.ExpiresAt) {
 			return r.finishWithResponse(ctx, session, ResponseEnvelope{
 				SessionID: session.ID, Sequence: session.Inflight.Request.Sequence, RequestID: session.Inflight.Request.RequestID,
@@ -353,14 +442,7 @@ func (r *Runner) finishJob(ctx context.Context, session *Session, agent Agent, j
 				Error: "relay session expired while job was still running",
 			}, true)
 		}
-		if err := sleepContext(ctx, r.jobPoll()); err != nil {
-			return err
-		}
-		var err error
-		job, err = agent.Job(ctx, job.ID)
-		if err != nil {
-			return err
-		}
+		return nil
 	}
 	response := r.responseFromJob(*session, job)
 	return r.finishWithResponse(ctx, session, response, false)

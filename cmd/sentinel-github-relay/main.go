@@ -112,7 +112,7 @@ func runAuthorize(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if err != nil {
 		return report(stderr, err)
 	}
-	agent, err := agentclient.New(agentclient.Config{BaseURL: *baseURL, Capability: capToken, CAFile: *caFile})
+	agent, err := agentclient.New(agentclient.Config{BaseURL: *baseURL, Capability: capToken, CAFile: *caFile, HTTP1Only: true})
 	if err != nil {
 		return report(stderr, err)
 	}
@@ -299,7 +299,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer, look
 	runner := &githubrelay.Runner{
 		Store: store, GitHub: gh, PollInterval: *poll,
 		AgentFactory: func(token string) (githubrelay.Agent, error) {
-			return agentclient.New(agentclient.Config{BaseURL: *baseURL, Capability: token, CAFile: *caFile})
+			return agentclient.New(agentclient.Config{BaseURL: *baseURL, Capability: token, CAFile: *caFile, HTTP1Only: true})
 		},
 		Logf: func(format string, values ...any) {
 			fmt.Fprintf(stderr, "sentinel-github-relay: "+format+"\n", values...)

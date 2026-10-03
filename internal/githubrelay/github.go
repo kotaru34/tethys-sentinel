@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -117,7 +119,22 @@ func NewGitHubClient(cfg GitHubAppConfig) (*GitHubClient, error) {
 	}
 	client := cfg.HTTPClient
 	if client == nil {
-		transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: true}
+		// Production has shown reproducible EOFs in Go 1.27's GitHub HTTPS path
+		// while the same authenticated HTTP/1.1 request succeeds via curl. Avoid
+		// the newer Protocols plumbing entirely and use the historical, explicit
+		// HTTP/2 disable path. Advertising only http/1.1 via ALPN and disabling
+		// keep-alives also makes each exchange closely match the proven curl path.
+		dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+		transport := &http.Transport{
+			Proxy:                 nil,
+			DialContext:           dialer.DialContext,
+			ForceAttemptHTTP2:     false,
+			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}},
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second,
+			DisableKeepAlives:     true,
+			TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
+		}
 		client = &http.Client{
 			Transport: transport,
 			Timeout:   20 * time.Second,
@@ -229,8 +246,22 @@ func (c *GitHubClient) installationToken(ctx context.Context) (string, error) {
 			"metadata": "read",
 		},
 	}
-	if _, err := c.doJSON(ctx, http.MethodPost, path, request, jwt, "", &response, nil, nil); err != nil {
-		return "", fmt.Errorf("mint GitHub App installation token: %w", err)
+	var mintErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		response = githubInstallationToken{}
+		_, mintErr = c.doJSON(ctx, http.MethodPost, path, request, jwt, "", &response, nil, nil)
+		if mintErr == nil {
+			break
+		}
+		if !retryableGitHubTransportError(mintErr) || attempt == 2 {
+			return "", fmt.Errorf("mint GitHub App installation token: %w", mintErr)
+		}
+		if transport, ok := c.http.Transport.(interface{ CloseIdleConnections() }); ok {
+			transport.CloseIdleConnections()
+		}
+		if err := sleepContext(ctx, time.Duration(attempt+1)*250*time.Millisecond); err != nil {
+			return "", fmt.Errorf("mint GitHub App installation token: %w", err)
+		}
 	}
 	if strings.TrimSpace(response.Token) == "" || response.ExpiresAt.IsZero() {
 		return "", errors.New("GitHub returned an invalid installation token response")
@@ -327,6 +358,20 @@ func (c *GitHubClient) doJSON(ctx context.Context, method, path string, body any
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+func retryableGitHubTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return false
 }
 
 func retryAfter(header http.Header, now time.Time) time.Duration {

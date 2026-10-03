@@ -45,6 +45,7 @@ type Config struct {
 	Capability string
 	CAFile     string
 	Timeout    time.Duration
+	HTTP1Only  bool
 }
 
 func New(cfg Config) (*Client, error) {
@@ -59,10 +60,17 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport := &http.Transport{
-		Proxy:             nil,
-		ForceAttemptHTTP2: true,
-		TLSClientConfig:   tlsConfig,
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.TLSClientConfig = tlsConfig
+	if cfg.HTTP1Only {
+		transport.ForceAttemptHTTP2 = false
+		transport.Protocols = nil
+		transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
+		transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+		transport.DisableKeepAlives = true
+	} else {
+		transport.ForceAttemptHTTP2 = true
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
