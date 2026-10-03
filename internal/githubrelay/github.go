@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -118,16 +119,22 @@ func NewGitHubClient(cfg GitHubAppConfig) (*GitHubClient, error) {
 	}
 	client := cfg.HTTPClient
 	if client == nil {
-		// GitHub REST does not require HTTP/2. Keep the relay on HTTP/1.1 so a
-		// wedged long-lived HTTP/2 connection cannot stall every poll until the
-		// service is restarted. Clone DefaultTransport to retain Go's standard
-		// dial, TLS handshake, keepalive, and idle-connection timeouts.
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.Proxy = nil
-		transport.ForceAttemptHTTP2 = false
-		protocols := new(http.Protocols)
-		protocols.SetHTTP1(true)
-		transport.Protocols = protocols
+		// Production has shown reproducible EOFs in Go 1.27's GitHub HTTPS path
+		// while the same authenticated HTTP/1.1 request succeeds via curl. Avoid
+		// the newer Protocols plumbing entirely and use the historical, explicit
+		// HTTP/2 disable path. Advertising only http/1.1 via ALPN and disabling
+		// keep-alives also makes each exchange closely match the proven curl path.
+		dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+		transport := &http.Transport{
+			Proxy:                 nil,
+			DialContext:           dialer.DialContext,
+			ForceAttemptHTTP2:     false,
+			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}},
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second,
+			DisableKeepAlives:     true,
+			TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
+		}
 		client = &http.Client{
 			Transport: transport,
 			Timeout:   20 * time.Second,
