@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +32,10 @@ const (
 var (
 	ErrNotRelayRequest = errors.New("not a Tethys Sentinel relay request")
 	ErrInvalidMAC      = errors.New("invalid relay request MAC")
+
+	malformedSessionFieldPattern   = regexp.MustCompile(`"session_id"\s*:\s*"([^"\\\r\n]{1,128})"`)
+	malformedSequenceFieldPattern  = regexp.MustCompile(`"sequence"\s*:\s*([0-9]{1,20})`)
+	malformedRequestIDFieldPattern = regexp.MustCompile(`"request_id"\s*:\s*"([^"\\\r\n]{1,128})"`)
 )
 
 type RequestEnvelope struct {
@@ -180,6 +186,40 @@ func ParseRequestComment(body string) (RequestEnvelope, error) {
 		return RequestEnvelope{}, fmt.Errorf("decode relay request: %w", err)
 	}
 	return req, nil
+}
+
+// BestEffortRequestIdentity extracts only enough identity from a malformed
+// request comment to return a signed transport error to the intended relay
+// session. The extracted fields are never used to authorize execution.
+func BestEffortRequestIdentity(body string) (sessionID string, sequence uint64, requestID string, ok bool) {
+	if len(body) > maxCommentBytes {
+		return "", 0, "", false
+	}
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, strings.TrimSpace(RequestMarker)) {
+		return "", 0, "", false
+	}
+
+	sessionMatches := malformedSessionFieldPattern.FindAllStringSubmatch(body, -1)
+	if len(sessionMatches) != 1 || len(sessionMatches[0]) != 2 {
+		return "", 0, "", false
+	}
+	sessionID = sessionMatches[0][1]
+	if !sessionIDPattern.MatchString(sessionID) {
+		return "", 0, "", false
+	}
+
+	sequenceMatches := malformedSequenceFieldPattern.FindAllStringSubmatch(body, -1)
+	if len(sequenceMatches) == 1 && len(sequenceMatches[0]) == 2 {
+		if parsed, err := strconv.ParseUint(sequenceMatches[0][1], 10, 64); err == nil {
+			sequence = parsed
+		}
+	}
+	requestMatches := malformedRequestIDFieldPattern.FindAllStringSubmatch(body, -1)
+	if len(requestMatches) == 1 && len(requestMatches[0]) == 2 {
+		requestID = requestMatches[0][1]
+	}
+	return sessionID, sequence, requestID, true
 }
 
 func BuildResponseComment(secret string, response ResponseEnvelope) (string, error) {
