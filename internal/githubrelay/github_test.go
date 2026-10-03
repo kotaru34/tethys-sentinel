@@ -161,17 +161,23 @@ func TestDefaultGitHubTransportUsesHTTP1Only(t *testing.T) {
 	if transport.ForceAttemptHTTP2 {
 		t.Fatal("default GitHub transport unexpectedly forces HTTP/2")
 	}
-	if transport.Protocols == nil {
-		t.Fatal("default GitHub transport protocols are nil")
+	if transport.Protocols != nil {
+		t.Fatal("default GitHub transport unexpectedly uses Protocols plumbing")
 	}
-	if !transport.Protocols.HTTP1() || transport.Protocols.HTTP2() || transport.Protocols.UnencryptedHTTP2() {
-		t.Fatalf("default GitHub transport protocols = %s, want HTTP/1 only", transport.Protocols)
+	if transport.TLSNextProto == nil {
+		t.Fatal("default GitHub transport does not explicitly disable alternate TLS protocols")
 	}
-	if transport.TLSHandshakeTimeout <= 0 {
-		t.Fatal("default GitHub transport lost TLS handshake timeout")
+	if _, ok := transport.TLSNextProto["h2"]; ok {
+		t.Fatal("default GitHub transport unexpectedly enables h2")
 	}
-	if transport.IdleConnTimeout <= 0 {
-		t.Fatal("default GitHub transport lost idle connection timeout")
+	if transport.TLSClientConfig == nil || len(transport.TLSClientConfig.NextProtos) != 1 || transport.TLSClientConfig.NextProtos[0] != "http/1.1" {
+		t.Fatalf("default GitHub ALPN = %#v, want only http/1.1", transport.TLSClientConfig)
+	}
+	if !transport.DisableKeepAlives {
+		t.Fatal("default GitHub transport unexpectedly reuses connections")
+	}
+	if transport.TLSHandshakeTimeout <= 0 || transport.ResponseHeaderTimeout <= 0 {
+		t.Fatal("default GitHub transport lost transport timeouts")
 	}
 }
 
