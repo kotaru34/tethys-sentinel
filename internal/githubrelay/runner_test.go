@@ -677,6 +677,96 @@ func TestRunnerIntermediateResponsesAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestRunnerLongRunningSessionDoesNotBlockAnotherSession(t *testing.T) {
+	now := time.Date(2026, 9, 24, 20, 30, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+
+	firstReq := RequestEnvelope{Version: ProtocolVersion, SessionID: "sgr_aaaaaaaaaaaaaaaa", Sequence: 1, RequestID: "request-first", Target: "target-test", Argv: []string{"sleep", "30"}}
+	first := Session{
+		Version: ProtocolVersion, ID: firstReq.SessionID, Secret: testSecret(), Capability: "cap-first", GrantID: "grant-first",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: firstReq.Target,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+		Inflight: &Inflight{
+			CommentID: 9, BodyHash: "first", Request: firstReq, JobID: "job-first",
+			ReceivedPosted: true, AcceptedPosted: true,
+		},
+	}
+	if err := store.Save(first); err != nil {
+		t.Fatal(err)
+	}
+
+	second := Session{
+		Version: ProtocolVersion, ID: "sgr_bbbbbbbbbbbbbbbb", Secret: testSecret(), Capability: "cap-second", GrantID: "grant-second",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(second); err != nil {
+		t.Fatal(err)
+	}
+	secondReq := RequestEnvelope{SessionID: second.ID, Sequence: 1, RequestID: "request-second", Target: second.Target, Argv: []string{"id"}}
+	secondBody, err := BuildRequestComment(second.Secret, secondReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstJob := internalapi.AgentExecutionJob{
+		ID: "job-first", RequestID: firstReq.RequestID, Target: firstReq.Target, Argv: append([]string(nil), firstReq.Argv...),
+		Status: executionjob.Running,
+	}
+	secondJob := internalapi.AgentExecutionJob{
+		ID: "job-second", RequestID: secondReq.RequestID, Target: secondReq.Target, Argv: append([]string(nil), secondReq.Argv...),
+		Status: executionjob.Succeeded, Result: &executionjob.Result{Success: true, ExitCode: 0},
+	}
+	firstAgent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: first.GrantID, Targets: []string{first.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: first.ExpiresAt},
+		job: firstJob,
+	}
+	secondAgent := &fakeAgent{
+		bootstrap: domain.Bootstrap{SessionID: second.GrantID, Targets: []string{second.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: second.ExpiresAt},
+		submit: internalapi.SubmitCommandResponse{
+			Decision: "accepted", Accepted: true,
+			Job: &internalapi.ExecutionJobReceipt{ID: secondJob.ID, RequestID: secondReq.RequestID, Status: executionjob.Staged},
+		},
+		job: secondJob,
+	}
+	gh := &fakeGitHub{comments: []GitHubComment{{
+		ID: 10, Body: secondBody, User: GitHubUser{ID: second.ActorID}, CreatedAt: now, UpdatedAt: now,
+	}}}
+	runner := &Runner{
+		Store: store, GitHub: gh, Now: func() time.Time { return now },
+		AgentFactory: func(capability string) (Agent, error) {
+			switch capability {
+			case "cap-first":
+				return firstAgent, nil
+			case "cap-second":
+				return secondAgent, nil
+			default:
+				return nil, errors.New("unexpected capability")
+			}
+		},
+	}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if secondAgent.submits != 1 {
+		t.Fatalf("second session submits = %d, want 1", secondAgent.submits)
+	}
+	loadedFirst, err := store.Load(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedFirst.Inflight == nil || loadedFirst.CommandsComplete != 0 {
+		t.Fatalf("long-running first session unexpectedly completed: %+v", loadedFirst)
+	}
+	loadedSecond, err := store.Load(second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedSecond.Inflight != nil || loadedSecond.CommandsComplete != 1 {
+		t.Fatalf("second session was blocked by first session: %+v", loadedSecond)
+	}
+}
+
 func TestRunnerIgnoresRequestsForOtherRelaySessions(t *testing.T) {
 	now := time.Date(2026, 9, 24, 21, 0, 0, 0, time.UTC)
 	store := openRunnerTestStore(t)
