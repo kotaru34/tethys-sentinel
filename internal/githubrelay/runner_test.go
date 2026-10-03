@@ -664,7 +664,7 @@ func TestRunnerIntermediateResponsesAreIdempotent(t *testing.T) {
 	}
 	agent := &fakeAgent{
 		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
-		request: job,
+		request:   job,
 	}
 	gh := &fakeGitHub{}
 	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
