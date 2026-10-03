@@ -152,17 +152,26 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 		}
 		req, err := ParseRequestComment(comment.Body)
 		if err != nil {
-			// A syntactically malformed envelope cannot be authenticated because
-			// its session_id and MAC are not trustworthy yet. Treat it as mailbox
-			// noise from the bound actor, remember it once, and keep polling.
-			// Invalid MACs on successfully parsed envelopes still count toward
-			// FailedAuth below.
+			// Malformed JSON cannot be authenticated and therefore must never
+			// count as an auth strike. If we can unambiguously recover the bound
+			// session ID, return a signed transport NACK so malformed requests do
+			// not fail silently.
 			session.SeenComments[commentKey] = bodyHash
+			if malformedSessionID, sequence, requestID, ok := BestEffortRequestIdentity(comment.Body); ok && malformedSessionID == session.ID {
+				response := ResponseEnvelope{
+					SessionID: session.ID, Sequence: sequence, RequestID: requestID,
+					Status: "relay_malformed",
+					Error:  fmt.Sprintf("GitHub comment %d is not a valid relay request: %v", comment.ID, err),
+				}
+				if postErr := r.postResponse(ctx, session, response); postErr != nil {
+					return errors.Join(err, postErr)
+				}
+			}
 			if saveErr := r.Store.Save(*session); saveErr != nil {
 				return saveErr
 			}
-			r.logf("ignoring malformed relay request comment %d: %v", comment.ID, err)
-			return nil
+			r.logf("ignored malformed relay request comment %d: %v", comment.ID, err)
+			continue
 		}
 		if req.SessionID != session.ID {
 			// A dedicated issue may be reused across relay sessions. Requests for
@@ -241,6 +250,9 @@ func (r *Runner) resumeInflight(ctx context.Context, session *Session) error {
 	if session.Inflight == nil {
 		return nil
 	}
+	if err := r.ensureReceived(ctx, session); err != nil {
+		return err
+	}
 	req := session.Inflight.Request
 	agent, err := r.AgentFactory(session.Capability)
 	if err != nil {
@@ -275,6 +287,9 @@ func (r *Runner) resumeInflight(ctx context.Context, session *Session) error {
 			if err := r.Store.Save(*session); err != nil {
 				return err
 			}
+		}
+		if err := r.ensureAccepted(ctx, session, job.ID, job.Status); err != nil {
+			return err
 		}
 		return r.finishJob(ctx, session, agent, job)
 	}
@@ -313,12 +328,18 @@ func (r *Runner) resumeInflight(ctx context.Context, session *Session) error {
 			if err := r.Store.Save(*session); err != nil {
 				return err
 			}
+			if err := r.ensureAccepted(ctx, session, response.Job.ID, response.Job.Status); err != nil {
+				return err
+			}
 			job, err := agent.Job(ctx, response.Job.ID)
 			if err != nil {
 				return err
 			}
 			return r.finishJob(ctx, session, agent, job)
 		case "approval_required":
+			if err := r.ensureApprovalRequired(ctx, session, response.ApprovalID); err != nil {
+				return err
+			}
 			if err := sleepContext(ctx, r.approvalPoll()); err != nil {
 				return err
 			}
@@ -346,6 +367,51 @@ func (r *Runner) recoverRequest(ctx context.Context, agent Agent, req RequestEnv
 		return internalapi.AgentExecutionJob{}, false, errors.New("Sentinel request recovery returned a different immutable binding")
 	}
 	return job, true, nil
+}
+
+func (r *Runner) ensureReceived(ctx context.Context, session *Session) error {
+	if session.Inflight == nil || session.Inflight.ReceivedPosted {
+		return nil
+	}
+	req := session.Inflight.Request
+	if err := r.postResponse(ctx, session, ResponseEnvelope{
+		SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+		Status: "received",
+	}); err != nil {
+		return err
+	}
+	session.Inflight.ReceivedPosted = true
+	return r.Store.Save(*session)
+}
+
+func (r *Runner) ensureAccepted(ctx context.Context, session *Session, jobID string, jobStatus executionjob.Status) error {
+	if session.Inflight == nil || session.Inflight.AcceptedPosted {
+		return nil
+	}
+	req := session.Inflight.Request
+	if err := r.postResponse(ctx, session, ResponseEnvelope{
+		SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+		Status: "accepted", JobID: jobID, JobStatus: string(jobStatus),
+	}); err != nil {
+		return err
+	}
+	session.Inflight.AcceptedPosted = true
+	return r.Store.Save(*session)
+}
+
+func (r *Runner) ensureApprovalRequired(ctx context.Context, session *Session, approvalID string) error {
+	if session.Inflight == nil || session.Inflight.ApprovalPosted {
+		return nil
+	}
+	req := session.Inflight.Request
+	if err := r.postResponse(ctx, session, ResponseEnvelope{
+		SessionID: session.ID, Sequence: req.Sequence, RequestID: req.RequestID,
+		Status: "approval_required", Decision: "approval_required", ApprovalID: approvalID,
+	}); err != nil {
+		return err
+	}
+	session.Inflight.ApprovalPosted = true
+	return r.Store.Save(*session)
 }
 
 func (r *Runner) finishJob(ctx context.Context, session *Session, agent Agent, job internalapi.AgentExecutionJob) error {
