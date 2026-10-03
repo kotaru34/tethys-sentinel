@@ -117,7 +117,16 @@ func NewGitHubClient(cfg GitHubAppConfig) (*GitHubClient, error) {
 	}
 	client := cfg.HTTPClient
 	if client == nil {
-		transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: true}
+		// GitHub REST does not require HTTP/2. Keep the relay on HTTP/1.1 so a
+		// wedged long-lived HTTP/2 connection cannot stall every poll until the
+		// service is restarted. Clone DefaultTransport to retain Go's standard
+		// dial, TLS handshake, keepalive, and idle-connection timeouts.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		transport.ForceAttemptHTTP2 = false
+		protocols := new(http.Protocols)
+		protocols.SetHTTP1(true)
+		transport.Protocols = protocols
 		client = &http.Client{
 			Transport: transport,
 			Timeout:   20 * time.Second,
