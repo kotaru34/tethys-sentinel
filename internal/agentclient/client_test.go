@@ -65,8 +65,20 @@ func TestClientHTTP1OnlyTransport(t *testing.T) {
 	if transport.ForceAttemptHTTP2 {
 		t.Fatal("HTTP1-only client unexpectedly forces HTTP/2")
 	}
-	if transport.Protocols == nil || !transport.Protocols.HTTP1() || transport.Protocols.HTTP2() || transport.Protocols.UnencryptedHTTP2() {
-		t.Fatalf("HTTP1-only protocols = %v", transport.Protocols)
+	if transport.Protocols != nil {
+		t.Fatal("HTTP1-only client unexpectedly uses Protocols plumbing")
+	}
+	if transport.TLSNextProto == nil {
+		t.Fatal("HTTP1-only client does not explicitly disable alternate TLS protocols")
+	}
+	if _, ok := transport.TLSNextProto["h2"]; ok {
+		t.Fatal("HTTP1-only client unexpectedly enables h2")
+	}
+	if transport.TLSClientConfig == nil || len(transport.TLSClientConfig.NextProtos) != 1 || transport.TLSClientConfig.NextProtos[0] != "http/1.1" {
+		t.Fatalf("HTTP1-only ALPN = %#v, want only http/1.1", transport.TLSClientConfig)
+	}
+	if !transport.DisableKeepAlives {
+		t.Fatal("HTTP1-only client unexpectedly reuses connections")
 	}
 	if transport.TLSHandshakeTimeout <= 0 || transport.IdleConnTimeout <= 0 {
 		t.Fatal("HTTP1-only transport lost standard transport timeouts")
