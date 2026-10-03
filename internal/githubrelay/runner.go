@@ -152,13 +152,17 @@ func (r *Runner) processSession(ctx context.Context, session *Session) error {
 		}
 		req, err := ParseRequestComment(comment.Body)
 		if err != nil {
+			// A syntactically malformed envelope cannot be authenticated because
+			// its session_id and MAC are not trustworthy yet. Treat it as mailbox
+			// noise from the bound actor, remember it once, and keep polling.
+			// Invalid MACs on successfully parsed envelopes still count toward
+			// FailedAuth below.
 			session.SeenComments[commentKey] = bodyHash
-			session.FailedAuth++
-			if session.FailedAuth >= MaximumFailedAuth {
-				session.Close("too many malformed relay requests")
+			if saveErr := r.Store.Save(*session); saveErr != nil {
+				return saveErr
 			}
-			_ = r.Store.Save(*session)
-			return fmt.Errorf("malformed relay request comment %d: %w", comment.ID, err)
+			r.logf("ignoring malformed relay request comment %d: %v", comment.ID, err)
+			return nil
 		}
 		if req.SessionID != session.ID {
 			// A dedicated issue may be reused across relay sessions. Requests for
