@@ -190,7 +190,7 @@ func TestRunnerMalformedRequestIsSeenWithoutAuthStrike(t *testing.T) {
 	if err := store.Save(s); err != nil {
 		t.Fatal(err)
 	}
-	malformed := RequestMarker + `{"version":1,"session_id":"sgr_abcdefghijklmnop","argv":["python","-c","print("]}`
+	malformed := RequestMarker + "{\"version\":1,\"session_id\":\"sgr_abcdefghijklmnop\",\"sequence\":1,\"request_id\":\"request-0001\",\"argv\":[\"python\",\"-c\",\"line1\nline2\"]}"
 	gh := &fakeGitHub{comments: []GitHubComment{{
 		ID: 10, Body: malformed, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now,
 	}}}
@@ -531,6 +531,7 @@ func TestRunnerRestartRecoveryDoesNotResubmit(t *testing.T) {
 	agent := &fakeAgent{
 		bootstrap: domain.Bootstrap{SessionID: s.GrantID, Targets: []string{s.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: s.ExpiresAt},
 		request:   job,
+		job:       job,
 	}
 	gh := &fakeGitHub{}
 	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) { return agent, nil }}
