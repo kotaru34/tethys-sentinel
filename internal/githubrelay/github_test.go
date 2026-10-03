@@ -80,6 +80,47 @@ func TestGitHubAppMintsAndCachesInstallationToken(t *testing.T) {
 	}
 }
 
+func TestDefaultGitHubTransportUsesHTTP1Only(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "app.pem")
+	data := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(keyPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := NewGitHubClient(GitHubAppConfig{
+		AppID: 5, InstallationID: 7, PrivateKeyFile: keyPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("default transport type = %T, want *http.Transport", client.http.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatal("default GitHub transport unexpectedly honors proxy environment")
+	}
+	if transport.ForceAttemptHTTP2 {
+		t.Fatal("default GitHub transport unexpectedly forces HTTP/2")
+	}
+	if transport.Protocols == nil {
+		t.Fatal("default GitHub transport protocols are nil")
+	}
+	if !transport.Protocols.HTTP1() || transport.Protocols.HTTP2() || transport.Protocols.UnencryptedHTTP2() {
+		t.Fatalf("default GitHub transport protocols = %s, want HTTP/1 only", transport.Protocols)
+	}
+	if transport.TLSHandshakeTimeout <= 0 {
+		t.Fatal("default GitHub transport lost TLS handshake timeout")
+	}
+	if transport.IdleConnTimeout <= 0 {
+		t.Fatal("default GitHub transport lost idle connection timeout")
+	}
+}
+
 func TestCommentsConditionalRequest(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
