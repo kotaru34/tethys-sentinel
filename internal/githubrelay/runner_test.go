@@ -162,6 +162,47 @@ func TestRunnerForwardsOnlyAuthenticatedRequestThroughAgentAPI(t *testing.T) {
 	}
 }
 
+func TestRunnerMalformedRequestIsSeenWithoutAuthStrike(t *testing.T) {
+	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	store := openRunnerTestStore(t)
+	s := Session{
+		Version: ProtocolVersion, ID: "sgr_abcdefghijklmnop", Secret: testSecret(), Capability: "tsc_local-only", GrantID: "grant-1",
+		Repository: "example/relay", RepositoryID: 1, IssueNumber: 2, IssueID: 3, ActorID: 42, Target: "target-test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour), MaxCommands: 2, NextSequence: 1,
+	}
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	malformed := RequestMarker + `{"version":1,"session_id":"sgr_abcdefghijklmnop","argv":["python","-c","print("]}`
+	gh := &fakeGitHub{comments: []GitHubComment{{
+		ID: 10, Body: malformed, User: GitHubUser{ID: s.ActorID}, CreatedAt: now, UpdatedAt: now,
+	}}}
+	called := false
+	runner := &Runner{Store: store, GitHub: gh, Now: func() time.Time { return now }, AgentFactory: func(string) (Agent, error) {
+		called = true
+		return nil, errors.New("must not be called")
+	}}
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("malformed request reached Agent API")
+	}
+	loaded, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Closed {
+		t.Fatalf("malformed request closed session: %+v", loaded)
+	}
+	if loaded.FailedAuth != 0 {
+		t.Fatalf("failed_auth = %d, want 0", loaded.FailedAuth)
+	}
+	if _, ok := loaded.SeenComments["10"]; !ok {
+		t.Fatal("malformed request was not marked seen")
+	}
+}
+
 func TestRunnerInvalidMACNeverReachesAgent(t *testing.T) {
 	now := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
 	store := openRunnerTestStore(t)
