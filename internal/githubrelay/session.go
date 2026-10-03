@@ -24,13 +24,13 @@ const (
 var sessionIDPattern = regexp.MustCompile(`^sgr_[A-Za-z0-9_-]{16,64}$`)
 
 type Inflight struct {
-	CommentID        int64           `json:"comment_id"`
-	BodyHash         string          `json:"body_sha256"`
-	Request          RequestEnvelope `json:"request"`
-	JobID            string          `json:"job_id,omitempty"`
-	ReceivedPosted   bool            `json:"received_posted,omitempty"`
-	AcceptedPosted   bool            `json:"accepted_posted,omitempty"`
-	ApprovalPosted   bool            `json:"approval_posted,omitempty"`
+	CommentID      int64           `json:"comment_id"`
+	BodyHash       string          `json:"body_sha256"`
+	Request        RequestEnvelope `json:"request"`
+	JobID          string          `json:"job_id,omitempty"`
+	ReceivedPosted bool            `json:"received_posted,omitempty"`
+	AcceptedPosted bool            `json:"accepted_posted,omitempty"`
+	ApprovalPosted bool            `json:"approval_posted,omitempty"`
 }
 
 type Session struct {
