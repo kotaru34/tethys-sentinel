@@ -42,6 +42,40 @@ func TestClientUsesBearerAndPinnedCA(t *testing.T) {
 	}
 }
 
+func TestClientHTTP1OnlyTransport(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"session_id":"g1","agent":"test","targets":["t1"],"permissions":{},"history":{},"resources":{"context":"/v1/context"},"issued_at":"2026-09-15T00:00:00Z","expires_at":"2026-09-15T01:00:00Z","authoritative":{"trust_level":"TRUST_0","statement":"trusted"}}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Config{
+		BaseURL:    server.URL,
+		Capability: strings.Repeat("x", 40),
+		CAFile:     writeServerCert(t, server),
+		HTTP1Only:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", client.http.Transport)
+	}
+	if transport.ForceAttemptHTTP2 {
+		t.Fatal("HTTP1-only client unexpectedly forces HTTP/2")
+	}
+	if transport.Protocols == nil || !transport.Protocols.HTTP1() || transport.Protocols.HTTP2() || transport.Protocols.UnencryptedHTTP2() {
+		t.Fatalf("HTTP1-only protocols = %v", transport.Protocols)
+	}
+	if transport.TLSHandshakeTimeout <= 0 || transport.IdleConnTimeout <= 0 {
+		t.Fatal("HTTP1-only transport lost standard transport timeouts")
+	}
+	if _, err := client.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClientDoesNotFollowRedirects(t *testing.T) {
 	redirected := false
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
