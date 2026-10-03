@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -238,8 +239,22 @@ func (c *GitHubClient) installationToken(ctx context.Context) (string, error) {
 			"metadata": "read",
 		},
 	}
-	if _, err := c.doJSON(ctx, http.MethodPost, path, request, jwt, "", &response, nil, nil); err != nil {
-		return "", fmt.Errorf("mint GitHub App installation token: %w", err)
+	var mintErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		response = githubInstallationToken{}
+		_, mintErr = c.doJSON(ctx, http.MethodPost, path, request, jwt, "", &response, nil, nil)
+		if mintErr == nil {
+			break
+		}
+		if !retryableGitHubTransportError(mintErr) || attempt == 2 {
+			return "", fmt.Errorf("mint GitHub App installation token: %w", mintErr)
+		}
+		if transport, ok := c.http.Transport.(interface{ CloseIdleConnections() }); ok {
+			transport.CloseIdleConnections()
+		}
+		if err := sleepContext(ctx, time.Duration(attempt+1)*250*time.Millisecond); err != nil {
+			return "", fmt.Errorf("mint GitHub App installation token: %w", err)
+		}
 	}
 	if strings.TrimSpace(response.Token) == "" || response.ExpiresAt.IsZero() {
 		return "", errors.New("GitHub returned an invalid installation token response")
@@ -336,6 +351,20 @@ func (c *GitHubClient) doJSON(ctx context.Context, method, path string, body any
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+func retryableGitHubTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return false
 }
 
 func retryAfter(header http.Header, now time.Time) time.Duration {
