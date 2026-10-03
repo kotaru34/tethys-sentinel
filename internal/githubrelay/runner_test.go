@@ -719,7 +719,7 @@ func TestRunnerLongRunningSessionDoesNotBlockAnotherSession(t *testing.T) {
 	}
 	firstAgent := &fakeAgent{
 		bootstrap: domain.Bootstrap{SessionID: first.GrantID, Targets: []string{first.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: first.ExpiresAt},
-		job: firstJob,
+		job:       firstJob,
 	}
 	secondAgent := &fakeAgent{
 		bootstrap: domain.Bootstrap{SessionID: second.GrantID, Targets: []string{second.Target}, Permissions: domain.Permissions{Exec: true}, ExpiresAt: second.ExpiresAt},
