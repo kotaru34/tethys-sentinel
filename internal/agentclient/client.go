@@ -65,9 +65,10 @@ func New(cfg Config) (*Client, error) {
 	transport.TLSClientConfig = tlsConfig
 	if cfg.HTTP1Only {
 		transport.ForceAttemptHTTP2 = false
-		protocols := new(http.Protocols)
-		protocols.SetHTTP1(true)
-		transport.Protocols = protocols
+		transport.Protocols = nil
+		transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
+		transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+		transport.DisableKeepAlives = true
 	} else {
 		transport.ForceAttemptHTTP2 = true
 	}
